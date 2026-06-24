@@ -1,0 +1,40 @@
+  # ROS2 colcon build artifacts
+  build/
+  install/
+  log/
+
+  # Python
+  __pycache__/
+  *.pyc
+  *.pyo
+  .pytest_cache/
+  *.egg-info/
+  dist/
+
+  # Virtualenv
+  fleet-env/
+
+  # Databases
+  *.db
+  *.sqlite3
+
+  # Generated reports
+  reports/*.pdf
+  reports/*.html
+
+  # Generated maps (from SLAM)
+  maps/*.pgm
+  maps/*.yaml
+  !maps/.gitkeep
+
+  # Environment secrets
+  .env
+  *.env
+
+  # IDE
+  .vscode/settings.json
+  .idea/
+
+  # OS
+  .DS_Store
+  Thumbs.db

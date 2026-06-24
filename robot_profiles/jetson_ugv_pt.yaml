@@ -1,0 +1,37 @@
+  name: jetson_ugv_pt
+  compute_tier: edge_gpu
+  target_arch: arm64
+  jetpack_version: "7.2"
+  ubuntu_version: "24.04"
+  cuda_version: "13"
+  nav_stack: nav2_full
+  namespace: /robot_001
+
+  sensors:
+    lidar:
+      model: d500
+      topic: /robot_001/scan
+      hz_min: 10
+    camera:
+      model: oak_d_lite
+      topic: /robot_001/camera/image_raw
+      hz_min: 10
+    depth:
+      model: oak_d_lite
+      topic: /robot_001/camera/depth/points
+    imu:
+      topic: /robot_001/imu/data
+      hz_min: 200
+    odometry:
+      topic: /robot_001/odom
+      hz_min: 50
+
+  sub_controller:
+    type: esp32
+    interface: uart
+    baud: 921600
+    watchdog_timeout_ms: 200
+
+  deploy:
+    method: ssh
+    runner_label: self-hosted-jetson

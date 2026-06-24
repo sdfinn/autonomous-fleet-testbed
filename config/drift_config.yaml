@@ -1,0 +1,63 @@
+  # Drift detection thresholds. Edit here — never hardcode in Python.
+  history_window: 20
+
+  sigma:
+    info: 2.0
+    warning: 3.0
+    error: 4.0
+    critical: 5.0
+
+  post_merge_sensitivity:
+    runs: 5
+    multiplier: 0.7   # tighten thresholds for first 5 runs after a commit
+
+  metrics:
+    nav_success_rate:
+      direction: down     # lower = worse
+      threshold_fail: 0.05
+      requirement: BR-07
+
+    mean_position_error:
+      direction: up       # higher = worse
+      threshold_fail: 0.03
+      requirement: BR-01
+
+    mean_time_to_goal:
+      direction: up
+      threshold_fail: 5.0
+
+    collision_rate:
+      direction: up
+      threshold_fail: 0.02
+      requirement: BR-02
+
+    odom_hz_mean:
+      direction: down
+      threshold_fail: 5.0
+      requirement: BR-04
+
+    lidar_hz_mean:
+      direction: down
+      threshold_fail: 1.0
+      requirement: SC-04
+
+    camera_hz_mean:
+      direction: down
+      threshold_fail: 1.0
+      requirement: SC-05
+
+    firmware_test_pass_rate:
+      direction: down
+      hard_threshold: true    # any failure = fail; bypasses sigma analysis
+      threshold_fail: 0.0
+      requirement: MCU-all
+
+    stage_2_arm64_build_s:
+      direction: up
+      threshold_warn: 60.0    # warn only — slow build is a signal, not a blocker
+      ci_health: true
+
+    stage_3_gazebo_s:
+      direction: up
+      threshold_warn: 30.0
+      ci_health: true
