@@ -1,0 +1,3 @@
+source;share/nav_fleet/hook/pythonpath.ps1
+source;share/nav_fleet/hook/pythonpath.dsv
+source;share/nav_fleet/hook/pythonpath.sh

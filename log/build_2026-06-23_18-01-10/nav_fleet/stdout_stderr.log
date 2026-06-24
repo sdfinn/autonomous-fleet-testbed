@@ -1,0 +1,39 @@
+running egg_info
+creating ../../build/nav_fleet/nav_fleet.egg-info
+writing ../../build/nav_fleet/nav_fleet.egg-info/PKG-INFO
+writing dependency_links to ../../build/nav_fleet/nav_fleet.egg-info/dependency_links.txt
+writing entry points to ../../build/nav_fleet/nav_fleet.egg-info/entry_points.txt
+writing requirements to ../../build/nav_fleet/nav_fleet.egg-info/requires.txt
+writing top-level names to ../../build/nav_fleet/nav_fleet.egg-info/top_level.txt
+writing manifest file '../../build/nav_fleet/nav_fleet.egg-info/SOURCES.txt'
+reading manifest file '../../build/nav_fleet/nav_fleet.egg-info/SOURCES.txt'
+writing manifest file '../../build/nav_fleet/nav_fleet.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/mike/autonomous-fleet-testbed/build/nav_fleet/build
+creating /home/mike/autonomous-fleet-testbed/build/nav_fleet/build/lib
+creating /home/mike/autonomous-fleet-testbed/build/nav_fleet/build/lib/nav_fleet
+copying nav_fleet/__init__.py -> /home/mike/autonomous-fleet-testbed/build/nav_fleet/build/lib/nav_fleet
+copying nav_fleet/nav_runner.py -> /home/mike/autonomous-fleet-testbed/build/nav_fleet/build/lib/nav_fleet
+copying nav_fleet/metrics_collector.py -> /home/mike/autonomous-fleet-testbed/build/nav_fleet/build/lib/nav_fleet
+running install
+running install_lib
+creating /home/mike/autonomous-fleet-testbed/install/nav_fleet/lib/python3.12/site-packages/nav_fleet
+copying /home/mike/autonomous-fleet-testbed/build/nav_fleet/build/lib/nav_fleet/__init__.py -> /home/mike/autonomous-fleet-testbed/install/nav_fleet/lib/python3.12/site-packages/nav_fleet
+copying /home/mike/autonomous-fleet-testbed/build/nav_fleet/build/lib/nav_fleet/nav_runner.py -> /home/mike/autonomous-fleet-testbed/install/nav_fleet/lib/python3.12/site-packages/nav_fleet
+copying /home/mike/autonomous-fleet-testbed/build/nav_fleet/build/lib/nav_fleet/metrics_collector.py -> /home/mike/autonomous-fleet-testbed/install/nav_fleet/lib/python3.12/site-packages/nav_fleet
+byte-compiling /home/mike/autonomous-fleet-testbed/install/nav_fleet/lib/python3.12/site-packages/nav_fleet/__init__.py to __init__.cpython-312.pyc
+Sorry: IndentationError: unexpected indent (nav_runner.py, line 1)
+Sorry: IndentationError: unexpected indent (metrics_collector.py, line 1)
+byte-compiling /home/mike/autonomous-fleet-testbed/install/nav_fleet/lib/python3.12/site-packages/nav_fleet/nav_runner.py to nav_runner.cpython-312.pyc
+byte-compiling /home/mike/autonomous-fleet-testbed/install/nav_fleet/lib/python3.12/site-packages/nav_fleet/metrics_collector.py to metrics_collector.cpython-312.pyc
+running install_data
+creating /home/mike/autonomous-fleet-testbed/install/nav_fleet/share
+creating /home/mike/autonomous-fleet-testbed/install/nav_fleet/share/ament_index
+creating /home/mike/autonomous-fleet-testbed/install/nav_fleet/share/ament_index/resource_index
+creating /home/mike/autonomous-fleet-testbed/install/nav_fleet/share/ament_index/resource_index/packages
+copying resource/nav_fleet -> /home/mike/autonomous-fleet-testbed/install/nav_fleet/share/ament_index/resource_index/packages
+creating /home/mike/autonomous-fleet-testbed/install/nav_fleet/share/nav_fleet
+copying package.xml -> /home/mike/autonomous-fleet-testbed/install/nav_fleet/share/nav_fleet
+creating /home/mike/autonomous-fleet-testbed/install/nav_fleet/share/nav_fleet/config
+error: can't copy 'config/nav2_params.yaml': doesn't exist or not a regular file

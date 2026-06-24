@@ -1,0 +1,17 @@
+[0.330s] Invoking command in '/home/mike/autonomous-fleet-testbed/src/nav_fleet': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PS1=(fleet-env) \[\e]0;\u@\h: \w\a\]${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ PYTHONPATH=/home/mike/autonomous-fleet-testbed/build/nav_fleet/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/mike/autonomous-fleet-testbed/install/nav_fleet/lib/python3.12/site-packages:${PYTHONPATH} VIRTUAL_ENV_PROMPT=(fleet-env) /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/nav_fleet build --build-base /home/mike/autonomous-fleet-testbed/build/nav_fleet/build install --record /home/mike/autonomous-fleet-testbed/build/nav_fleet/install.log --install-scripts $base/lib/nav_fleet --single-version-externally-managed install_data
+[0.446s] running egg_info
+[0.454s] writing ../../build/nav_fleet/nav_fleet.egg-info/PKG-INFO
+[0.454s] writing dependency_links to ../../build/nav_fleet/nav_fleet.egg-info/dependency_links.txt
+[0.454s] writing entry points to ../../build/nav_fleet/nav_fleet.egg-info/entry_points.txt
+[0.454s] writing requirements to ../../build/nav_fleet/nav_fleet.egg-info/requires.txt
+[0.454s] writing top-level names to ../../build/nav_fleet/nav_fleet.egg-info/top_level.txt
+[0.469s] reading manifest file '../../build/nav_fleet/nav_fleet.egg-info/SOURCES.txt'
+[0.469s] writing manifest file '../../build/nav_fleet/nav_fleet.egg-info/SOURCES.txt'
+[0.469s] running build
+[0.469s] running build_py
+[0.469s] running install
+[0.472s] running install_lib
+[0.479s] running install_data
+[0.479s] copying config/nav2_params.yaml -> /home/mike/autonomous-fleet-testbed/install/nav_fleet/share/nav_fleet/config
+[0.479s] error: can't copy 'config/drift_config.yaml': doesn't exist or not a regular file
+[0.487s] Invoked command in '/home/mike/autonomous-fleet-testbed/src/nav_fleet' returned '1': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PS1=(fleet-env) \[\e]0;\u@\h: \w\a\]${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ PYTHONPATH=/home/mike/autonomous-fleet-testbed/build/nav_fleet/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/mike/autonomous-fleet-testbed/install/nav_fleet/lib/python3.12/site-packages:${PYTHONPATH} VIRTUAL_ENV_PROMPT=(fleet-env) /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/nav_fleet build --build-base /home/mike/autonomous-fleet-testbed/build/nav_fleet/build install --record /home/mike/autonomous-fleet-testbed/build/nav_fleet/install.log --install-scripts $base/lib/nav_fleet --single-version-externally-managed install_data
