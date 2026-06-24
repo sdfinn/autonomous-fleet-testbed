@@ -1017,7 +1017,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   EOF
   ```
 
-- [ ] **Commit:**
+- [x] **Commit:**
   ```bash
   cd ~/autonomous-fleet-testbed
   git add .

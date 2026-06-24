@@ -1,8 +1,8 @@
 import sqlite3
 import pytest
 
-from src.baseline_monitor import check_latest_run, check_run
-from src.telemetry_logger import init_db, log_run
+from tools.baseline_monitor import check_latest_run, check_run
+from tools.telemetry_logger import init_db, log_run
 
 # Baseline seed: 10 runs with natural variance around fleet navigation metrics.
 # 2σ range is narrow enough that a clear outlier should be flagged.
