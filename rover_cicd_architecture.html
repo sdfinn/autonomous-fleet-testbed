@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ROS2 Rover CI/CD Architecture v2</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  background: #f5f4ef; color: #1a1a18; min-height: 100vh; padding: 24px 16px 48px;
+}
+h1 { font-size: 18px; font-weight: 600; text-align: center; margin-bottom: 3px; }
+.subtitle { font-size: 11px; color: #5f5e5a; text-align: center; margin-bottom: 20px; }
+.badge {
+  display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 8px;
+  border-radius: 99px; margin: 0 3px 12px; border: 1px solid;
+}
+.badges { text-align: center; margin-bottom: 20px; }
+.layout { display: flex; gap: 20px; align-items: flex-start; max-width: 1140px; margin: 0 auto; }
+.diagram-col { flex: 0 0 auto; }
+.detail-col {
+  flex: 1 1 auto; min-width: 300px; max-width: 440px;
+  background: #fff; border: 1px solid #d3d1c7; border-radius: 12px;
+  padding: 20px; position: sticky; top: 24px;
+}
+.detail-col .dtag {
+  display: inline-block; font-size: 10px; font-weight: 600;
+  padding: 2px 8px; border-radius: 99px; margin-bottom: 8px;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.detail-col h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.detail-col p { font-size: 12.5px; line-height: 1.65; color: #3d3d3a; margin-bottom: 10px; }
+.detail-col ul { padding-left: 16px; margin-bottom: 10px; }
+.detail-col li { font-size: 12px; line-height: 1.6; color: #3d3d3a; margin-bottom: 2px; }
+.detail-col pre {
+  background: #f4f3ee; border: 1px solid #d3d1c7; border-radius: 6px;
+  padding: 9px 11px; font-size: 10.5px; line-height: 1.55;
+  font-family: "Courier New", monospace; overflow-x: auto; margin-bottom: 10px; white-space: pre;
+}
+.detail-col h3 {
+  font-size: 10px; font-weight: 700; color: #5f5e5a; margin: 10px 0 4px;
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.req-row { display: flex; gap: 8px; margin-bottom: 4px; align-items: flex-start; }
+.req-id {
+  font-size: 10px; font-weight: 700; font-family: monospace;
+  background: #eeedfe; color: #534ab7; padding: 1px 5px; border-radius: 4px; white-space: nowrap;
+}
+.req-text { font-size: 12px; color: #3d3d3a; line-height: 1.5; }
+.placeholder { color: #888780; font-size: 13px; font-style: italic; }
+.node { cursor: pointer; }
+.node:hover rect { opacity: 0.78; }
+@media (max-width: 780px) {
+  .layout { flex-direction: column; }
+  .detail-col { position: static; max-width: 100%; }
+}
+</style>
+</head>
+<body>
+<h1>ROS2 Rover &#x2014; CI/CD &amp; Autonomy Architecture</h1>
+<p class="subtitle">Click any node for setup notes, code snippets, and configuration guidance</p>
+<div class="badges">
+  <span class="badge" style="color:#0F6E56;background:#E1F5EE;border-color:#0F6E56">Ubuntu 24.04</span>
+  <span class="badge" style="color:#534AB7;background:#EEEDFE;border-color:#534AB7">ROS2 Jazzy</span>
+  <span class="badge" style="color:#993C1D;background:#FAECE7;border-color:#993C1D">JetPack 7.2</span>
+  <span class="badge" style="color:#854F0B;background:#FAEEDA;border-color:#854F0B">Waveshare UGV PT</span>
+  <span class="badge" style="color:#444441;background:#F1EFE8;border-color:#888780">ESP32 sub-controller</span>
+  <span class="badge" style="color:#0F6E56;background:#E1F5EE;border-color:#0F6E56">Gazebo Harmonic + Isaac Sim</span>
+</div>
+
+<div class="layout">
+  <div class="diagram-col">
+<svg width="560" viewBox="0 0 560 992" xmlns="http://www.w3.org/2000/svg" style="display:block;">
+<defs>
+  <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- Trigger -->
+<g class="node" id="n-trigger" onclick="showNode('trigger')">
+  <rect x="155" y="20" width="250" height="44" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+  <text x="280" y="37" text-anchor="middle" font-size="13" font-weight="600" fill="#444441" font-family="inherit">Git push / pull request</text>
+  <text x="280" y="54" text-anchor="middle" font-size="11" fill="#5f5e5a" font-family="inherit">main &#xB7; feature/* &#xB7; release/*</text>
+</g>
+<line x1="280" y1="64" x2="280" y2="98" stroke="#888780" stroke-width="1.2" marker-end="url(#arr)"/>
+
+<!-- Stage 0 -->
+<rect x="30" y="98" width="500" height="90" rx="10" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.8"/>
+<text x="50" y="117" font-size="11" font-weight="600" fill="#633806" font-family="inherit">Stage 0 &#x2014; requirements gate</text>
+<g class="node" id="n-scene-req" onclick="showNode('scene-req')">
+  <rect x="48" y="126" width="148" height="48" rx="7" fill="#EF9F27" fill-opacity=".2" stroke="#BA7517" stroke-width="0.7"/>
+  <text x="122" y="145" text-anchor="middle" font-size="12" font-weight="600" fill="#633806" font-family="inherit">Scene requirements</text>
+  <text x="122" y="161" text-anchor="middle" font-size="10" fill="#854F0B" font-family="inherit">Waveshare UGV PT specs</text>
+</g>
+<g class="node" id="n-brain-req" onclick="showNode('brain-req')">
+  <rect x="206" y="126" width="148" height="48" rx="7" fill="#EF9F27" fill-opacity=".2" stroke="#BA7517" stroke-width="0.7"/>
+  <text x="280" y="145" text-anchor="middle" font-size="12" font-weight="600" fill="#633806" font-family="inherit">Brain + MCU reqs</text>
+  <text x="280" y="161" text-anchor="middle" font-size="10" fill="#854F0B" font-family="inherit">nav &#xB7; ESP32 firmware</text>
+</g>
+<g class="node" id="n-trace" onclick="showNode('trace')">
+  <rect x="364" y="126" width="148" height="48" rx="7" fill="#EF9F27" fill-opacity=".2" stroke="#BA7517" stroke-width="0.7"/>
+  <text x="438" y="145" text-anchor="middle" font-size="12" font-weight="600" fill="#633806" font-family="inherit">Traceability matrix</text>
+  <text x="438" y="161" text-anchor="middle" font-size="10" fill="#854F0B" font-family="inherit">BR + SC + MCU &#x2192; tests</text>
+</g>
+<line x1="280" y1="188" x2="280" y2="220" stroke="#888780" stroke-width="1.2" marker-end="url(#arr)"/>
+
+<!-- Stage 1 -->
+<rect x="30" y="220" width="500" height="90" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="50" y="239" font-size="11" font-weight="600" fill="#3C3489" font-family="inherit">Stage 1 &#x2014; code quality (ROS2 + ESP32 firmware)</text>
+<g class="node" id="n-lint" onclick="showNode('lint')">
+  <rect x="48" y="248" width="148" height="48" rx="7" fill="#7F77DD" fill-opacity=".2" stroke="#534AB7" stroke-width="0.7"/>
+  <text x="122" y="267" text-anchor="middle" font-size="12" font-weight="600" fill="#3C3489" font-family="inherit">ament_lint + cpplint</text>
+  <text x="122" y="283" text-anchor="middle" font-size="10" fill="#534AB7" font-family="inherit">ROS2 Jazzy style</text>
+</g>
+<g class="node" id="n-static" onclick="showNode('static')">
+  <rect x="206" y="248" width="148" height="48" rx="7" fill="#7F77DD" fill-opacity=".2" stroke="#534AB7" stroke-width="0.7"/>
+  <text x="280" y="267" text-anchor="middle" font-size="12" font-weight="600" fill="#3C3489" font-family="inherit">clang-tidy analysis</text>
+  <text x="280" y="283" text-anchor="middle" font-size="10" fill="#534AB7" font-family="inherit">static &#xB7; warnings</text>
+</g>
+<g class="node" id="n-unit" onclick="showNode('unit')">
+  <rect x="364" y="248" width="148" height="48" rx="7" fill="#7F77DD" fill-opacity=".2" stroke="#534AB7" stroke-width="0.7"/>
+  <text x="438" y="267" text-anchor="middle" font-size="12" font-weight="600" fill="#3C3489" font-family="inherit">gtest + ESP32 Unity</text>
+  <text x="438" y="283" text-anchor="middle" font-size="10" fill="#534AB7" font-family="inherit">PlatformIO native tests</text>
+</g>
+<line x1="280" y1="310" x2="280" y2="342" stroke="#888780" stroke-width="1.2" marker-end="url(#arr)"/>
+
+<!-- Stage 2 -->
+<rect x="30" y="342" width="500" height="90" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="50" y="361" font-size="11" font-weight="600" fill="#3C3489" font-family="inherit">Stage 2 &#x2014; cross-compile arm64 (JetPack 7.2 / Ubuntu 24.04)</text>
+<g class="node" id="n-buildx" onclick="showNode('buildx')">
+  <rect x="48" y="370" width="148" height="48" rx="7" fill="#7F77DD" fill-opacity=".2" stroke="#534AB7" stroke-width="0.7"/>
+  <text x="122" y="389" text-anchor="middle" font-size="12" font-weight="600" fill="#3C3489" font-family="inherit">Docker buildx arm64</text>
+  <text x="122" y="405" text-anchor="middle" font-size="10" fill="#534AB7" font-family="inherit">Single Jazzy image</text>
+</g>
+<g class="node" id="n-microros-layer" onclick="showNode('microros-layer')">
+  <rect x="206" y="370" width="148" height="48" rx="7" fill="#7F77DD" fill-opacity=".2" stroke="#534AB7" stroke-width="0.7"/>
+  <text x="280" y="389" text-anchor="middle" font-size="12" font-weight="600" fill="#3C3489" font-family="inherit">micro-ROS + ESP32</text>
+  <text x="280" y="405" text-anchor="middle" font-size="10" fill="#534AB7" font-family="inherit">921600 baud &#xB7; JSON</text>
+</g>
+<g class="node" id="n-ghcr" onclick="showNode('ghcr')">
+  <rect x="364" y="370" width="148" height="48" rx="7" fill="#7F77DD" fill-opacity=".2" stroke="#534AB7" stroke-width="0.7"/>
+  <text x="438" y="389" text-anchor="middle" font-size="12" font-weight="600" fill="#3C3489" font-family="inherit">GHA layer cache</text>
+  <text x="438" y="405" text-anchor="middle" font-size="10" fill="#534AB7" font-family="inherit">ghcr.io &#xB7; Jazzy arm64</text>
+</g>
+<line x1="280" y1="432" x2="280" y2="464" stroke="#888780" stroke-width="1.2" marker-end="url(#arr)"/>
+
+<!-- Stage 3 -->
+<rect x="30" y="464" width="500" height="112" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="50" y="483" font-size="11" font-weight="600" fill="#085041" font-family="inherit">Stage 3 &#x2014; Gazebo Harmonic (CI gate + drift detection)</text>
+<g class="node" id="n-gazebo-headless" onclick="showNode('gazebo-headless')">
+  <rect x="48" y="491" width="148" height="70" rx="7" fill="#1D9E75" fill-opacity=".18" stroke="#0F6E56" stroke-width="0.7"/>
+  <text x="122" y="510" text-anchor="middle" font-size="12" font-weight="600" fill="#085041" font-family="inherit">Gazebo headless</text>
+  <text x="122" y="526" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">UGV Rover URDF</text>
+  <text x="122" y="540" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">D500 &#xB7; OAK-D Lite</text>
+  <text x="122" y="554" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">ROS2 Jazzy</text>
+</g>
+<g class="node" id="n-nav-test" onclick="showNode('nav-test')">
+  <rect x="206" y="491" width="148" height="70" rx="7" fill="#1D9E75" fill-opacity=".18" stroke="#0F6E56" stroke-width="0.7"/>
+  <text x="280" y="510" text-anchor="middle" font-size="12" font-weight="600" fill="#085041" font-family="inherit">Nav2 integration</text>
+  <text x="280" y="526" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">waypoint success</text>
+  <text x="280" y="540" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">obstacle avoidance</text>
+  <text x="280" y="554" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">BR + SC assertions</text>
+</g>
+<g class="node" id="n-drift" onclick="showNode('drift')">
+  <rect x="364" y="491" width="148" height="70" rx="7" fill="#1D9E75" fill-opacity=".18" stroke="#0F6E56" stroke-width="0.7"/>
+  <text x="438" y="510" text-anchor="middle" font-size="12" font-weight="600" fill="#085041" font-family="inherit">Drift detection</text>
+  <text x="438" y="526" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">nav + MCU metrics</text>
+  <text x="438" y="540" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">rolling 5-run history</text>
+  <text x="438" y="554" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">threshold gate</text>
+</g>
+<line x1="280" y1="576" x2="280" y2="608" stroke="#888780" stroke-width="1.2" marker-end="url(#arr)"/>
+
+<!-- Stage 4 -->
+<rect x="30" y="608" width="500" height="112" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="50" y="627" font-size="11" font-weight="600" fill="#085041" font-family="inherit">Stage 4 &#x2014; Isaac Sim (RTX 5080 &#xB7; Ubuntu 24.04 &#xB7; CUDA 13)</text>
+<g class="node" id="n-isaac-world" onclick="showNode('isaac-world')">
+  <rect x="48" y="635" width="148" height="70" rx="7" fill="#1D9E75" fill-opacity=".18" stroke="#0F6E56" stroke-width="0.7"/>
+  <text x="122" y="654" text-anchor="middle" font-size="12" font-weight="600" fill="#085041" font-family="inherit">Photorealistic world</text>
+  <text x="122" y="670" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">UGV Rover USD</text>
+  <text x="122" y="684" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">D500 + OAK-D RTX</text>
+  <text x="122" y="698" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">ROS2 Jazzy bridge</text>
+</g>
+<g class="node" id="n-perception-test" onclick="showNode('perception-test')">
+  <rect x="206" y="635" width="148" height="70" rx="7" fill="#1D9E75" fill-opacity=".18" stroke="#0F6E56" stroke-width="0.7"/>
+  <text x="280" y="654" text-anchor="middle" font-size="12" font-weight="600" fill="#085041" font-family="inherit">Perception tests</text>
+  <text x="280" y="670" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">YOLO mAP</text>
+  <text x="280" y="684" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">lidar + depth accuracy</text>
+  <text x="280" y="698" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">CUDA 13 inference</text>
+</g>
+<g class="node" id="n-sim2real" onclick="showNode('sim2real')">
+  <rect x="364" y="635" width="148" height="70" rx="7" fill="#1D9E75" fill-opacity=".18" stroke="#0F6E56" stroke-width="0.7"/>
+  <text x="438" y="654" text-anchor="middle" font-size="12" font-weight="600" fill="#085041" font-family="inherit">Sim-to-real metrics</text>
+  <text x="438" y="670" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">D500 fidelity score</text>
+  <text x="438" y="684" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">trajectory deviation</text>
+  <text x="438" y="698" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">rosbag vs sim</text>
+</g>
+<line x1="280" y1="720" x2="280" y2="752" stroke="#888780" stroke-width="1.2" marker-end="url(#arr)"/>
+
+<!-- Stage 5 -->
+<rect x="30" y="752" width="500" height="84" rx="10" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+<text x="50" y="771" font-size="11" font-weight="600" fill="#444441" font-family="inherit">Stage 5 &#x2014; reports + publish (single Jazzy arm64 image)</text>
+<g class="node" id="n-report" onclick="showNode('report')">
+  <rect x="48" y="779" width="148" height="44" rx="7" fill="#888780" fill-opacity=".18" stroke="#5F5E5A" stroke-width="0.7"/>
+  <text x="122" y="798" text-anchor="middle" font-size="12" font-weight="600" fill="#444441" font-family="inherit">Run status report</text>
+  <text x="122" y="814" text-anchor="middle" font-size="10" fill="#5F5E5A" font-family="inherit">HTML + JSON &#xB7; per run</text>
+</g>
+<g class="node" id="n-push-image" onclick="showNode('push-image')">
+  <rect x="206" y="779" width="148" height="44" rx="7" fill="#888780" fill-opacity=".18" stroke="#5F5E5A" stroke-width="0.7"/>
+  <text x="280" y="798" text-anchor="middle" font-size="12" font-weight="600" fill="#444441" font-family="inherit">Push ghcr.io arm64</text>
+  <text x="280" y="814" text-anchor="middle" font-size="10" fill="#5F5E5A" font-family="inherit">Jazzy &#xB7; single image</text>
+</g>
+<g class="node" id="n-drift-archive" onclick="showNode('drift-archive')">
+  <rect x="364" y="779" width="148" height="44" rx="7" fill="#888780" fill-opacity=".18" stroke="#5F5E5A" stroke-width="0.7"/>
+  <text x="438" y="798" text-anchor="middle" font-size="12" font-weight="600" fill="#444441" font-family="inherit">Drift trend archive</text>
+  <text x="438" y="814" text-anchor="middle" font-size="10" fill="#5F5E5A" font-family="inherit">history JSON &#xB7; plots</text>
+</g>
+<line x1="280" y1="836" x2="280" y2="868" stroke="#888780" stroke-width="1.2" marker-end="url(#arr)"/>
+
+<!-- Stage 6 -->
+<rect x="30" y="868" width="500" height="106" rx="10" fill="#FAECE7" stroke="#993C1D" stroke-width="0.8"/>
+<text x="50" y="887" font-size="11" font-weight="600" fill="#712B13" font-family="inherit">Stage 6 &#x2014; deploy to Jetson Orin Nano Super (JetPack 7.2)</text>
+<g class="node" id="n-ssh-deploy" onclick="showNode('ssh-deploy')">
+  <rect x="48" y="895" width="148" height="66" rx="7" fill="#D85A30" fill-opacity=".16" stroke="#993C1D" stroke-width="0.7"/>
+  <text x="122" y="914" text-anchor="middle" font-size="12" font-weight="600" fill="#712B13" font-family="inherit">SSH docker pull</text>
+  <text x="122" y="930" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">JetPack 7.2</text>
+  <text x="122" y="944" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">Ubuntu 24.04 &#xB7; Jazzy</text>
+  <text x="122" y="958" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">CUDA 13</text>
+</g>
+<g class="node" id="n-microros-deploy" onclick="showNode('microros-deploy')">
+  <rect x="206" y="895" width="148" height="66" rx="7" fill="#D85A30" fill-opacity=".16" stroke="#993C1D" stroke-width="0.7"/>
+  <text x="280" y="914" text-anchor="middle" font-size="12" font-weight="600" fill="#712B13" font-family="inherit">micro-ROS + ESP32</text>
+  <text x="280" y="930" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">921600 baud UART</text>
+  <text x="280" y="944" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">PID 1kHz &#xB7; watchdog</text>
+  <text x="280" y="958" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">JSON instruction set</text>
+</g>
+<g class="node" id="n-smoke" onclick="showNode('smoke')">
+  <rect x="364" y="895" width="148" height="66" rx="7" fill="#D85A30" fill-opacity=".16" stroke="#993C1D" stroke-width="0.7"/>
+  <text x="438" y="914" text-anchor="middle" font-size="12" font-weight="600" fill="#712B13" font-family="inherit">Smoke test</text>
+  <text x="438" y="930" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">/odom &#xB7; /scan &#xB7; /imu</text>
+  <text x="438" y="944" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">auto rollback</text>
+  <text x="438" y="958" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">e-stop verify</text>
+</g>
+</svg>
+  </div>
+
+  <div class="detail-col" id="detail-panel">
+    <p class="placeholder">Click any node in the diagram to see setup notes, code snippets, and configuration guidance for the Waveshare UGV Rover PT + Jetson Orin Nano Super (JetPack 7.2 / Ubuntu 24.04 / ROS2 Jazzy) stack.</p>
+  </div>
+</div>
+
+<script>
+var NODES = {
+"trigger":{title:"Git trigger",tag:"Workflow trigger",tagColor:"#888780",tagBg:"#F1EFE8",body:"Every pipeline run starts from a git event. Three trigger types cover push, pull requests, and manual runs.",sections:[{heading:"Trigger configuration",code:"on:\n  push:\n    branches: [main, 'feature/**', 'release/**']\n  pull_request:\n    branches: [main]\n  workflow_dispatch:    # manual trigger for Isaac Sim\n    inputs:\n      run_isaac:\n        type: boolean\n        default: false"},{heading:"Branch strategy",items:["main - production, full pipeline including deploy", "feature/* - quality + Gazebo only, no deploy", "release/* - full pipeline, promotes to :stable tag", "PRs block merge if Gazebo sim gate fails"]}]},
+"scene-req":{title:"Scene requirements",tag:"Stage 0 - Requirements",tagColor:"#854F0B",tagBg:"#FAEEDA",body:"Define the simulation world before writing any URDF or world file. These become acceptance criteria for Gazebo and Isaac Sim stages. Waveshare UGV Rover PT: 6-wheel 4WD, aluminum alloy body, 1.3 m/s max speed.",sections:[{heading:"Key requirements",reqs:[["SC-01", "Flat indoor floor, 8m x 8m minimum"], ["SC-02", "At least 4 static box obstacles, 0.3m tall"], ["SC-03", "Defined start pose + 3 named goal poses"], ["SC-04", "Lidar scan valid (no NaN/inf) in all directions \u2014 D500 lidar"], ["SC-05", "Depth camera valid point cloud at 1m-6m \u2014 OAK-D Lite"], ["SC-06", "Ground friction 0.7 - no wheel slip at 0.5 m/s"], ["SC-07", "400 lux uniform lighting (Isaac Sim stage)"], ["SC-08", "Scene reproducible from fixed random seed"]]},{heading:"Rover physical spec (Waveshare UGV PT)",items:["Chassis: 6-wheel 4WD, 2mm aluminum alloy, 230 x 252 x 254 mm", "Drive: 4 geared motors with encoders, closed-loop PID", "Max speed: 1.3 m/s, in-situ rotation (0m turning radius)", "Sensors: D500 lidar + OAK-D Lite depth camera", "Sub-controller: ESP32 (motor PID, IMU, OLED, servos)", "Host: Jetson Orin Nano Super, JetPack 7.2, Ubuntu 24.04"]}]},
+"brain-req":{title:"Brain (autonomy) requirements",tag:"Stage 0 - Requirements",tagColor:"#854F0B",tagBg:"#FAEEDA",body:"Define what the autonomy stack must do before configuring Nav2 or writing any planner code. Each requirement maps to at least one CI test.",sections:[{heading:"Key requirements",reqs:[["BR-01", "Navigate to goal within 0.15m of target pose"], ["BR-02", "Avoid static obstacles with 0.25m clearance"], ["BR-03", "Recover from stuck state within 10 seconds"], ["BR-04", "Publish /odom at >= 50 Hz"], ["BR-05", "SLAM map converges within 60 sec of start"], ["BR-06", "E-stop halts motion within 100 ms"], ["BR-07", "Nav success rate regression <= 5% across builds"], ["BR-08", "CPU usage on Jetson < 80% during navigation"], ["BR-09", "Lidar-camera extrinsic error < 3 cm"], ["BR-10", "Behavior tree completes waypoint mission without abort"]]},{heading:"MCU requirements (ESP32)",reqs:[["MCU-01", "PID control loop runs at 1 kHz, independent of ROS2"], ["MCU-02", "Watchdog: safe-stop if no cmd_vel for 200 ms"], ["MCU-03", "Wheel encoder odometry published to /odom at 50 Hz"], ["MCU-04", "IMU data published to /imu/data at 200 Hz"], ["MCU-05", "Max motor current limit enforced in firmware"], ["MCU-06", "UART communication at 921600 baud, JSON instruction set"]]}]},
+"trace":{title:"Traceability matrix",tag:"Stage 0 - Requirements",tagColor:"#854F0B",tagBg:"#FAEEDA",body:"Maps every requirement ID to at least one CI test. Includes both navigation/scene requirements and MCU firmware requirements. A Python script validates this before any build starts.",sections:[{heading:"traceability.yaml",code:"# requirements/traceability.yaml\ntests:\n  test_waypoint_arrival:    covers: [BR-01]\n  test_obstacle_avoidance:  covers: [BR-02, SC-02]\n  test_odom_rate:           covers: [BR-04, MCU-03]\n  test_slam_convergence:    covers: [BR-05, SC-08]\n  test_estop_latency:       covers: [BR-06, MCU-02]\n  test_drift_nav_success:   covers: [BR-07]\n  test_lidar_valid:         covers: [SC-04]\n  test_camera_pointcloud:   covers: [SC-05]\n  test_mcu_pid_rate:        covers: [MCU-01]\n  test_mcu_current_limit:   covers: [MCU-05]"}]},
+"lint":{title:"ament_lint + cpplint",tag:"Stage 1 - Code quality",tagColor:"#534AB7",tagBg:"#EEEDFE",body:"ROS2 Jazzy on Ubuntu 24.04. Two dependencies in package.xml wire up cpplint, uncrustify, and cppcheck automatically for both ROS2 packages and ESP32 firmware.",sections:[{heading:"package.xml",code:"<test_depend>ament_lint_auto</test_depend>\n<test_depend>ament_lint_common</test_depend>"},{heading:"CMakeLists.txt",code:"if(BUILD_TESTING)\n  find_package(ament_lint_auto REQUIRED)\n  ament_lint_auto_find_test_dependencies()\nendif()"},{heading:"What it checks",items:["cpplint - Google C++ style guide (ROS2 nodes)", "uncrustify - brace placement, spacing, indentation", "cppcheck - undefined behaviour, memory issues", "pep8 / flake8 - Python node style", "ament_copyright - license headers present", "PlatformIO check - ESP32 firmware static analysis"]}]},
+"static":{title:"clang-tidy static analysis",tag:"Stage 1 - Code quality",tagColor:"#534AB7",tagBg:"#EEEDFE",body:"clang-tidy catches semantic issues cpplint misses. Runs on ROS2 C++ nodes. ESP32 firmware is checked separately via PlatformIO.",sections:[{heading:".clang-tidy",code:"Checks: >-\n  clang-diagnostic-*,\n  clang-analyzer-*,\n  cppcoreguidelines-*,\n  modernize-*,\n  readability-*,\n  -modernize-use-trailing-return-type\nWarningsAsErrors: ''\nHeaderFilterRegex: '.*'"},{heading:"colcon build flag",code:"colcon build \\\n  --cmake-args \\\n    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \\\n    -DCMAKE_CXX_CLANG_TIDY=clang-tidy"}]},
+"unit":{title:"gtest / pytest + ESP32 firmware tests",tag:"Stage 1 - Code quality",tagColor:"#534AB7",tagBg:"#EEEDFE",body:"Unit tests cover both ROS2 nodes (gtest/pytest) and ESP32 PlatformIO firmware logic (Unity test framework). No simulation needed at this stage.",sections:[{heading:"ROS2 unit tests",code:"colcon test --packages-select rover_control\ncolcon test-result --verbose"},{heading:"ESP32 firmware tests (PlatformIO + Unity)",code:"# firmware/esp32_motor_control/\npio test -e native   # runs on host, no hardware needed\n\n# Tests cover:\n# - PID output bounds\n# - Watchdog timeout logic (MCU-02)\n# - Differential drive kinematics\n# - JSON instruction parsing (MCU-06)\n# - Current limit enforcement (MCU-05)"},{heading:"Example: watchdog unit test",code:"void test_watchdog_triggers_after_200ms(void) {\n  last_cmd_ms = millis() - 201;\n  run_watchdog();\n  TEST_ASSERT_EQUAL(0, motor_left_setpoint);\n  TEST_ASSERT_EQUAL(0, motor_right_setpoint);\n}"}]},
+"buildx":{title:"Docker buildx arm64 \u2014 single image",tag:"Stage 2 - Cross-compile",tagColor:"#534AB7",tagBg:"#EEEDFE",body:"JetPack 7.2 + Ubuntu 24.04 on the Jetson means a single ROS2 Jazzy arm64 Docker image targets both CI and the rover. No Humble/Jazzy split needed.",sections:[{heading:"GitHub Actions steps",code:"- uses: docker/setup-qemu-action@v3\n- uses: docker/setup-buildx-action@v3\n- uses: docker/build-push-action@v5\n  with:\n    platforms: linux/arm64\n    push: false\n    cache-from: type=gha\n    cache-to: type=gha,mode=max\n    file: docker/Dockerfile.ros2"},{heading:"Self-hosted runner on Jetson (faster)",code:"# Register Jetson Orin Nano Super as runner\n# GitHub > Settings > Actions > Runners\n# Label: [self-hosted, arm64, jetson]\n# Builds take ~3 min vs ~25 min via QEMU\n\nruns-on: [self-hosted, arm64, jetson]"}]},
+"microros-layer":{title:"micro-ROS agent + ESP32 layer",tag:"Stage 2 - Cross-compile",tagColor:"#534AB7",tagBg:"#EEEDFE",body:"The ESP32 is the Waveshare UGV's sub-controller. It runs PID motor control, reads the IMU, and communicates with the Jetson via UART at 921600 baud using a JSON instruction set. micro-ROS agent is baked into the Docker image.",sections:[{heading:"Dockerfile micro-ROS layer",code:"# Ubuntu 24.04 base, ROS2 Jazzy\nFROM ros:jazzy-ros-base AS base\nRUN apt-get install -y ros-jazzy-micro-ros-agent\n\n# docker/entrypoint.sh\nros2 run micro_ros_agent micro_ros_agent serial \\\n    --dev /dev/ttyUSB0 --baudrate 921600 &\nsource /rover_ws/install/setup.bash\nros2 launch rover_bringup rover_real.launch.py"},{heading:"ESP32 topics bridged to ROS2",items:["/cmd_vel - subscribed by ESP32 (Twist in, JSON out)", "/odom - published by ESP32 (wheel encoder odometry)", "/motor_status - published by ESP32 (current, temp, errors)", "/imu/data - published by ESP32 (onboard IMU at 200 Hz)"]},{heading:"ESP32 JSON instruction example",code:"{\"T\":1,\"L\":0.5,\"R\":0.5}   # set left/right velocity\n{\"T\":0}                    # emergency stop\n{\"T\":2,\"cmd\":\"get_imu\"}    # request IMU reading"}]},
+"ghcr":{title:"GitHub Container Registry + layer cache",tag:"Stage 2 - Cross-compile",tagColor:"#534AB7",tagBg:"#EEEDFE",body:"Single arm64 Jazzy image for the Jetson Orin Nano Super running JetPack 7.2 / Ubuntu 24.04. Matches workstation OS and ROS2 distro exactly.",sections:[{heading:"Image tagging strategy",code:"ghcr.io/youruser/rover_ws:abc1234   # immutable SHA\nghcr.io/youruser/rover_ws:latest     # main branch\nghcr.io/youruser/rover_ws:stable     # post-HIL promoted"},{heading:"Dockerfile layer breakdown",items:["Layer 1: ros:jazzy-ros-base (Ubuntu 24.04) - rarely changes", "Layer 2: system apt deps + micro-ROS agent - cached", "Layer 3: colcon build of rover packages - per commit", "Layer 4: runtime entrypoint - thin final image"]}]},
+"gazebo-headless":{title:"Gazebo Harmonic headless launch",tag:"Stage 3 - Gazebo CI gate",tagColor:"#0F6E56",tagBg:"#E1F5EE",body:"Gazebo Harmonic is the default simulator for ROS2 Jazzy. Runs headless in GitHub Actions \u2014 no GPU, no display. This is the primary CI gate before any deploy.",sections:[{heading:"Install on Ubuntu 24.04 (Jazzy)",code:"sudo apt-get install -y \\\n  ros-jazzy-ros-gz \\\n  ros-jazzy-gz-ros2-control \\\n  gz-harmonic"},{heading:"Headless launch",code:"ros2 launch rover_bringup sim_test.launch.py \\\n    headless:=true \\\n    world:=simulation/gazebo/rover_world.sdf \\\n    timeout:=120"},{heading:"Waveshare UGV URDF essentials",items:["Use Waveshare ugv_ws GitHub repo as URDF starting point", "4 drive wheels + 2 passive casters, differential drive plugin", "D500 lidar sensor plugin - /scan at 10 Hz", "OAK-D Lite depth camera plugin - /camera/depth/points", "IMU plugin - /imu/data at 200 Hz", "Ground truth pose plugin - for test assertions"]}]},
+"nav-test":{title:"Nav2 integration test",tag:"Stage 3 - Gazebo CI gate",tagColor:"#0F6E56",tagBg:"#E1F5EE",body:"Python launch tests drive the rover to defined goal poses and assert arrival within tolerance. Results feed directly into drift detection. Nav2 stack runs with slam_toolbox for SLAM.",sections:[{heading:"Test structure",code:"class NavIntegrationTest(unittest.TestCase):\n  def test_goal_arrival(self):\n    goal = NavigateToPose.Goal()\n    goal.pose.pose.position.x = 3.0\n    goal.pose.pose.position.y = 2.0\n    self.client.send_goal_async(goal)\n    # Assert pose error < 0.15m  (BR-01)\n    # Assert no collision        (BR-02)\n    # Assert odom Hz >= 50       (BR-04)"},{heading:"Assertions per run",items:["Euclidean distance to goal < 0.15m (BR-01)", "Zero collisions detected (BR-02)", "Recovery triggered if stuck < 10s (BR-03)", "/odom Hz >= 50 Hz (BR-04, MCU-03)", "/scan Hz >= 10 Hz (SC-04)", "Behavior tree returns SUCCESS (BR-10)"]}]},
+"drift":{title:"Drift detection",tag:"Stage 3 - Drift detection",tagColor:"#0F6E56",tagBg:"#E1F5EE",body:"Compares current run metrics against rolling mean of last 5 passing builds. Catches gradual degradation that single-run tests miss. Covers both nav and MCU metrics.",sections:[{heading:"Metrics and thresholds",items:["nav_success_rate - decrease > 5% fails (BR-07)", "mean_position_error - increase > 3cm fails (BR-01)", "mean_time_to_goal - increase > 5s fails", "collision_rate - increase > 2% fails (BR-02)", "odom_hz_mean - decrease > 5 Hz fails (BR-04, MCU-03)", "lidar_hz_mean - decrease > 1 Hz fails (SC-04)"]},{heading:"drift_detector.py key logic",code:"THRESHOLDS = {\n  \"nav_success_rate\":    {\"dir\":\"down\", \"delta\":0.05},\n  \"mean_position_error\": {\"dir\":\"up\",   \"delta\":0.03},\n  \"odom_hz_mean\":        {\"dir\":\"down\", \"delta\":5.0},\n}\nbaseline = statistics.mean(h[m] for h in history[-5:])\nif regressed(current[m] - baseline, cfg):\n    failures.append(m)"}]},
+"isaac-world":{title:"Isaac Sim photorealistic world",tag:"Stage 4 - Isaac Sim",tagColor:"#0F6E56",tagBg:"#E1F5EE",body:"Isaac Sim runs on the RTX 5080 workstation (Ubuntu 24.04, same OS as the Jetson). JetPack 7.2 aligns Jetson with the workstation CUDA/Ubuntu stack, improving sim-to-real fidelity.",sections:[{heading:"Install on Ubuntu 24.04 (workstation)",code:"pip install isaacsim-rl isaacsim-replicator \\\n  isaacsim-extscache-physics \\\n  --extra-index-url https://pypi.nvidia.com\n\n# Enable in Isaac Sim UI:\n# Isaac Utils > ROS2 Bridge > Enable (Jazzy)\nnvidia-smi  # need driver >= 560, CUDA 13"},{heading:"USD scene contents",items:["Waveshare UGV Rover URDF imported via Isaac importer", "D500 lidar material preset (matches real sensor)", "OAK-D Lite depth camera material (matches real sensor)", "PhysX physics with concrete friction (SC-06)", "Multiple lighting rigs at 400 lux (SC-07)", "Static obstacles matching SC-02"]}]},
+"perception-test":{title:"Perception tests",tag:"Stage 4 - Isaac Sim",tagColor:"#0F6E56",tagBg:"#E1F5EE",body:"Isaac Sim's RTX renderer enables perception tests impossible in Gazebo. Ubuntu 24.04 on both workstation and Jetson means CUDA libraries align, reducing integration friction.",sections:[{heading:"Tests run",items:["YOLO mAP vs annotated Isaac ground truth", "D500 lidar point density at 5m, 10m, 20m", "OAK-D Lite depth RMSE vs Isaac ground truth", "Camera exposure stability across lighting (SC-07)", "Multi-reflection lidar test (glass surfaces)", "Low-light navigation at 50 lux"]},{heading:"Run headless",code:"./python.sh simulation/isaac/run_validation.py \\\n  --headless \\\n  --scene simulation/isaac/rover_scene.usd \\\n  --ros2-bridge \\\n  --num-runs 20 \\\n  --output reports/isaac_run.json"}]},
+"sim2real":{title:"Sim-to-real metrics",tag:"Stage 4 - Isaac Sim",tagColor:"#0F6E56",tagBg:"#E1F5EE",body:"JetPack 7.2 aligns CUDA 13 and Ubuntu 24.04 across workstation and Jetson, meaning Isaac Sim sensor models can be calibrated against real Waveshare UGV sensor data with fewer driver mismatches.",sections:[{heading:"Metrics compared",items:["D500 lidar density: < 5% diff at 5m vs real rosbag", "OAK-D Lite depth RMSE: < 3 cm at 2m range", "SLAM trajectory RMSE: < 0.05m over 10m route (evo_ape)", "Nav2 success rate: sim >= real - 5%", "Velocity profile: < 0.1 m/s RMSE vs commanded"]},{heading:"evo trajectory comparison",code:"pip install evo\nevo_ape bag real_rover.bag /tf /odom \\\n  --ref base_link --plot"}]},
+"report":{title:"Run status report",tag:"Stage 5 - Reports",tagColor:"#5F5E5A",tagBg:"#F1EFE8",body:"Every CI run produces a JSON metrics file and HTML summary, uploaded as a GitHub Actions artifact. Includes both nav metrics and ESP32 firmware test results.",sections:[{heading:"Report JSON (key fields)",code:"{\n  \"run_id\": \"sha-abc123\",\n  \"rover_hw\": \"Waveshare UGV Rover PT\",\n  \"jetson_stack\": \"JetPack 7.2 / Ubuntu 24.04 / Jazzy\",\n  \"mcu\": \"ESP32 @ 921600 baud\",\n  \"stages\": {\n    \"firmware_tests\": {\"status\":\"pass\",\"unity_passed\":12},\n    \"gazebo_sim\": {\n      \"nav_success_rate\": 0.92,\n      \"odom_hz_mean\": 51.2,\n      \"drift_status\": \"clean\"\n    }\n  }\n}"}]},
+"push-image":{title:"Push single ghcr.io arm64 image",tag:"Stage 5 - Publish",tagColor:"#5F5E5A",tagBg:"#F1EFE8",body:"Single ROS2 Jazzy arm64 image targets the Jetson Orin Nano Super running JetPack 7.2 / Ubuntu 24.04. No Humble/Jazzy split required \u2014 one image, one distro.",sections:[{heading:"Build and push",code:"- uses: docker/build-push-action@v5\n  with:\n    platforms: linux/arm64\n    push: true\n    build-args: |\n      ROS_DISTRO=jazzy\n      UBUNTU_VERSION=24.04\n    tags: |\n      ghcr.io/${{ github.repository }}:latest\n      ghcr.io/${{ github.repository }}:${{ github.sha }}"}]},
+"drift-archive":{title:"Drift trend archive",tag:"Stage 5 - Reports",tagColor:"#5F5E5A",tagBg:"#F1EFE8",body:"Drift history committed as dated JSON files. Enables trend plotting of nav metrics and ESP32 firmware test pass rates over time.",sections:[{heading:"Archive step",code:"mkdir -p reports/history\ncp reports/current_run.json \\\n   reports/history/$(date +%Y%m%d-%H%M%S)-$SHA.json\ngit add reports/history/\ngit commit -m \"ci: archive drift metrics [skip ci]\"\ngit push"}]},
+"ssh-deploy":{title:"SSH deploy to Jetson Orin Nano Super",tag:"Stage 6 - Deploy",tagColor:"#993C1D",tagBg:"#FAECE7",body:"Pulls the ROS2 Jazzy arm64 image to the Jetson Orin Nano Super (JetPack 7.2, Ubuntu 24.04) over SSH and restarts the docker compose stack.",sections:[{heading:"Deploy step",code:"- name: Deploy to Jetson Orin Nano Super\n  env:\n    JETSON_HOST: ${{ secrets.JETSON_HOST }}\n    SSH_KEY: ${{ secrets.JETSON_SSH_KEY }}\n  run: |\n    echo \"$SSH_KEY\" > /tmp/key && chmod 600 /tmp/key\n    ssh -i /tmp/key jetson@$JETSON_HOST \\\n      \"docker pull ghcr.io/$REPO:latest &&\n       docker compose -f ~/rover/docker-compose.yml \\\n         up -d --remove-orphans\""},{heading:"Jetson setup (one time)",code:"# Flash JetPack 7.2 via USB ISO\n# developer.nvidia.com/embedded/jetpack/downloads\n# -> Unified ISO for Jetson Orin Nano Developer Kit\n\n# After flash: Ubuntu 24.04, CUDA 13, kernel 6.8\n# Install ROS2 Jazzy natively or via Docker\nsudo apt install ros-jazzy-ros-base\nsudo apt install ros-jazzy-micro-ros-agent"}]},
+"microros-deploy":{title:"micro-ROS bridge to ESP32",tag:"Stage 6 - Deploy",tagColor:"#993C1D",tagBg:"#FAECE7",body:"The Waveshare UGV Rover PT uses an ESP32 as sub-controller. It owns all real-time motor control via PID at 1 kHz. ROS2 on the Jetson only sends Twist velocity commands.",sections:[{heading:"micro-ROS agent launch",code:"ros2 run micro_ros_agent micro_ros_agent serial \\\n    --dev /dev/ttyUSB0 \\\n    --baudrate 921600 \\\n    --verbose 4"},{heading:"ESP32 watchdog (MCU-02)",code:"// Halt if no cmd_vel for 200ms\nconst uint32_t WATCHDOG_MS = 200;\nvoid loop() {\n  rclc_executor_spin_some(&executor, 1000000);\n  if (millis() - last_cmd_ms > WATCHDOG_MS)\n    set_motor_velocities(0, 0);  // MCU-02\n}"},{heading:"ESP32 responsibilities",items:["PID motor control at 1 kHz (MCU-01) - independent of ROS2", "PWM output to motor drivers (4 geared motors with encoders)", "Encoder reading -> /odom at 50 Hz (MCU-03)", "IMU reading -> /imu/data at 200 Hz (MCU-04)", "Current limit enforcement (MCU-05)", "JSON instruction set over UART (MCU-06)", "Watchdog: safe-stop if agent disconnects (MCU-02)"]}]},
+"smoke":{title:"Smoke test + automatic rollback",tag:"Stage 6 - Deploy",tagColor:"#993C1D",tagBg:"#FAECE7",body:"After deploying to the Jetson Orin Nano Super, verify critical topics are publishing. If any check fails, automatically roll back to :stable image.",sections:[{heading:"Smoke test + rollback",code:"sleep 15\nssh -i /tmp/key jetson@$JETSON_HOST \\\n  \"source /opt/ros/jazzy/setup.bash &&\n   ros2 topic hz /odom --once &&\n   ros2 topic hz /scan --once &&\n   echo SMOKE_PASS\" | grep SMOKE_PASS || (\n  echo Smoke failed - rolling back\n  ssh -i /tmp/key jetson@$JETSON_HOST \\\n    \"docker compose down &&\n     docker run -d ghcr.io/$REPO:stable\"\n  exit 1\n)"},{heading:"Topics verified",items:["/odom - wheel odometry from ESP32 (>= 50 Hz, MCU-03)", "/scan - D500 lidar (>= 10 Hz, SC-04)", "/camera/depth/points - OAK-D Lite (SC-05)", "/imu/data - ESP32 IMU (>= 100 Hz, MCU-04)", "/tf - transform tree valid (base_link to map)"]}]}
+};
+
+var activeId = null;
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function showNode(id) {
+  var data = NODES[id];
+  if (!data) return;
+  if (activeId) {
+    var old = document.getElementById("n-" + activeId);
+    if (old) old.style.outline = "";
+  }
+  activeId = id;
+  var el = document.getElementById("n-" + id);
+  if (el) el.style.outline = "2px solid " + data.tagColor;
+
+  var html = "";
+  html += "<div class=\"dtag\" style=\"color:" + esc(data.tagColor) + ";background:" + esc(data.tagBg) + ";border:1px solid " + esc(data.tagColor) + "40\">" + esc(data.tag) + "</div>";
+  html += "<h2>" + esc(data.title) + "</h2>";
+  html += "<p>" + esc(data.body) + "</p>";
+
+  var sections = data.sections || [];
+  for (var i = 0; i < sections.length; i++) {
+    var s = sections[i];
+    html += "<h3>" + esc(s.heading) + "</h3>";
+    if (s.code) html += "<pre>" + esc(s.code) + "</pre>";
+    if (s.items) {
+      html += "<ul>";
+      for (var j = 0; j < s.items.length; j++) html += "<li>" + esc(s.items[j]) + "</li>";
+      html += "</ul>";
+    }
+    if (s.reqs) {
+      for (var k = 0; k < s.reqs.length; k++) {
+        var req = s.reqs[k];
+        html += "<div class=\"req-row\"><span class=\"req-id\">" + esc(req[0]) + "</span><span class=\"req-text\">" + esc(req[1]) + "</span></div>";
+      }
+    }
+  }
+  document.getElementById("detail-panel").innerHTML = html;
+}
+</script>
+</body>
+</html>

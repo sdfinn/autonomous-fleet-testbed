@@ -1,0 +1,35 @@
+name: Fleet CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  stage-0-requirements:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Stage 0 stub — implement in Session 06"
+
+  stage-1-quality:
+    runs-on: ubuntu-latest
+    needs: stage-0-requirements
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Stage 1 stub — implement in Session 07"
+
+  stage-2-arm64:
+    runs-on: ubuntu-latest
+    needs: stage-1-quality
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Stage 2 stub — implement in Session 08"
+
+  stage-3-gazebo:
+    runs-on: ubuntu-latest
+    needs: stage-2-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Stage 3 stub — implement in Session 09"
