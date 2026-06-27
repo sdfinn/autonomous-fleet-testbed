@@ -88,3 +88,38 @@ def scan_tests(test_dir: Path) -> set:
                 log.debug("  found %s", tid)
     log.debug("Total test functions found: %d", len(found))
     return found
+
+
+def find_orphans(existing: set, all_mapped: set) -> list:
+    """Return sorted list of test IDs that exist but are not mapped to any requirement."""
+    return sorted(existing - all_mapped)
+
+
+def check_coverage(requirements: list, existing: set, skip_ids: set) -> Result:
+    """Classify each requirement as covered, missing, or skipped.
+
+    A requirement is covered when ALL its listed tests exist in existing.
+    Skipped requirements (per robot profile) count neither covered nor missing.
+    Orphans are tests that exist but are not referenced by any non-skipped requirement.
+    """
+    covered, missing, skipped = [], [], []
+    all_mapped: set = set()
+
+    for req in requirements:
+        if req.id in skip_ids:
+            skipped.append(req)
+            log.debug("SKIP %s (robot profile)", req.id)
+            continue
+        req_test_set = set(req.tests)
+        all_mapped.update(req_test_set)
+        if req_test_set.issubset(existing):
+            covered.append(req)
+            log.debug("OK   %s", req.id)
+        else:
+            missing.append(req)
+            log.debug("MISS %s — absent: %s", req.id, req_test_set - existing)
+
+    orphans = find_orphans(existing, all_mapped)
+    if orphans:
+        log.debug("Orphan tests found: %s", orphans)
+    return Result(covered=covered, missing=missing, skipped=skipped, orphans=orphans)
