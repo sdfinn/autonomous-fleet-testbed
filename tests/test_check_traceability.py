@@ -306,3 +306,85 @@ class TestFormatQuiet:
         )
         ct.format_quiet(result)
         assert "FAIL" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# main() integration tests
+# ---------------------------------------------------------------------------
+
+class TestMainCLI:
+    def test_exit_0_when_all_covered(self, traceability_yaml, test_dir_full):
+        with patch("sys.argv", [
+            "check_traceability.py",
+            str(traceability_yaml),
+            str(test_dir_full),
+        ]):
+            rc = ct.main()
+        assert rc == 0
+
+    def test_exit_1_when_requirement_missing(self, traceability_yaml, test_dir_partial):
+        with patch("sys.argv", [
+            "check_traceability.py",
+            str(traceability_yaml),
+            str(test_dir_partial),
+        ]):
+            rc = ct.main()
+        assert rc == 1
+
+    def test_exit_2_on_missing_traceability_file(self, tmp_path, test_dir_full):
+        with patch("sys.argv", [
+            "check_traceability.py",
+            str(tmp_path / "nonexistent.yaml"),
+            str(test_dir_full),
+        ]):
+            with pytest.raises(SystemExit) as exc:
+                ct.main()
+        assert exc.value.code == 2
+
+    def test_exit_2_on_missing_test_dir(self, traceability_yaml, tmp_path):
+        with patch("sys.argv", [
+            "check_traceability.py",
+            str(traceability_yaml),
+            str(tmp_path / "nonexistent_dir"),
+        ]):
+            with pytest.raises(SystemExit) as exc:
+                ct.main()
+        assert exc.value.code == 2
+
+    def test_json_flag_produces_valid_json(self, traceability_yaml, test_dir_full, capsys):
+        with patch("sys.argv", [
+            "check_traceability.py",
+            str(traceability_yaml),
+            str(test_dir_full),
+            "--json",
+        ]):
+            ct.main()
+        data = json.loads(capsys.readouterr().out)
+        assert "summary" in data
+        assert data["summary"]["covered"] == 2
+
+    def test_profile_skip_makes_partial_pass(
+        self, traceability_yaml, test_dir_partial, profile_yaml_with_skip
+    ):
+        """BR-02 skipped by profile + BR-01 covered → exit 0 despite partial tests."""
+        with patch("sys.argv", [
+            "check_traceability.py",
+            str(traceability_yaml),
+            str(test_dir_partial),
+            "--profile", str(profile_yaml_with_skip),
+        ]):
+            rc = ct.main()
+        assert rc == 0
+
+    def test_orphans_do_not_affect_exit_code(self, traceability_yaml, test_dir_full, capsys):
+        """Extra test in test_dir_full that isn't in traceability → warning, exit 0."""
+        extra_test_dir = test_dir_full
+        # Add an extra unmapped test to the test dir
+        (extra_test_dir / "test_extra.py").write_text("def test_unmapped(): pass\n")
+        with patch("sys.argv", [
+            "check_traceability.py",
+            str(traceability_yaml),
+            str(extra_test_dir),
+        ]):
+            rc = ct.main()
+        assert rc == 0

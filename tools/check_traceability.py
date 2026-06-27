@@ -202,3 +202,74 @@ def format_json(result: Result, git_sha, profile_name) -> str:
         ),
         "orphans": result.orphans,
     }, indent=2)
+
+
+def main() -> int:
+    """CLI entry point. Returns 0 (clean), 1 (missing requirements).
+    Calls sys.exit(2) directly for configuration/tool errors.
+    """
+    parser = argparse.ArgumentParser(
+        description="Stage 0 CI gate: every requirement must have a matching test.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Exit codes:\n"
+            "  0  All requirements covered (orphan warnings do not affect exit)\n"
+            "  1  One or more requirements have no matching test\n"
+            "  2  Tool error: bad YAML, missing file, unreadable test\n"
+        ),
+    )
+    parser.add_argument("traceability", help="Path to traceability.yaml")
+    parser.add_argument("test_dir", help="Path to tests/ directory")
+    parser.add_argument(
+        "--profile", help="Robot profile YAML (enables skip_requirements filtering)"
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="Terse output — IDs and status only"
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Machine-readable JSON to stdout"
+    )
+    parser.add_argument(
+        "--debug", action="store_true", help="Verbose DEBUG logging to stderr"
+    )
+    args = parser.parse_args()
+
+    setup_logging(args.debug)
+
+    traceability_path = Path(args.traceability)
+    test_dir = Path(args.test_dir)
+
+    if not traceability_path.exists():
+        log.error("Not found: %s", traceability_path)
+        sys.exit(2)
+    if not test_dir.is_dir():
+        log.error("Not a directory: %s", test_dir)
+        sys.exit(2)
+
+    requirements = load_traceability(traceability_path)
+
+    skip_ids: set = set()
+    profile_name = None
+    if args.profile:
+        profile_path = Path(args.profile)
+        if not profile_path.exists():
+            log.error("Profile not found: %s", profile_path)
+            sys.exit(2)
+        skip_ids = load_profile(profile_path)
+        profile_name = profile_path.stem
+
+    existing = scan_tests(test_dir)
+    result = check_coverage(requirements, existing, skip_ids)
+
+    if args.json:
+        print(format_json(result, None, profile_name))
+    elif args.quiet:
+        format_quiet(result)
+    else:
+        format_rich(result, profile_name)
+
+    return 1 if result.missing else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
