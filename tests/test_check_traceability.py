@@ -206,3 +206,103 @@ class TestCheckCoverage:
                             ["tests/test_navigation.py::test_goal_position_error"])]
         result = ct.check_coverage(reqs, existing, set())
         assert "tests/test_navigation.py::test_zero_collisions" in result.orphans
+
+
+# ---------------------------------------------------------------------------
+# Output formatters
+# ---------------------------------------------------------------------------
+
+def _make_full_result():
+    return Result(
+        covered=[Requirement("BR-01", "Robot reaches goal", ["tests/t.py::test_foo"])],
+        missing=[Requirement("BR-02", "Zero collisions", ["tests/t.py::test_bar"])],
+        skipped=[Requirement("BR-03", "Recovery timeout", ["tests/t.py::test_baz"])],
+        orphans=["tests/t.py::test_orphan"],
+    )
+
+
+class TestFormatJson:
+    def test_required_top_level_keys(self):
+        result = _make_full_result()
+        data = json.loads(ct.format_json(result, "abc123", "jetson_ugv_pt"))
+        assert data["git_sha"] == "abc123"
+        assert data["profile"] == "jetson_ugv_pt"
+        assert "summary" in data
+        assert "requirements" in data
+        assert "orphans" in data
+
+    def test_summary_counts(self):
+        result = _make_full_result()
+        data = json.loads(ct.format_json(result, "sha1", None))
+        assert data["summary"]["covered"] == 1
+        assert data["summary"]["missing"] == 1
+        assert data["summary"]["skipped"] == 1
+        assert data["summary"]["orphans"] == 1
+        assert data["summary"]["total"] == 3  # covered + missing + skipped
+
+    def test_requirement_status_field(self):
+        result = _make_full_result()
+        data = json.loads(ct.format_json(result, "sha1", None))
+        statuses = {r["id"]: r["status"] for r in data["requirements"]}
+        assert statuses["BR-01"] == "covered"
+        assert statuses["BR-02"] == "missing"
+        assert statuses["BR-03"] == "skipped"
+
+    def test_orphans_list(self):
+        result = _make_full_result()
+        data = json.loads(ct.format_json(result, "sha1", None))
+        assert data["orphans"] == ["tests/t.py::test_orphan"]
+
+    def test_null_git_sha_falls_back_gracefully(self):
+        result = Result(covered=[], missing=[], skipped=[], orphans=[])
+        data = json.loads(ct.format_json(result, None, None))
+        assert isinstance(data["git_sha"], str)  # falls back to env or "unknown"
+
+
+class TestFormatRich:
+    def test_covered_requirement_shown(self, capsys):
+        result = Result(
+            covered=[Requirement("BR-01", "Robot reaches goal", ["tests/t.py::test_foo"])],
+            missing=[], skipped=[], orphans=[],
+        )
+        ct.format_rich(result, None)
+        out = capsys.readouterr().out
+        assert "BR-01" in out
+        assert "Robot reaches goal" in out
+
+    def test_missing_requirement_shown(self, capsys):
+        result = Result(
+            covered=[],
+            missing=[Requirement("BR-02", "Zero collisions", ["tests/t.py::test_bar"])],
+            skipped=[], orphans=[],
+        )
+        ct.format_rich(result, None)
+        out = capsys.readouterr().out
+        assert "BR-02" in out
+        assert "Zero collisions" in out
+
+    def test_orphan_warning_shown(self, capsys):
+        result = Result(covered=[], missing=[], skipped=[],
+                        orphans=["tests/t.py::test_orphan"])
+        ct.format_rich(result, None)
+        out = capsys.readouterr().out
+        assert "test_orphan" in out
+
+
+class TestFormatQuiet:
+    def test_covered_shows_ok(self, capsys):
+        result = Result(
+            covered=[Requirement("BR-01", "desc", ["tests/t.py::test_foo"])],
+            missing=[], skipped=[], orphans=[],
+        )
+        ct.format_quiet(result)
+        assert "OK" in capsys.readouterr().out
+
+    def test_missing_shows_fail(self, capsys):
+        result = Result(
+            covered=[],
+            missing=[Requirement("BR-02", "desc", ["tests/t.py::test_bar"])],
+            skipped=[], orphans=[],
+        )
+        ct.format_quiet(result)
+        assert "FAIL" in capsys.readouterr().out
