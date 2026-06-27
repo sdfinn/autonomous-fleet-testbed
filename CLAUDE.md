@@ -19,10 +19,10 @@
 
   # Run Python tests (activate venv first)
   source ~/fleet-env/bin/activate
-  python -m pytest tests/ -v
+  python -m pytest tests/ -v --ignore=tests/test_ros2_contracts.py
 
   # Run traceability gate
-  python tools/check_traceability.py requirements/traceability.yaml tests/
+  python tools/check_traceability.py requirements/traceability.yaml tests/ --profile robot_profiles/jetson_ugv_pt.yaml
 
   # Launch Gazebo world (Session 09+)
   ros2 launch nav_fleet sim_launch.py
@@ -49,3 +49,6 @@
   - Gazebo Harmonic command is `gz sim`, NOT `ign gazebo`
   - URDF topics must use /robot_001/ namespace
   - Isaac Sim session (Session 12): requires NVIDIA driver 570+ for RTX 5080
+  - `requirements.txt` is a full pip freeze of the local ROS2 venv — NOT for CI use. Use `requirements-ci.txt` in CI jobs.
+  - DB path env var is `FLEET_DB` (default: `reports/fleet_runs.db`) — used by telemetry_logger, validate_telemetry, ai_test_generator, dashboard
+  - `tests/test_ros2_contracts.py` requires a live ROS2 environment — always `--ignore` it in local pytest runs
