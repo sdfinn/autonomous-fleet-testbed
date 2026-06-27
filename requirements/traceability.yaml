@@ -17,11 +17,11 @@ requirements:
   - id: BR-04
     description: "/robot_001/odom publishes at >= 50 Hz"
     tests:
-      - tests/test_ros2_contracts.py::test_odom_hz
+      - tests/test_ros2_contracts.py::test_odom_message_schema
   - id: BR-07
     description: "nav_success_rate >= 95% over rolling 20 runs"
     tests:
-      - tests/test_baseline.py::test_nav_success_rate_drift
+      - tests/test_baseline.py::test_drift_detected_above_threshold
   - id: BR-10
     description: "Nav2 behavior tree returns SUCCESS"
     tests:
@@ -29,8 +29,8 @@ requirements:
   - id: SC-04
     description: "/robot_001/scan publishes at >= 10 Hz"
     tests:
-      - tests/test_ros2_contracts.py::test_lidar_hz
+      - tests/test_ros2_contracts.py::test_scan_message_schema
   - id: SC-05
     description: "/robot_001/camera/image_raw publishes at >= 10 Hz"
     tests:
-      - tests/test_ros2_contracts.py::test_camera_hz
+      - tests/test_ros2_contracts.py::test_camera_image_schema
