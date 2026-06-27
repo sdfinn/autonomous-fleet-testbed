@@ -3,12 +3,15 @@ import os
 import sqlite3
 from datetime import datetime
 from anthropic import Anthropic
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 class AITestScenarioGenerator:
-    def __init__(self, db_path="robot_test_results.db"):
+    def __init__(self, db_path=None):
+        db_path = db_path or os.environ.get("FLEET_DB", "reports/fleet_runs.db")
         self.db_path = db_path
         self.client = Anthropic()
         self.model = "claude-sonnet-4-6"
@@ -20,8 +23,9 @@ class AITestScenarioGenerator:
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT id, scenario, steps, final_x, final_y, result, 
-                   speed_avg, battery_percent_start, battery_percent_end, obstacle_count
+            SELECT id, scenario, steps, final_x, final_y, result,
+                   nav_success_rate, mean_position_error, collision_rate,
+                   odom_hz_mean, lidar_hz_mean, camera_hz_mean
             FROM runs
             ORDER BY id DESC
             LIMIT ?
@@ -112,7 +116,7 @@ Generate {num_scenarios} creative, realistic scenarios:"""
         except json.JSONDecodeError as e:
             print(f"Failed to parse Claude response: {e}")
             print(f"Raw response: {response_text}")
-            return []
+            return [], None
         
         return scenarios, response.usage
     

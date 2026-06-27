@@ -1,18 +1,19 @@
+# Copyright 2026 Mike. Licensed under MIT.
+"""Pandera schema validation for fleet telemetry database."""
 import os
 import sqlite3
 import pandas as pd
 import pandera as pa
-from pandera import Check, DataFrameModel
+from pandera import Check, Column, DataFrameModel, DataFrameSchema
 from pandera.typing import Series
 
-# Resolves to project root on any OS; overridable via env var for CI ephemeral DBs
-DB_PATH = os.getenv(
-    "ROBOT_DB_PATH",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                 "robot_test_results.db")
-)
+DB_PATH = os.environ.get("FLEET_DB", "reports/fleet_runs.db")
+
 
 class RunsModel(DataFrameModel):
+    class Config:
+        coerce = True
+
     id: Series[int]
     scenario: Series[str]
     timestamp: Series[str]
@@ -22,15 +23,21 @@ class RunsModel(DataFrameModel):
     result: Series[str] = pa.Field(isin=["PASS", "FAIL", "STOPPED", "TIMEOUT"])
     runner_type: Series[str] = pa.Field(isin=["qemu", "jetson", "local"], nullable=True)
     robot_type: Series[str] = pa.Field(nullable=True)
+    nav_success_rate: Series[float] = pa.Field(ge=0, le=1, nullable=True)
+    mean_position_error: Series[float] = pa.Field(ge=0, nullable=True)
+    mean_time_to_goal: Series[float] = pa.Field(ge=0, nullable=True)
+    collision_rate: Series[float] = pa.Field(ge=0, le=1, nullable=True)
+    odom_hz_mean: Series[float] = pa.Field(ge=0, nullable=True)
+    lidar_hz_mean: Series[float] = pa.Field(ge=0, nullable=True)
     camera_hz_mean: Series[float] = pa.Field(ge=0, nullable=True)
     firmware_test_pass_rate: Series[float] = pa.Field(ge=0, le=1, nullable=True)
     stage_timings_sec: Series[str] = pa.Field(nullable=True)
-    battery_percent_start: Series[float] = pa.Field(in_range=(0, 100), nullable=True)
-    battery_percent_end: Series[float] = pa.Field(in_range=(0, 100), nullable=True)
-    # float not int: pandas stores nullable integer columns as float64 (NaN can't live in int64)
-    obstacle_count: Series[float] = pa.Field(in_range=(0, 10), nullable=True)
+    lidar_min_range: Series[float] = pa.Field(ge=0, nullable=True)
+    lidar_max_range: Series[float] = pa.Field(ge=0, nullable=True)
+    num_obstacles_detected: Series[float] = pa.Field(ge=0, nullable=True)
 
-RUNS_SCHEMA = RunsModel.to_schema(coerce=True)
+
+RUNS_SCHEMA = RunsModel.to_schema()
 
 STEPS_SCHEMA = DataFrameSchema({
     "id":     Column(int,   nullable=False),
@@ -42,18 +49,17 @@ STEPS_SCHEMA = DataFrameSchema({
 
 KNOWN_RUNS_COLS = {
     "id", "scenario", "timestamp", "steps", "final_x", "final_y", "result",
-    "runner_type", "robot_type", "camera_hz_mean", "firmware_test_pass_rate",
+    "runner_type", "robot_type",
+    "nav_success_rate", "mean_position_error", "mean_time_to_goal", "collision_rate",
+    "odom_hz_mean", "lidar_hz_mean", "camera_hz_mean", "firmware_test_pass_rate",
     "stage_timings_sec",
-    "speed_avg", "battery_percent_start", "battery_percent_end", "obstacle_count",
     "lidar_min_range", "lidar_max_range", "num_obstacles_detected",
-    "num_frames", "detections_per_frame_avg", "class_distribution",
 }
 
 
 def validate_runs(db_path=DB_PATH) -> bool:
-    conn = sqlite3.connect(db_path)
-    df = pd.read_sql("SELECT * FROM runs", conn)
-    conn.close()
+    with sqlite3.connect(db_path) as conn:
+        df = pd.read_sql("SELECT * FROM runs", conn)
     try:
         RUNS_SCHEMA.validate(df, lazy=True)
         print(f"✅ runs: {len(df)} rows valid")
@@ -64,9 +70,8 @@ def validate_runs(db_path=DB_PATH) -> bool:
 
 
 def validate_steps(db_path=DB_PATH) -> bool:
-    conn = sqlite3.connect(db_path)
-    df = pd.read_sql("SELECT * FROM steps", conn)
-    conn.close()
+    with sqlite3.connect(db_path) as conn:
+        df = pd.read_sql("SELECT * FROM steps", conn)
     try:
         STEPS_SCHEMA.validate(df, lazy=True)
         print(f"✅ steps: {len(df)} rows valid")
@@ -77,9 +82,8 @@ def validate_steps(db_path=DB_PATH) -> bool:
 
 
 def detect_schema_drift(db_path=DB_PATH) -> bool:
-    conn = sqlite3.connect(db_path)
-    actual = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
-    conn.close()
+    with sqlite3.connect(db_path) as conn:
+        actual = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
     unexpected = actual - KNOWN_RUNS_COLS
     if unexpected:
         print(f"⚠️  Schema drift — unexpected columns: {unexpected}")
