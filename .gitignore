@@ -22,6 +22,9 @@
   reports/*.pdf
   reports/*.html
 
+  # CI-generated traceability report (regenerated each run)
+  reports/traceability_latest.json
+
   # Generated maps (from SLAM)
   maps/*.pgm
   maps/*.yaml

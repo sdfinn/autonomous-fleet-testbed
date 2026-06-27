@@ -5,6 +5,7 @@
   ubuntu_version: "24.04"
   cuda_version: "13"
   nav_stack: nav2_full
+  skip_requirements: []  # Jetson UGV PT supports full Nav2 stack — no requirements skipped
   namespace: /robot_001
 
   sensors:
