@@ -8,7 +8,7 @@
 
 ## The Project in One Sentence
 
-An open-source CI/CD pipeline that doesn't just test robot software, but continuously validates, simulates, and improves the intelligence of autonomous robot fleets — from a single robot navigating a room to a coordinated fleet executing autonomous missions.
+A portfolio-ready CI/CD pipeline that doesn't just test robot software, but continuously validates, simulates, and improves the intelligence of autonomous robot fleets — from a single robot navigating a room to a coordinated fleet executing autonomous missions. Designed to be open-sourceable as a framework product, on the owner's timeline.
 
 ---
 
@@ -20,7 +20,7 @@ This project produces two complementary, independently-demoable products.
 
 > *"How do you know your robot software works before you deploy it to hardware?"*
 
-An open-source, robot-agnostic CI/CD pipeline that any ROS2 team can adopt. The value is the infrastructure: requirements traceability, drift detection, simulation gates, hardware deployment, and automated reports. Demonstrates CI/CD discipline, test automation rigor, and release management expertise applied to robotics.
+A robot-agnostic CI/CD pipeline built on open-source tools (ROS2, Gazebo, GitHub Actions, Docker, pytest). Designed so any ROS2 team could adopt it — with the option to open-source it as a product on the owner's timeline. The value is the infrastructure: requirements traceability, drift detection, simulation gates, hardware deployment, and automated reports.
 
 Lives in: `tools/`, `.github/workflows/`, `requirements/`, `reports/`
 
@@ -190,9 +190,21 @@ Push to main
 | 5 | `reports/<run_id>.pdf`, dashboard data, GHA summary annotation |
 | 6 | Deployment confirmation, sim-to-real comparison report |
 
-### Local CI with `act`
+### Local Testing vs. Self-Hosted Runners
 
-`act` (https://github.com/nektos/act) runs GitHub Actions workflows locally in Docker, enabling fast iteration on Stages 0–3 without pushing to GitHub or burning Actions minutes. Stages 4 (RTX 5080) and 6 (real hardware) require their respective physical environments regardless.
+**Two different concepts — often confused:**
+
+- **Local script execution (primary approach):** Because all heavy logic lives in `tools/` Python scripts and the YAML just calls them (`python tools/check_traceability.py ...`), you can test every tool by running it directly in the terminal. No special tooling needed. This is the recommended first line of local testing.
+
+- **`act` (https://github.com/nektos/act):** A local emulator that reads your `.github/workflows/` YAML and runs it in Docker on your machine. GitHub never sees it. Useful when you're debugging the workflow YAML structure itself — job dependencies, env variable injection, `needs:` ordering. Not needed for testing the Python logic inside the steps.
+
+- **Self-hosted runner (official GitHub agent):** Software you register to your repo on GitHub. GitHub orchestrates the workflow on their servers and tells your machine to execute the steps. Requires internet connection to GitHub. Used in this project for stages that need specific hardware:
+
+| Stage | Runner type | Label |
+|---|---|---|
+| 0–3 | GitHub-hosted (cloud) | `ubuntu-latest` |
+| 4 | Self-hosted on workstation | `[self-hosted, rtx5080]` |
+| 6 | Self-hosted on Jetson | `[self-hosted, arm64, jetson]` |
 
 ---
 
