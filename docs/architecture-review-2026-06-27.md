@@ -18,9 +18,12 @@ Reviewed by: Claude Opus 4.8 after Session 06 completion, before Session 07 begi
 
 ## P0 — Fix Before Session 07 (Broken Today)
 
-### 1. `validate_telemetry.py` — NameError on import
-`Column` and `DataFrameSchema` are used but not imported. File crashes before executing any logic.
-**Fix:** Add missing imports from `pandera`.
+### 1. `validate_telemetry.py` — TypeError on import (pandera 0.32 API change)
+`DataFrameModel.to_schema(coerce=True)` crashes at module load — pandera 0.32 removed the `coerce`
+keyword from `to_schema()`. The frozen venv has pandera 0.32, pandas 3.0, numpy 2.5, which are
+all newer than the Isaac Sim migration code was written against.
+**Fix:** Remove `coerce=True` from the `to_schema()` call and validate coercion at the call
+site instead, or pass `coerce=True` to the validator rather than the schema builder.
 
 ### 2. `ai_test_generator.py` — Error path returns wrong type
 `generate_scenarios()` returns `[]` on JSON parse failure, but the caller unpacks it as `(scenarios, usage)`.
