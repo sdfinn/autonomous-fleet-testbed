@@ -10,12 +10,12 @@
 
 | # | Title | Phase | Status |
 |---|---|---|---|
-| 01 | Ubuntu 24.04 Dual Boot | A | ⬜ |
-| 02 | ROS2 Jazzy + Gazebo Harmonic | A | ⬜ |
-| 03 | Docker + Tools + GitHub CLI | A | ⬜ |
-| 04 | GitHub Repo + Project Skeleton | A | ⬜ |
-| 05 | File Migration from Current Project | A | ⬜ |
-| 06 | Stage 0 — Requirements Gate | A | ⬜ |
+| 01 | Ubuntu 24.04 Dual Boot | A | ✅ |
+| 02 | ROS2 Jazzy + Gazebo Harmonic | A | ✅ |
+| 03 | Docker + Tools + GitHub CLI | A | ✅ |
+| 04 | GitHub Repo + Project Skeleton | A | ✅ |
+| 05 | File Migration from Current Project | A | ✅ |
+| 06 | Stage 0 — Requirements Gate | A | ✅ |
 | 07 | Stage 1 — Code Quality Gate | A | ⬜ |
 | 08 | Stage 2 — arm64 Cross-Compile + QEMU Baseline | A | ⬜ |
 | 09 | Stage 3 Part 1 — URDF + Nav2 in Gazebo Headless | A | ⬜ |
@@ -1047,7 +1047,7 @@ The changes below are the minimum needed to run correctly in the new project. De
 
 ### Steps
 
-- [ ] **Create `tools/check_traceability.py`:**
+- [x] **Create `tools/check_traceability.py`:**
   ```python
   #!/usr/bin/env python3
   """Stage 0 CI gate: every requirement ID must map to a test that exists."""
@@ -1123,7 +1123,7 @@ The changes below are the minimum needed to run correctly in the new project. De
       main()
   ```
 
-- [ ] **Test it locally:**
+- [x] **Test it locally:**
   ```bash
   cd ~/autonomous-fleet-testbed
   python tools/check_traceability.py requirements/traceability.yaml tests/
@@ -1131,7 +1131,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   # The tool itself must not crash. Exit code 1 is expected until Session 09.
   ```
 
-- [ ] **Wire Stage 0 into CI:**
+- [x] **Wire Stage 0 into CI:**
   Edit `.github/workflows/ci.yml` — replace the Stage 0 stub job:
   ```yaml
   stage-0-requirements:
@@ -1153,7 +1153,7 @@ The changes below are the minimum needed to run correctly in the new project. De
 
   > **Note:** `continue-on-error: true` on Stage 0 is intentional while tests are being built out. Remove it in Session 10 when Stage 3 tests pass.
 
-- [ ] **Add PyYAML to a requirements.txt:**
+- [x] **Add PyYAML to a requirements.txt:**
   ```bash
   cat > requirements.txt << 'EOF'
   pyyaml>=6.0
@@ -1169,7 +1169,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   EOF
   ```
 
-- [ ] **Commit:**
+- [x] **Commit:**
   ```bash
   git add .
   git commit -m "feat: Stage 0 traceability gate — check_traceability.py + requirements.txt + CI job"
