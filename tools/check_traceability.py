@@ -123,3 +123,82 @@ def check_coverage(requirements: list, existing: set, skip_ids: set) -> Result:
     if orphans:
         log.debug("Orphan tests found: %s", orphans)
     return Result(covered=covered, missing=missing, skipped=skipped, orphans=orphans)
+
+
+def _print_summary(result: Result) -> None:
+    total = len(result.covered) + len(result.missing) + len(result.skipped)
+    parts = [f"{len(result.covered)}/{total} requirements covered"]
+    if result.skipped:
+        parts.append(f"{len(result.skipped)} skipped by profile")
+    if result.orphans:
+        parts.append(f"{len(result.orphans)} orphan test(s)")
+    print("  ".join(parts))
+
+
+def format_rich(result: Result, profile_name) -> None:
+    """Human-readable output with requirement text inline."""
+    if profile_name:
+        print(f"Profile: {profile_name}")
+    print()
+    for req in result.covered:
+        print(f"  ✓  {req.id}  [{req.description}]")
+        for test in req.tests:
+            print(f"       {test}")
+    for req in result.skipped:
+        print(f"  –  {req.id}  [{req.description}]  (skipped by profile)")
+    for req in result.missing:
+        print(f"  ✗  {req.id}  [{req.description}]")
+        for test in req.tests:
+            print(f"       MISSING: {test}")
+    if result.orphans:
+        print()
+        print("  Orphan tests (exist but not mapped to any requirement):")
+        for t in result.orphans:
+            print(f"    ⚠  {t}")
+    print()
+    _print_summary(result)
+
+
+def format_quiet(result: Result) -> None:
+    """Terse output — IDs and status only."""
+    for req in result.covered:
+        print(f"OK    {req.id}")
+    for req in result.skipped:
+        print(f"SKIP  {req.id}")
+    for req in result.missing:
+        print(f"FAIL  {req.id}")
+    for t in result.orphans:
+        print(f"WARN  ORPHAN {t}")
+    _print_summary(result)
+
+
+def format_json(result: Result, git_sha, profile_name) -> str:
+    """Machine-readable JSON for stdout redirect and CI artifact upload."""
+    import os
+    sha = git_sha or os.environ.get("GITHUB_SHA", "unknown")
+
+    def _req_dict(req: Requirement, status: str) -> dict:
+        return {
+            "id": req.id,
+            "description": req.description,
+            "status": status,
+            "tests": req.tests,
+        }
+
+    return json.dumps({
+        "git_sha": sha,
+        "profile": profile_name,
+        "summary": {
+            "total": len(result.covered) + len(result.missing) + len(result.skipped),
+            "covered": len(result.covered),
+            "missing": len(result.missing),
+            "skipped": len(result.skipped),
+            "orphans": len(result.orphans),
+        },
+        "requirements": (
+            [_req_dict(r, "covered") for r in result.covered]
+            + [_req_dict(r, "missing") for r in result.missing]
+            + [_req_dict(r, "skipped") for r in result.skipped]
+        ),
+        "orphans": result.orphans,
+    }, indent=2)
