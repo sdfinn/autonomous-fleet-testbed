@@ -1,7 +1,6 @@
 # Copyright 2026 Mike. Licensed under MIT.
 """Tests for tools/check_traceability.py"""
 import json
-import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch

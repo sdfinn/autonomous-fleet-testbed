@@ -43,6 +43,7 @@ def load_traceability(path: Path) -> list:
     except Exception as exc:
         log.error("Cannot load %s: %s", path, exc)
         sys.exit(2)
+    data = data or {}
     requirements = []
     for req in data.get("requirements", []):
         requirements.append(Requirement(
@@ -71,6 +72,9 @@ def scan_tests(test_dir: Path) -> set:
 
     IDs are relative to test_dir.parent so they match traceability.yaml entries
     (e.g. test_dir=tests/ → ID starts with 'tests/').
+    Note: only module-level test functions are detected. Class-based tests
+    (TestClass::test_method) are not supported — traceability.yaml must use
+    the bare function name form.
     """
     found = set()
     for test_file in sorted(test_dir.rglob("test_*.py")):
@@ -82,7 +86,7 @@ def scan_tests(test_dir: Path) -> set:
             continue
         rel = test_file.relative_to(test_dir.parent)
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
                 tid = f"{rel}::{node.name}"
                 found.add(tid)
                 log.debug("  found %s", tid)
