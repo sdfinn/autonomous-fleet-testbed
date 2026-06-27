@@ -11,7 +11,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo "Stage 0 stub — implement in Session 06"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Traceability gate
+        run: |
+          python tools/check_traceability.py \
+            requirements/traceability.yaml \
+            tests/ \
+            --profile robot_profiles/jetson_ugv_pt.yaml \
+            --json > reports/traceability_latest.json
+          cat reports/traceability_latest.json
+        continue-on-error: true
+        # ↑ Remove continue-on-error in Session 10 once all Session 09 tests pass
+
+      - name: Upload traceability report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: traceability-report
+          path: reports/traceability_latest.json
 
   stage-1-quality:
     runs-on: ubuntu-latest
