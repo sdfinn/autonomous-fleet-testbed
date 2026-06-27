@@ -64,3 +64,27 @@ def load_profile(path: Path) -> set:
     skip = set(data.get("skip_requirements", []))
     log.debug("Profile %s: skipping %s", path.stem, skip or "nothing")
     return skip
+
+
+def scan_tests(test_dir: Path) -> set:
+    """Return all 'tests/module.py::func_name' IDs found in test_dir.
+
+    IDs are relative to test_dir.parent so they match traceability.yaml entries
+    (e.g. test_dir=tests/ → ID starts with 'tests/').
+    """
+    found = set()
+    for test_file in sorted(test_dir.rglob("test_*.py")):
+        log.debug("Scanning %s", test_file)
+        try:
+            tree = ast.parse(test_file.read_text())
+        except SyntaxError as exc:
+            log.warning("Skipping %s — syntax error: %s", test_file, exc)
+            continue
+        rel = test_file.relative_to(test_dir.parent)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
+                tid = f"{rel}::{node.name}"
+                found.add(tid)
+                log.debug("  found %s", tid)
+    log.debug("Total test functions found: %d", len(found))
+    return found

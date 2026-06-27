@@ -113,3 +113,30 @@ class TestLoadProfile:
         with pytest.raises(SystemExit) as exc:
             ct.load_profile(tmp_path / "missing.yaml")
         assert exc.value.code == 2
+
+
+# ---------------------------------------------------------------------------
+# scan_tests
+# ---------------------------------------------------------------------------
+
+class TestScanTests:
+    def test_finds_test_functions(self, test_dir_full):
+        found = ct.scan_tests(test_dir_full)
+        assert "tests/test_navigation.py::test_goal_position_error" in found
+        assert "tests/test_navigation.py::test_zero_collisions" in found
+
+    def test_ignores_non_test_functions(self, test_dir_full):
+        found = ct.scan_tests(test_dir_full)
+        assert not any("helper" in t for t in found)
+
+    def test_empty_directory_returns_empty_set(self, tmp_path):
+        d = tmp_path / "tests"
+        d.mkdir()
+        assert ct.scan_tests(d) == set()
+
+    def test_gracefully_skips_syntax_error_files(self, tmp_path):
+        d = tmp_path / "tests"
+        d.mkdir()
+        (d / "test_broken.py").write_text("def test_ok(): pass\ndef broken(: !!!")
+        result = ct.scan_tests(d)
+        assert isinstance(result, set)  # did not raise
