@@ -1,28 +1,36 @@
-  # Every requirement ID must map to at least one test.
-  # check_traceability.py fails CI if any ID is uncovered.
+# Every requirement ID must map to at least one test.
+# check_traceability.py fails CI if any ID is uncovered.
 
-  requirements:
-    - id: BR-01
-      tests:
-        - tests/test_navigation.py::test_goal_position_error
-    - id: BR-02
-      tests:
-        - tests/test_navigation.py::test_zero_collisions
-    - id: BR-03
-      tests:
-        - tests/test_navigation.py::test_recovery_timeout
-    - id: BR-04
-      tests:
-        - tests/test_ros2_contracts.py::test_odom_hz
-    - id: BR-07
-      tests:
-        - tests/test_baseline.py::test_nav_success_rate_drift
-    - id: BR-10
-      tests:
-        - tests/test_navigation.py::test_bt_success
-    - id: SC-04
-      tests:
-        - tests/test_ros2_contracts.py::test_lidar_hz
-    - id: SC-05
-      tests:
-        - tests/test_ros2_contracts.py::test_camera_hz
+requirements:
+  - id: BR-01
+    description: "Robot reaches goal within 0.15m Euclidean distance"
+    tests:
+      - tests/test_navigation.py::test_goal_position_error
+  - id: BR-02
+    description: "Zero collisions per navigation run"
+    tests:
+      - tests/test_navigation.py::test_zero_collisions
+  - id: BR-03
+    description: "Recovery behavior completes within 10s if triggered"
+    tests:
+      - tests/test_navigation.py::test_recovery_timeout
+  - id: BR-04
+    description: "/robot_001/odom publishes at >= 50 Hz"
+    tests:
+      - tests/test_ros2_contracts.py::test_odom_hz
+  - id: BR-07
+    description: "nav_success_rate >= 95% over rolling 20 runs"
+    tests:
+      - tests/test_baseline.py::test_nav_success_rate_drift
+  - id: BR-10
+    description: "Nav2 behavior tree returns SUCCESS"
+    tests:
+      - tests/test_navigation.py::test_bt_success
+  - id: SC-04
+    description: "/robot_001/scan publishes at >= 10 Hz"
+    tests:
+      - tests/test_ros2_contracts.py::test_lidar_hz
+  - id: SC-05
+    description: "/robot_001/camera/image_raw publishes at >= 10 Hz"
+    tests:
+      - tests/test_ros2_contracts.py::test_camera_hz
