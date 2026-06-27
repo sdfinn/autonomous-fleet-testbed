@@ -140,3 +140,69 @@ class TestScanTests:
         (d / "test_broken.py").write_text("def test_ok(): pass\ndef broken(: !!!")
         result = ct.scan_tests(d)
         assert isinstance(result, set)  # did not raise
+
+
+# ---------------------------------------------------------------------------
+# find_orphans
+# ---------------------------------------------------------------------------
+
+class TestFindOrphans:
+    def test_no_orphans_when_all_mapped(self):
+        existing = {"tests/test_nav.py::test_foo"}
+        mapped = {"tests/test_nav.py::test_foo"}
+        assert ct.find_orphans(existing, mapped) == []
+
+    def test_finds_unmapped_test(self):
+        existing = {"tests/test_nav.py::test_foo", "tests/test_nav.py::test_bar"}
+        mapped = {"tests/test_nav.py::test_foo"}
+        assert ct.find_orphans(existing, mapped) == ["tests/test_nav.py::test_bar"]
+
+    def test_returns_sorted_list(self):
+        existing = {"tests/z.py::test_z", "tests/a.py::test_a"}
+        assert ct.find_orphans(existing, set()) == [
+            "tests/a.py::test_a",
+            "tests/z.py::test_z",
+        ]
+
+
+# ---------------------------------------------------------------------------
+# check_coverage
+# ---------------------------------------------------------------------------
+
+class TestCheckCoverage:
+    def _reqs(self):
+        return [
+            Requirement("BR-01", "desc1",
+                        ["tests/test_navigation.py::test_goal_position_error"]),
+            Requirement("BR-02", "desc2",
+                        ["tests/test_navigation.py::test_zero_collisions"]),
+        ]
+
+    def test_all_covered(self, test_dir_full):
+        existing = ct.scan_tests(test_dir_full)
+        result = ct.check_coverage(self._reqs(), existing, set())
+        assert len(result.covered) == 2
+        assert len(result.missing) == 0
+        assert len(result.skipped) == 0
+
+    def test_partial_coverage_marks_missing(self, test_dir_partial):
+        existing = ct.scan_tests(test_dir_partial)
+        result = ct.check_coverage(self._reqs(), existing, set())
+        assert len(result.covered) == 1
+        assert len(result.missing) == 1
+        assert result.missing[0].id == "BR-02"
+
+    def test_skipped_requirements_not_in_missing(self, test_dir_partial):
+        existing = ct.scan_tests(test_dir_partial)
+        result = ct.check_coverage(self._reqs(), existing, {"BR-02"})
+        assert len(result.skipped) == 1
+        assert result.skipped[0].id == "BR-02"
+        assert len(result.missing) == 0
+
+    def test_unmapped_test_becomes_orphan(self, test_dir_full):
+        # test_dir_full has test_zero_collisions; only map BR-01
+        existing = ct.scan_tests(test_dir_full)
+        reqs = [Requirement("BR-01", "d",
+                            ["tests/test_navigation.py::test_goal_position_error"])]
+        result = ct.check_coverage(reqs, existing, set())
+        assert "tests/test_navigation.py::test_zero_collisions" in result.orphans
