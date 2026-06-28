@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
 
 # Python deps (CI-safe subset — not the full venv pip freeze)
 COPY requirements-ci.txt /tmp/requirements-ci.txt
-RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements-ci.txt
+RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed -r /tmp/requirements-ci.txt
 
 # DDS
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
