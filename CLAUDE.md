@@ -29,11 +29,13 @@ Commit to CI only when the x86 pipeline is clean. See BLUEPRINT.md "Tiered devel
 
 ## Key Commands
 ```bash
-# Full local pipeline (Tier 1 — primary dev loop)
-source ~/fleet-env/bin/activate
-colcon build --symlink-install && source install/setup.bash
+# New terminal — .bashrc auto-sources ROS2, CycloneDDS, fleet-env, and workspace overlay.
+# Only need to build + launch:
+colcon build --symlink-install
+ros2 launch src/nav_fleet/launch/sim_launch.py   # Session 09+ — Gazebo locally
+
+# Run Python unit tests (venv auto-activated by .bashrc)
 python -m pytest tests/ -v --ignore=tests/test_ros2_contracts.py
-ros2 launch nav_fleet sim_launch.py    # Session 09+
 
 # Traceability gate
 python tools/check_traceability.py requirements/traceability.yaml tests/ \
@@ -48,23 +50,33 @@ docker buildx build --platform linux/arm64 \
 ```
 
 ## Directory Layout
-- `src/nav_fleet/`  — ROS2 colcon package (nav runner, metrics collector)
+- `src/nav_fleet/`         — ROS2 colcon package (nav runner, metrics collector)
+  - `launch/sim_launch.py` — main launch file (Gazebo + bridge)
+  - `urdf/ugv_pt.urdf.xacro` — 4-wheel UGV robot URDF (diff-drive, lidar, camera)
+  - `worlds/bedroom_simple.sdf` — real bedroom geometry from BC/isaac_project measurements
+  - `maps/`                — pre-built Nav2 occupancy grid from BC project (0.05 m/px)
+  - `config/nav2_params.yaml` — Nav2 params tuned for this room and robot
 - `tools/`          — Python utilities (baseline monitor, telemetry logger, etc.)
 - `tests/`          — pytest test suite
-- `config/`         — nav2_params.yaml, drift_config.yaml
-- `worlds/`         — Gazebo SDF world files
-- `urdf/`           — Robot URDF/xacro files
+- `config/`         — drift_config.yaml
 - `robot_profiles/` — Per-robot capability YAML
 - `requirements/`   — Traceability matrix and requirement specs
 - `reports/history/`— CI run JSON reports (drift detection reads from here)
 - `.github/workflows/ci.yml` — 6-stage CI pipeline
+- `GazeboCommands.md` — Gazebo viewer navigation cheat sheet
 
 ## Gotchas
-- Always `source install/setup.bash` after colcon build
-- RMW_IMPLEMENTATION=rmw_cyclonedds_cpp must be set (in .bashrc)
+- `.bashrc` now sources ROS2, CycloneDDS, fleet-env venv, AND workspace overlay automatically.
+  After `colcon build`, a new terminal picks up all changes — no manual `source install/setup.bash` needed.
+- `source install/setup.bash` still required in the same terminal that ran `colcon build`.
 - Gazebo Harmonic command is `gz sim`, NOT `ign gazebo`
 - URDF topics must use /robot_001/ namespace
-- Isaac Sim session (Session 12): requires NVIDIA driver 570+ for RTX 5080
+- Launch file uses `pathlib.Path(__file__).parent.parent` instead of `get_package_share_directory`
+  because `colcon-ament-python` is not installed — this is intentional and correct.
+- OGRE2 (Gazebo Harmonic renderer) needs `<diffuse>` in SDF materials, not just `<ambient>`.
+  Ambient-only = black surfaces. Both the SDF world and URDF gazebo blocks use `<diffuse>`.
+- Isaac Sim session (Session 12 / deferred): requires NVIDIA driver 570+ for RTX 5080
 - `requirements.txt` is a full pip freeze of the local ROS2 venv — NOT for CI use. Use `requirements-ci.txt` in CI jobs.
 - DB path env var is `FLEET_DB` (default: `reports/fleet_runs.db`) — used by telemetry_logger, validate_telemetry, ai_test_generator, dashboard
 - `tests/test_ros2_contracts.py` requires a live ROS2 environment — always `--ignore` it in local pytest runs
+- CI stage-0 exits with code 1 intentionally (missing Session 10 tests). `continue-on-error: true` is in place; remove it in Session 10.
