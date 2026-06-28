@@ -135,3 +135,7 @@ Two tiers, complementary — not competitors:
 - **2026-06-27 — Isaac Sim / Stage 4 deferred-and-positioned.** Reserved slot in the 6-stage pipeline; reframed as the "fidelity tier" alongside Gazebo's "throughput tier." Deferred on priority, not difficulty. Affects `Release1Todo.md` session 12 only.
 - **2026-06-27 — Agentic loop scoped to human-in-the-loop for portfolio/demo.** Full unattended autonomy is roadmap, not a claim.
 - **2026-06-27 — BLUEPRINT.md created** as the master brief; `robotics_cicd_10x_blueprint.md` retained as reference-only source dialogue. CLAUDE.md pointer corrected.
+- **2026-06-28 — Stage 2 arm64 QEMU baseline recorded** (Session 08). Both local and GHA builds green after fixing two issues: (1) `contents: read` missing from GHA job permissions block — adding `packages: write` alone revokes all other defaults including checkout access; (2) `pluggy` uninstall conflict — `ros:jazzy-ros-base` installs pytest/pluggy via apt with no pip RECORD file; fixed with `--ignore-installed`. Timings:
+  - **GHA ubuntu-latest (QEMU, cold build):** 23m43s — authoritative Phase B comparison baseline
+  - **Local RTX 5080 workstation (QEMU, pip+colcon only — apt layers cached from failed first attempt):** 37m23s — full uncached local would be ~60+ min
+  - **Phase B Jetson native arm64 runner:** TBD — Session 15 (expect 3–5 min; delta vs GHA baseline = the headline speedup number)

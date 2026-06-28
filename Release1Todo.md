@@ -17,7 +17,7 @@
 | 05 | File Migration from Current Project | A | ✅ |
 | 06 | Stage 0 — Requirements Gate | A | ✅ |
 | 07 | Stage 1 — Code Quality Gate | A | ✅ |
-| 08 | Stage 2 — arm64 Cross-Compile + QEMU Baseline | A | ⬜ |
+| 08 | Stage 2 — arm64 Cross-Compile + QEMU Baseline | A | ✅ |
 | 09 | Stage 3 Part 1 — URDF + Nav2 in Gazebo Headless | A | ⬜ |
 | 10 | Stage 3 Part 2 — First Passing Nav Test + Drift Wired | A | ⬜ |
 | 11 | Tag ci-qemu-baseline + Document Timing | A | ⬜ |
@@ -1295,7 +1295,7 @@ The changes below are the minimum needed to run correctly in the new project. De
 
 ### Steps
 
-- [ ] **Create `Dockerfile`:**
+- [x] **Create `Dockerfile`:**
   ```dockerfile
   # Dockerfile — arm64 ROS2 Jazzy nav_fleet build
   FROM ros:jazzy-ros-base
@@ -1333,7 +1333,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   CMD ["/bin/bash"]
   ```
 
-- [ ] **Build arm64 image locally (QEMU — this is slow, ~25–30 min, record the time):**
+- [x] **Build arm64 image locally (QEMU — this is slow, ~25–30 min, record the time):**
   ```bash
   cd ~/autonomous-fleet-testbed
 
@@ -1352,7 +1352,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   # Write this number down — it's the baseline for Phase B comparison
   ```
 
-- [ ] **Push image to GitHub Container Registry:**
+- [x] **Push image to GitHub Container Registry:**
   ```bash
   # Authenticate with GHCR
   echo $GITHUB_TOKEN | docker login ghcr.io -u sdfinn70 --password-stdin
@@ -1362,7 +1362,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   docker push ghcr.io/sdfinn/autonomous-fleet-testbed:latest
   ```
 
-- [ ] **Wire Stage 2 into CI** — replace the Stage 2 stub job in `ci.yml`:
+- [x] **Wire Stage 2 into CI** — replace the Stage 2 stub job in `ci.yml`:
   ```yaml
   stage-2-arm64:
     runs-on: ubuntu-latest
@@ -1406,7 +1406,7 @@ The changes below are the minimum needed to run correctly in the new project. De
           echo "stage_2_build_s=${BUILD_S}" >> $GITHUB_STEP_SUMMARY
   ```
 
-- [ ] **Commit and let CI run:**
+- [x] **Commit and let CI run:**
   ```bash
   git add .
   git commit -m "feat: Stage 2 arm64 QEMU cross-compile — Dockerfile + GHA workflow"
@@ -1416,7 +1416,11 @@ The changes below are the minimum needed to run correctly in the new project. De
   gh run watch
   ```
 
-- [ ] **Record the QEMU baseline time** from the GHA run summary. This number is the "before" for the Jetson runner upgrade in Phase B.
+- [x] **Record the QEMU baseline time** from the GHA run summary. This number is the "before" for the Jetson runner upgrade in Phase B.
+  NOTE: GHA QEMU cold build = **23m43s** (authoritative baseline). Local workstation QEMU
+  (pip+colcon only, apt cached) = 37m23s; full uncached local ~60+ min. Both recorded in
+  BLUEPRINT.md Decisions Log 2026-06-28. Two fixes required: (1) `contents: read` missing
+  from permissions block; (2) `--ignore-installed` needed for pluggy apt/pip conflict.
 
 ### Session Complete When
 - `docker buildx build --platform linux/arm64` completes without errors
