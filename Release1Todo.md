@@ -16,7 +16,7 @@
 | 04 | GitHub Repo + Project Skeleton | A | ✅ |
 | 05 | File Migration from Current Project | A | ✅ |
 | 06 | Stage 0 — Requirements Gate | A | ✅ |
-| 07 | Stage 1 — Code Quality Gate | A | ⬜ |
+| 07 | Stage 1 — Code Quality Gate | A | ✅ |
 | 08 | Stage 2 — arm64 Cross-Compile + QEMU Baseline | A | ⬜ |
 | 09 | Stage 3 Part 1 — URDF + Nav2 in Gazebo Headless | A | ⬜ |
 | 10 | Stage 3 Part 2 — First Passing Nav Test + Drift Wired | A | ⬜ |
@@ -1176,7 +1176,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   git push
   ```
 
-- [ ] **Verify CI triggers on GitHub:**
+- [x] **Verify CI triggers on GitHub:**
   ```bash
   gh run list --limit 5
   # Should show the push triggered a workflow run
