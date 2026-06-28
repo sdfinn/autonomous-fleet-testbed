@@ -8,8 +8,8 @@ from unittest.mock import patch
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
-import check_traceability as ct
-from check_traceability import Requirement, Result
+import check_traceability as ct  # noqa: E402
+from check_traceability import Requirement, Result  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

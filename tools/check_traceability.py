@@ -86,7 +86,8 @@ def scan_tests(test_dir: Path) -> set:
             continue
         rel = test_file.relative_to(test_dir.parent)
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
+            if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name.startswith("test_")):
                 tid = f"{rel}::{node.name}"
                 found.add(tid)
                 log.debug("  found %s", tid)
