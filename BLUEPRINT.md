@@ -119,6 +119,23 @@ Two tiers, complementary — not competitors:
 3. **Moment 2 (R2, optional):** 1 smart + 1–2 cheap robots, coordinated mission.
 4. **Moment 3A/3B (R3, optional):** Drone added / "brains demo" — pipeline defines and runs its own test missions.
 
+## Tiered development loop
+
+**Rule: flush bugs on the fastest tier before moving to the next.** Most bugs are platform-agnostic — a broken nav goal, wrong topic namespace, bad metric collection — they show up equally on x86. No reason to wait 23 minutes per iteration to find them. Only arm64-specific issues (compiled dependency differences, Jetson driver behavior, memory alignment) actually require Tier 2+.
+
+| Tier | Platform | `colcon build` | Full cycle (build → sim → nav test) | Purpose |
+|---|---|---|---|---|
+| **1 — primary dev loop** | x86 bare metal + Gazebo local | **~1s** | ~3–10 min | Flush common bugs fast |
+| 2 — arm64 compat check | GHA ubuntu-latest QEMU | 23m43s | +sim stub | Validate arm64 cross-compile |
+| 3 — target platform | Jetson native arm64 (Phase B) | ~3–5 min (est.) | +real hw | Validate actual deploy target |
+| 4 — full HIL | Real rover + Jetson (Phase C) | SSH deploy | full loop | Final validation |
+
+**Tier 1 full cycle** (once Gazebo is wired in Session 09):
+```
+colcon build (1s) → gz sim headless → nav2 → nav_runner → metrics_collector → drift check → repeat
+```
+This is the loop that finds 90% of bugs. Commit to CI only when the x86 pipeline is clean.
+
 ## Design principles (preserve across all releases)
 
 - **Data-driven:** thresholds, requirements, profiles in YAML — never hardcoded in Python.
@@ -126,6 +143,7 @@ Two tiers, complementary — not competitors:
 - **Shift left:** catch bugs in sim before hardware; generate scenarios to find more bugs sooner.
 - **Pipeline as product:** the CI/CD pipeline IS the deliverable, not just a quality gate.
 - **Under-claim, over-deliver:** especially on agentic autonomy.
+- **Tier 1 first:** develop and debug on x86 bare metal Gazebo; go to arm64 only to validate compatibility, not to find common bugs.
 
 ---
 
@@ -136,6 +154,8 @@ Two tiers, complementary — not competitors:
 - **2026-06-27 — Agentic loop scoped to human-in-the-loop for portfolio/demo.** Full unattended autonomy is roadmap, not a claim.
 - **2026-06-27 — BLUEPRINT.md created** as the master brief; `robotics_cicd_10x_blueprint.md` retained as reference-only source dialogue. CLAUDE.md pointer corrected.
 - **2026-06-28 — Stage 2 arm64 QEMU baseline recorded** (Session 08). Both local and GHA builds green after fixing two issues: (1) `contents: read` missing from GHA job permissions block — adding `packages: write` alone revokes all other defaults including checkout access; (2) `pluggy` uninstall conflict — `ros:jazzy-ros-base` installs pytest/pluggy via apt with no pip RECORD file; fixed with `--ignore-installed`. Timings:
+  - **x86 bare metal `colcon build` (nav_fleet Python package):** ~1s — the Tier 1 dev loop baseline
   - **GHA ubuntu-latest (QEMU, cold build):** 23m43s — authoritative Phase B comparison baseline
-  - **Local RTX 5080 workstation (QEMU, pip+colcon only — apt layers cached from failed first attempt):** 37m23s — full uncached local would be ~60+ min
+  - **Local RTX 5080 workstation (QEMU, pip+colcon only — apt layers cached from failed first attempt):** 37m23s — full uncached local ~60+ min
   - **Phase B Jetson native arm64 runner:** TBD — Session 15 (expect 3–5 min; delta vs GHA baseline = the headline speedup number)
+  - Decision: develop and debug on Tier 1 (x86 bare metal Gazebo, ~1s build, ~3–10 min full cycle) before committing to CI. x86 is not the target OS but finds 90% of bugs at 23× less wait time per iteration.
