@@ -159,3 +159,9 @@ This is the loop that finds 90% of bugs. Commit to CI only when the x86 pipeline
   - **Local RTX 5080 workstation (QEMU, pip+colcon only — apt layers cached from failed first attempt):** 37m23s — full uncached local ~60+ min
   - **Phase B Jetson native arm64 runner:** TBD — Session 15 (expect 3–5 min; delta vs GHA baseline = the headline speedup number)
   - Decision: develop and debug on Tier 1 (x86 bare metal Gazebo, ~1s build, ~3–10 min full cycle) before committing to CI. x86 is not the target OS but finds 90% of bugs at 23× less wait time per iteration.
+- **2026-06-28 — Session 09 complete (Stage 3 Part 1).** ugv_pt robot spawned in Gazebo Harmonic bedroom world with `/robot_001/odom` at 50 Hz and `/robot_001/scan` at 10 Hz. Key design decisions:
+  - **World geometry** reused from `BC/isaac_project/scripts/generate_map.py` OBSTACLES (real measured bedroom, same XY coordinates) so the pre-built Nav2 map (`maps/living_room.pgm`, 0.05 m/px) matches the Gazebo world — no SLAM needed for Session 10.
+  - **URDF**: 4-wheel layout (2 rear driven by `gz-sim-diff-drive-system` + 2 front passive fixed joints). Diff-drive is an approximation of the real robot's 4WD skid-steer (ESP32 sub-controller). Acceptable for Nav2; evaluate in Session 16 sim-to-real delta.
+  - **OGRE2 materials**: `<diffuse>` required alongside `<ambient>` in SDF for visible colours — ambient-only renders black under directional light.
+  - **Launch path resolution**: `pathlib.Path(__file__).parent.parent` instead of `get_package_share_directory()` because `colcon-ament-python` is not installed on this system (AMENT_PREFIX_PATH not populated for Python packages).
+  - **Robot fidelity gaps carried to Session 10**: IMU (200 Hz, required for Nav2 EKF), OAK-D Lite depth camera (`/robot_001/camera/depth/points`), actual physical dimensions from Waveshare spec sheet, `base_footprint` root link for KDL warning.

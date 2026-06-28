@@ -1,0 +1,271 @@
+<?xml version="1.0"?>
+<robot name="ugv_pt" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="base_mass" value="5.0"/>
+  <xacro:property name="base_length" value="0.35"/>
+  <xacro:property name="base_width" value="0.30"/>
+  <xacro:property name="base_height" value="0.15"/>
+  <xacro:property name="wheel_radius" value="0.05"/>
+  <xacro:property name="wheel_width" value="0.04"/>
+  <xacro:property name="wheel_separation" value="0.28"/>
+  <!-- Rear driven wheels at -wheel_x_offset, front passive wheels at +wheel_x_offset -->
+  <xacro:property name="wheel_x_offset" value="0.10"/>
+
+  <!-- ══ LINKS ══════════════════════════════════════════════════════════ -->
+
+  <!-- Base body -->
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="${base_length} ${base_width} ${base_height}"/>
+      </geometry>
+      <material name="grey"><color rgba="0.5 0.5 0.5 1.0"/></material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="${base_length} ${base_width} ${base_height}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="${base_mass}"/>
+      <inertia ixx="0.05" ixy="0" ixz="0" iyy="0.05" iyz="0" izz="0.07"/>
+    </inertial>
+  </link>
+
+  <!-- Rear left wheel (driven by diff-drive) -->
+  <link name="rear_left_wheel">
+    <visual>
+      <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      <material name="dark"><color rgba="0.15 0.15 0.15 1.0"/></material>
+    </visual>
+    <collision>
+      <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.002"/>
+    </inertial>
+  </link>
+  <joint name="rear_left_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="rear_left_wheel"/>
+    <origin xyz="-${wheel_x_offset} ${wheel_separation/2} -${base_height/2}" rpy="-1.5708 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+
+  <!-- Rear right wheel (driven by diff-drive) -->
+  <link name="rear_right_wheel">
+    <visual>
+      <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      <material name="dark"><color rgba="0.15 0.15 0.15 1.0"/></material>
+    </visual>
+    <collision>
+      <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.002"/>
+    </inertial>
+  </link>
+  <joint name="rear_right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="rear_right_wheel"/>
+    <origin xyz="-${wheel_x_offset} -${wheel_separation/2} -${base_height/2}" rpy="-1.5708 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+
+  <!-- Front left wheel (passive — fixed joint, gives 4-wheel UGV appearance) -->
+  <link name="front_left_wheel">
+    <visual>
+      <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      <material name="dark"><color rgba="0.15 0.15 0.15 1.0"/></material>
+    </visual>
+    <collision>
+      <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.002"/>
+    </inertial>
+  </link>
+  <joint name="front_left_wheel_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="front_left_wheel"/>
+    <origin xyz="${wheel_x_offset} ${wheel_separation/2} -${base_height/2}" rpy="-1.5708 0 0"/>
+  </joint>
+
+  <!-- Front right wheel (passive — fixed joint) -->
+  <link name="front_right_wheel">
+    <visual>
+      <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      <material name="dark"><color rgba="0.15 0.15 0.15 1.0"/></material>
+    </visual>
+    <collision>
+      <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.002"/>
+    </inertial>
+  </link>
+  <joint name="front_right_wheel_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="front_right_wheel"/>
+    <origin xyz="${wheel_x_offset} -${wheel_separation/2} -${base_height/2}" rpy="-1.5708 0 0"/>
+  </joint>
+
+  <!-- LiDAR -->
+  <link name="lidar_link">
+    <visual><geometry><cylinder radius="0.03" length="0.05"/></geometry></visual>
+    <collision><geometry><cylinder radius="0.03" length="0.05"/></geometry></collision>
+    <inertial>
+      <mass value="0.2"/>
+      <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
+    </inertial>
+  </link>
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="0.05 0 ${base_height/2 + 0.025}"/>
+  </joint>
+
+  <!-- Camera -->
+  <link name="camera_link">
+    <visual><geometry><box size="0.02 0.08 0.03"/></geometry></visual>
+    <collision><geometry><box size="0.02 0.08 0.03"/></geometry></collision>
+    <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="0.00001" ixy="0" ixz="0" iyy="0.00001" iyz="0" izz="0.00001"/>
+    </inertial>
+  </link>
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="${base_length/2} 0 ${base_height/2 + 0.015}"/>
+  </joint>
+
+  <!-- ══ GAZEBO COLOURS ═════════════════════════════════════════════════
+       OGRE2 in Gazebo Harmonic needs <diffuse> for visible surface colour
+       under directional lighting. <ambient> alone = near-black surface.
+       ══════════════════════════════════════════════════════════════════ -->
+
+  <gazebo reference="base_link">
+    <material>
+      <ambient>0.40 0.40 0.40 1</ambient>
+      <diffuse>0.55 0.55 0.55 1</diffuse>
+      <specular>0.05 0.05 0.05 1</specular>
+    </material>
+  </gazebo>
+
+  <gazebo reference="rear_left_wheel">
+    <material>
+      <ambient>0.10 0.10 0.10 1</ambient>
+      <diffuse>0.18 0.18 0.18 1</diffuse>
+    </material>
+  </gazebo>
+  <gazebo reference="rear_right_wheel">
+    <material>
+      <ambient>0.10 0.10 0.10 1</ambient>
+      <diffuse>0.18 0.18 0.18 1</diffuse>
+    </material>
+  </gazebo>
+  <gazebo reference="front_left_wheel">
+    <material>
+      <ambient>0.10 0.10 0.10 1</ambient>
+      <diffuse>0.18 0.18 0.18 1</diffuse>
+    </material>
+  </gazebo>
+  <gazebo reference="front_right_wheel">
+    <material>
+      <ambient>0.10 0.10 0.10 1</ambient>
+      <diffuse>0.18 0.18 0.18 1</diffuse>
+    </material>
+  </gazebo>
+  <gazebo reference="lidar_link">
+    <material>
+      <ambient>0.15 0.45 0.60 1</ambient>
+      <diffuse>0.20 0.60 0.80 1</diffuse>
+    </material>
+  </gazebo>
+  <gazebo reference="camera_link">
+    <material>
+      <ambient>0.08 0.08 0.08 1</ambient>
+      <diffuse>0.12 0.12 0.12 1</diffuse>
+    </material>
+  </gazebo>
+
+  <!-- ══ GAZEBO PLUGINS ══════════════════════════════════════════════════ -->
+
+  <gazebo>
+    <plugin filename="gz-sim-diff-drive-system"
+            name="gz::sim::systems::DiffDrive">
+      <left_joint>rear_left_wheel_joint</left_joint>
+      <right_joint>rear_right_wheel_joint</right_joint>
+      <wheel_separation>${wheel_separation}</wheel_separation>
+      <wheel_radius>${wheel_radius}</wheel_radius>
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <topic>/robot_001/cmd_vel</topic>
+      <odom_topic>/robot_001/odom</odom_topic>
+      <tf_topic>/robot_001/tf</tf_topic>
+      <frame_id>robot_001/odom</frame_id>
+      <child_frame_id>robot_001/base_link</child_frame_id>
+    </plugin>
+
+    <plugin filename="gz-sim-pose-publisher-system"
+            name="gz::sim::systems::PosePublisher">
+      <publish_link_pose>true</publish_link_pose>
+      <publish_model_pose>true</publish_model_pose>
+      <use_pose_vector_msg>true</use_pose_vector_msg>
+      <static_publisher>false</static_publisher>
+      <update_frequency>10</update_frequency>
+    </plugin>
+  </gazebo>
+
+  <!-- ══ SENSORS ═════════════════════════════════════════════════════════ -->
+
+  <gazebo reference="lidar_link">
+    <sensor name="lidar" type="gpu_lidar">
+      <topic>/robot_001/scan</topic>
+      <update_rate>10</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.12</min>
+          <max>12.0</max>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </ray>
+      <always_on>1</always_on>
+      <visualize>true</visualize>
+    </sensor>
+  </gazebo>
+
+  <gazebo reference="camera_link">
+    <sensor name="camera" type="camera">
+      <topic>/robot_001/camera/image_raw</topic>
+      <update_rate>10</update_rate>
+      <camera>
+        <horizontal_fov>1.047</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip><near>0.1</near><far>100</far></clip>
+      </camera>
+      <always_on>1</always_on>
+    </sensor>
+  </gazebo>
+
+</robot>

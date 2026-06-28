@@ -1,0 +1,266 @@
+<?xml version="1.0"?>
+<!--
+  bedroom_simple.sdf — Gazebo Harmonic world
+
+  Geometry sourced from BC/isaac_project/scripts/generate_map.py (real measured bedroom).
+  Coordinate system: origin at SW corner of hallway south entrance; +X=East, +Y=North, +Z=Up.
+  Room: 3.05m EW × 3.96m NS (10ft × 13ft). Hallway entrance south of room.
+
+  All XY obstacle positions match generate_map.py OBSTACLES exactly, so the pre-built
+  Nav2 map (maps/living_room.pgm) represents this world accurately — no SLAM needed.
+
+  Material note: OGRE2 requires <diffuse> for visible surface color under directional light.
+  <ambient> alone makes surfaces nearly black in Gazebo Harmonic.
+-->
+<sdf version="1.9">
+  <world name="bedroom">
+
+    <physics name="default" type="ode">
+      <real_time_update_rate>1000</real_time_update_rate>
+      <max_step_size>0.001</max_step_size>
+    </physics>
+
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+
+    <light name="sun" type="directional">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 4 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- Floor covering full map area X[-3.0,2.0] Y[0.2,7.3] -->
+    <model name="floor">
+      <static>true</static>
+      <pose>-0.5 3.75 0 0 0 0</pose>
+      <link name="link">
+        <collision name="c">
+          <geometry><plane><normal>0 0 1</normal><size>5.5 7.5</size></plane></geometry>
+        </collision>
+        <visual name="v">
+          <geometry><plane><normal>0 0 1</normal><size>5.5 7.5</size></plane></geometry>
+          <material>
+            <ambient>0.60 0.52 0.42 1</ambient>
+            <diffuse>0.75 0.65 0.55 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ═══ HALLWAY WALLS ══════════════════════════════════════════════════ -->
+
+    <model name="Hallway_West">
+      <static>true</static>
+      <pose>-2.6435 1.6740 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.050 1.381 1.0</size></box></geometry></collision>
+        <visual name="v">
+          <geometry><box><size>0.050 1.381 1.0</size></box></geometry>
+          <material>
+            <ambient>0.60 0.60 0.60 1</ambient>
+            <diffuse>0.75 0.75 0.75 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="Hallway_East">
+      <static>true</static>
+      <pose>1.2805 1.6930 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.050 1.507 1.0</size></box></geometry></collision>
+        <visual name="v">
+          <geometry><box><size>0.050 1.507 1.0</size></box></geometry>
+          <material>
+            <ambient>0.60 0.60 0.60 1</ambient>
+            <diffuse>0.75 0.75 0.75 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="Hallway_South_W">
+      <static>true</static>
+      <pose>-2.2747 0.9584 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>1.016 0.050 1.0</size></box></geometry></collision>
+        <visual name="v">
+          <geometry><box><size>1.016 0.050 1.0</size></box></geometry>
+          <material>
+            <ambient>0.60 0.60 0.60 1</ambient>
+            <diffuse>0.75 0.75 0.75 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="Hallway_South_E">
+      <static>true</static>
+      <pose>0.2863 0.9138 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>2.140 0.050 1.0</size></box></geometry></collision>
+        <visual name="v">
+          <geometry><box><size>2.140 0.050 1.0</size></box></geometry>
+          <material>
+            <ambient>0.60 0.60 0.60 1</ambient>
+            <diffuse>0.75 0.75 0.75 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ═══ BEDROOM WALLS ═════════════════════════════════════════════════ -->
+
+    <model name="Wall_South_W">
+      <static>true</static>
+      <pose>-1.9686 2.3887 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>1.274 0.050 1.0</size></box></geometry></collision>
+        <visual name="v">
+          <geometry><box><size>1.274 0.050 1.0</size></box></geometry>
+          <material>
+            <ambient>0.60 0.60 0.60 1</ambient>
+            <diffuse>0.75 0.75 0.75 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="Wall_South_E">
+      <static>true</static>
+      <pose>0.4914 2.4706 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>2.217 0.050 1.0</size></box></geometry></collision>
+        <visual name="v">
+          <geometry><box><size>2.217 0.050 1.0</size></box></geometry>
+          <material>
+            <ambient>0.60 0.60 0.60 1</ambient>
+            <diffuse>0.75 0.75 0.75 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="Wall_North">
+      <static>true</static>
+      <pose>0.0760 6.5020 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>3.148 0.050 1.0</size></box></geometry></collision>
+        <visual name="v">
+          <geometry><box><size>3.148 0.050 1.0</size></box></geometry>
+          <material>
+            <ambient>0.60 0.60 0.60 1</ambient>
+            <diffuse>0.75 0.75 0.75 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="Wall_East">
+      <static>true</static>
+      <pose>1.6250 4.4699 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.050 4.000 1.0</size></box></geometry></collision>
+        <visual name="v">
+          <geometry><box><size>0.050 4.000 1.0</size></box></geometry>
+          <material>
+            <ambient>0.60 0.60 0.60 1</ambient>
+            <diffuse>0.75 0.75 0.75 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="Wall_West">
+      <static>true</static>
+      <pose>-1.4730 4.4960 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.050 3.962 1.0</size></box></geometry></collision>
+        <visual name="v">
+          <geometry><box><size>0.050 3.962 1.0</size></box></geometry>
+          <material>
+            <ambient>0.60 0.60 0.60 1</ambient>
+            <diffuse>0.75 0.75 0.75 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ═══ FURNITURE ══════════════════════════════════════════════════════ -->
+
+    <!-- Dresser: warm brown -->
+    <model name="Dresser">
+      <static>true</static>
+      <pose>0.0074 2.7583 0.40 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.813 0.457 0.80</size></box></geometry></collision>
+        <visual name="v">
+          <geometry><box><size>0.813 0.457 0.80</size></box></geometry>
+          <material>
+            <ambient>0.42 0.28 0.12 1</ambient>
+            <diffuse>0.58 0.38 0.16 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Bed: medium blue -->
+    <model name="Bed">
+      <static>true</static>
+      <pose>0.8130 5.4360 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>1.524 2.032 0.50</size></box></geometry></collision>
+        <visual name="v">
+          <geometry><box><size>1.524 2.032 0.50</size></box></geometry>
+          <material>
+            <ambient>0.20 0.32 0.58 1</ambient>
+            <diffuse>0.28 0.44 0.76 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Desk: warm brown (same family as dresser) -->
+    <model name="Desk">
+      <static>true</static>
+      <pose>-0.9590 5.3240 0.375 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.762 1.524 0.75</size></box></geometry></collision>
+        <visual name="v">
+          <geometry><box><size>0.762 1.524 0.75</size></box></geometry>
+          <material>
+            <ambient>0.42 0.28 0.12 1</ambient>
+            <diffuse>0.58 0.38 0.16 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- PC Tower: dark blue-grey (computer-ish) -->
+    <model name="PC_Tower">
+      <static>true</static>
+      <pose>-1.0360 4.2050 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="c"><geometry><box><size>0.559 0.508 0.50</size></box></geometry></collision>
+        <visual name="v">
+          <geometry><box><size>0.559 0.508 0.50</size></box></geometry>
+          <material>
+            <ambient>0.12 0.14 0.20 1</ambient>
+            <diffuse>0.18 0.20 0.30 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

@@ -18,7 +18,7 @@
 | 06 | Stage 0 — Requirements Gate | A | ✅ |
 | 07 | Stage 1 — Code Quality Gate | A | ✅ |
 | 08 | Stage 2 — arm64 Cross-Compile + QEMU Baseline | A | ✅ |
-| 09 | Stage 3 Part 1 — URDF + Nav2 in Gazebo Headless | A | ⬜ |
+| 09 | Stage 3 Part 1 — URDF + Nav2 in Gazebo Headless | A | ✅ |
 | 10 | Stage 3 Part 2 — First Passing Nav Test + Drift Wired | A | ⬜ |
 | 11 | Tag ci-qemu-baseline + Document Timing | A | ⬜ |
 | 12 | Stage 4 — CUDA + NVIDIA Driver + Isaac Sim Perception | A | ⬜ |
@@ -1939,7 +1939,48 @@ The changes below are the minimum needed to run correctly in the new project. De
 
 **Goal:** Nav2 sends the robot from start to goal. Test asserts < 0.15m position error, zero collisions. `test_baseline.py` runs against the first real run report. `test_ros2_contracts.py` passes.
 
-**Key tasks:**
+**Carry-overs from Session 09 — robot fidelity (sim must match real ugv_pt as closely as possible):**
+
+- [ ] **Add IMU** — The real robot has an IMU at 200 Hz (see `robot_profiles/jetson_ugv_pt.yaml`).
+  Nav2's `robot_localization` EKF node fuses IMU + odometry for better pose estimates — without
+  IMU the pose estimate is odom-only and drifts faster. Add to `urdf/ugv_pt.urdf.xacro`:
+  - `imu_link` (fixed joint above base_link)
+  - `<sensor type="imu">` Gazebo plugin at 200 Hz
+  - Bridge `/robot_001/imu/data@sensor_msgs/msg/Imu@gz.msgs.IMU`
+  - Add `imu_topic` entry to Nav2 `robot_localization` config in `nav2_params.yaml`
+
+- [ ] **Upgrade camera to depth (OAK-D Lite)** — Real robot uses OAK-D Lite which gives RGB +
+  depth point cloud. Current sim has monocular only. Add depth to `camera_link` sensor:
+  - Add `<sensor type="depth_camera">` or `<sensor type="rgbd_camera">` in URDF Gazebo block
+  - Bridge `/robot_001/camera/depth/points@sensor_msgs/msg/PointCloud2@gz.msgs.PointCloudPacked`
+  - Nav2 3D obstacle layer uses this when configured — enables seeing objects shorter than lidar
+
+- [ ] **Evaluate skid-steer vs diff-drive** — Real robot has 4 driven wheels (ESP32 sub-controller
+  drives all 4, left-side together / right-side together = skid steer). Current sim uses
+  `gz-sim-diff-drive-system` which approximates this. For R1 Nav2 testing the approximation
+  is acceptable. If sim-to-real navigation accuracy falls below 70% threshold in Session 16,
+  switch to `gz-sim-wheel-slip-system` + `gz-sim-diff-drive-system` with slip compensation, or
+  use the `skid_steer_drive` plugin. Document the decision in BLUEPRINT.md Decisions Log.
+
+- [ ] **Verify actual ugv_pt physical dimensions** — Current URDF uses estimated dimensions
+  (0.35m × 0.30m × 0.15m body, wheel_radius=0.05m, wheel_separation=0.28m). Before Phase C
+  (real robot), measure the actual Waveshare UGV-PT and update URDF to match exactly.
+  Reference: [Waveshare UGV-PT product page](https://www.waveshare.com/ugv-pt.htm) for spec sheet.
+
+- [ ] **Fix KDL root-link inertia warning** — Add `base_footprint` as the root link (no mass/inertia)
+  with a fixed joint to `base_link` at z=0.125m. This is the ROS2 standard pattern:
+  ```xml
+  <link name="base_footprint"/>
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0.125" rpy="0 0 0"/>
+  </joint>
+  ```
+  Then update diff-drive plugin `child_frame_id` to `robot_001/base_footprint` and
+  `nav2_params.yaml` `base_frame_id` to `robot_001/base_footprint`.
+
+**Primary Session 10 tasks:**
 - Implement `nav_runner.py` — sends a Nav2 action goal via `NavigateToPose` action client, records result
 - Implement `metrics_collector.py` — subscribes to `/robot_001/odom`, `/robot_001/scan`, measures Hz, detects collision via `/robot_001/scan` min range
 - Write `tests/test_navigation.py` — BR-01 (position error), BR-02 (collisions), BR-10 (BT success)
