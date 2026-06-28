@@ -1962,6 +1962,13 @@ The changes below are the minimum needed to run correctly in the new project. De
 
 ### Session 12 — Stage 4: CUDA + NVIDIA Driver + Isaac Sim (~3 hrs)
 
+> **⚠️ DEFERRED (decision 2026-06-27 — see BLUEPRINT.md).** Stage 4 / Isaac Sim is
+> deferred-and-positioned: it becomes the "fidelity tier" and drops into its reserved
+> pipeline slot later, when a perception story is actually needed. Deferred on **priority,
+> not difficulty**. For R1, skip this session — go from Session 11 to Session 13. The R4
+> work (agentic loop + sim-to-real alignment + local-throughput benchmark) takes priority.
+> Keep the CI Stage 4 stub clean so this drops in with no rework. Original plan retained below.
+
 **Goal:** RTX 5080 validated in Ubuntu. Isaac Sim launches. Stage 4 perception test runs (YOLO mAP on simulated camera feed).
 
 **Key tasks:**

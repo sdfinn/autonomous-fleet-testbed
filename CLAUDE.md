@@ -2,7 +2,9 @@
 
   ## Project
   Open-source CI/CD-native fleet simulation testing framework for autonomous robots.
-  Master brief: see BLUEPRINT.md in this repo (or G:\BC\MasterBrief.md on Windows).
+  Master strategic brief: BLUEPRINT.md (working doc — vision, roadmap, decisions).
+  robotics_cicd_10x_blueprint.md is reference-only source dialogue, not for coding.
+  Execute from Release1Todo.md (session plans); code from .superpowers/sdd/ specs.
 
   ## Environment
   - Ubuntu 24.04 bare metal (dual boot with Windows 11)
