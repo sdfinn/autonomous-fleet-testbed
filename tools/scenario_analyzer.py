@@ -4,6 +4,7 @@ import sqlite3
 
 DB_PATH = os.environ.get("FLEET_DB", "reports/fleet_runs.db")
 
+
 class ScenarioAnalyzer:
     def __init__(self, db_path=DB_PATH):
         self.db_path = db_path
@@ -48,7 +49,7 @@ class ScenarioAnalyzer:
         if isinstance(stage_timings, str):
             try:
                 timings = json.loads(stage_timings)
-                if any(value > 40 for value in timings.values() if isinstance(value, (int, float))):
+                if any(v > 40 for v in timings.values() if isinstance(v, (int, float))):
                     score += 0.05
             except json.JSONDecodeError:
                 pass
@@ -82,6 +83,7 @@ class ScenarioAnalyzer:
         conn.close()
         print(f"Tagged {tagged}/{len(rows)} scenarios as high-value (threshold={threshold})")
         return tagged
+
 
 if __name__ == "__main__":
     ScenarioAnalyzer().tag_high_value_scenarios()

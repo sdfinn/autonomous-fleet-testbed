@@ -42,7 +42,46 @@ jobs:
     needs: stage-0-requirements
     steps:
       - uses: actions/checkout@v4
-      - run: echo "Stage 1 stub — implement in Session 07"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ROS2 apt repo
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y software-properties-common curl
+          sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+            -o /usr/share/keyrings/ros-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) \
+            signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+            http://packages.ros.org/ros2/ubuntu \
+            $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | \
+            sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+          sudo apt-get update -qq
+
+      - name: Install ament lint tools
+        run: |
+          sudo apt-get install -y \
+            ros-jazzy-ament-flake8 \
+            ros-jazzy-ament-pep257 \
+            ros-jazzy-ament-copyright
+
+      - name: Lint nav_fleet package
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          cd src/nav_fleet
+          python -m flake8 nav_fleet/ --max-line-length=99
+          python -m flake8 test/ --max-line-length=99
+
+      - name: Install Python dependencies
+        run: pip install -r requirements-ci.txt
+
+      - name: Run Python unit tests
+        run: |
+          python -m pytest tests/ -v \
+            --ignore=tests/test_ros2_contracts.py \
+            -k "not integration"
 
   stage-2-arm64:
     runs-on: ubuntu-latest

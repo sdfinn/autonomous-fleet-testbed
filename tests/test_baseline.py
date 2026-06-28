@@ -37,8 +37,10 @@ def _insert(
     )
     conn = sqlite3.connect(db_path)
     conn.execute(
-        "UPDATE runs SET nav_success_rate = ?, mean_position_error = ?, collision_rate = ?, odom_hz_mean = ?, camera_hz_mean = ? WHERE id = ?",
-        (nav_success_rate, mean_position_error, collision_rate, odom_hz_mean, camera_hz_mean, run_id),
+        "UPDATE runs SET nav_success_rate=?, mean_position_error=?, collision_rate=?,"
+        " odom_hz_mean=?, camera_hz_mean=? WHERE id=?",
+        (nav_success_rate, mean_position_error, collision_rate, odom_hz_mean,
+         camera_hz_mean, run_id),
     )
     conn.commit()
     conn.close()
