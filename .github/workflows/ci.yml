@@ -67,15 +67,15 @@ jobs:
             ros-jazzy-ament-pep257 \
             ros-jazzy-ament-copyright
 
+      - name: Install Python dependencies
+        run: pip install -r requirements-ci.txt flake8
+
       - name: Lint nav_fleet package
         run: |
           source /opt/ros/jazzy/setup.bash
           cd src/nav_fleet
           python -m flake8 nav_fleet/ --max-line-length=99
           python -m flake8 test/ --max-line-length=99
-
-      - name: Install Python dependencies
-        run: pip install -r requirements-ci.txt
 
       - name: Run Python unit tests
         run: |
