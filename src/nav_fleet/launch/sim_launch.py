@@ -74,6 +74,7 @@ def generate_launch_description():
             '/robot_001/scan@sensor_msgs/msg/LaserScan@gz.msgs.LaserScan',
             '/robot_001/camera/image_raw@sensor_msgs/msg/Image@gz.msgs.Image',
             '/robot_001/tf@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V',
+            '/robot_001/imu/data@sensor_msgs/msg/Imu@gz.msgs.IMU',
             '/clock@rosgraph_msgs/msg/Clock@gz.msgs.Clock',
         ],
         output='screen',
