@@ -27,8 +27,6 @@ jobs:
             --profile robot_profiles/jetson_ugv_pt.yaml \
             --json > reports/traceability_latest.json
           cat reports/traceability_latest.json
-        continue-on-error: true
-        # ↑ Remove continue-on-error in Session 10 once all Session 09 tests pass
 
       - name: Upload traceability report
         uses: actions/upload-artifact@v4
@@ -126,8 +124,35 @@ jobs:
           echo "### Stage 2 arm64 (QEMU) build time: ${BUILD_S}s" >> $GITHUB_STEP_SUMMARY
 
   stage-3-gazebo:
-    runs-on: ubuntu-latest
+    name: "Stage 3 — Gazebo Simulation Navigation"
+    runs-on: [self-hosted, x86, gpu, rtx5080]
     needs: stage-2-arm64
+    timeout-minutes: 30
+    env:
+      DISPLAY: ':0'
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
     steps:
       - uses: actions/checkout@v4
-      - run: echo "Stage 3 stub — implement in Session 09"
+
+      - name: Build workspace
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          colcon build --symlink-install
+          source install/setup.bash
+
+      - name: Launch Gazebo + Nav2 (headless)
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          ros2 launch src/nav_fleet/launch/sim_launch.py headless:=true &
+          sleep 20
+
+      - name: Run navigation integration tests
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          python -m pytest tests/test_navigation.py -v --timeout=120
+
+      - name: Shutdown Gazebo
+        if: always()
+        run: pkill -f "gz sim" || true
