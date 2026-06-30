@@ -135,6 +135,7 @@ def generate_launch_description():
         arguments=['0', '0', '0', '0', '0', '0',
                    'robot_001/lidar_link',
                    'robot_001/base_footprint/lidar'],
+        parameters=[{'use_sim_time': True}],
         remappings=[
             ('/tf_static', '/robot_001/tf_static'),
         ],
