@@ -61,8 +61,11 @@ def generate_launch_description():
         ],
     )
 
+    # -s = server only (no GUI process). GUI crashes on this machine due to a
+    # snap/glibc libpthread conflict; when it dies it takes the server with it.
+    # Open a separate viewer with `gz sim -g` if you need visual inspection.
     gazebo = ExecuteProcess(
-        cmd=['gz', 'sim', '-r', world_path],
+        cmd=['gz', 'sim', '-s', '-r', world_path],
         output='screen',
     )
 
