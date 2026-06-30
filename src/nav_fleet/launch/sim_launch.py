@@ -26,6 +26,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, TimerAction
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 # Resolves to the package share directory regardless of whether the launch file
 # is invoked via the installed path or directly from source.
@@ -41,7 +42,7 @@ def generate_launch_description():
         description='Run Gazebo headless (no GUI) — set true for CI',
     )
 
-    robot_desc = Command(['xacro ', urdf_path])
+    robot_desc = ParameterValue(Command(['xacro ', urdf_path]), value_type=str)
 
     robot_state_publisher = Node(
         package='robot_state_publisher',
