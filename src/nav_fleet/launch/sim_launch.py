@@ -110,7 +110,7 @@ def generate_launch_description():
                 'use_sim_time': 'true',
                 'params_file': str(PKG / 'config' / 'nav2_params.yaml'),
                 'map': str(PKG / 'maps' / 'living_room.yaml'),
-                'use_composition': 'false',
+                'use_composition': 'False',
                 'autostart': 'true',
             }.items(),
         )],
