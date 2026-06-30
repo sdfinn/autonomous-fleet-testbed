@@ -75,8 +75,32 @@ docker buildx build --platform linux/arm64 \
   because `colcon-ament-python` is not installed — this is intentional and correct.
 - OGRE2 (Gazebo Harmonic renderer) needs `<diffuse>` in SDF materials, not just `<ambient>`.
   Ambient-only = black surfaces. Both the SDF world and URDF gazebo blocks use `<diffuse>`.
-- Isaac Sim session (Session 12 / deferred): requires NVIDIA driver 570+ for RTX 5080
+- Isaac Sim session (Session 11): requires NVIDIA driver 570+. Driver 595.71.05 already installed.
 - `requirements.txt` is a full pip freeze of the local ROS2 venv — NOT for CI use. Use `requirements-ci.txt` in CI jobs.
 - DB path env var is `FLEET_DB` (default: `reports/fleet_runs.db`) — used by telemetry_logger, validate_telemetry, ai_test_generator, dashboard
 - `tests/test_ros2_contracts.py` requires a live ROS2 environment — always `--ignore` it in local pytest runs
 - CI stage-0 exits with code 1 intentionally (missing Session 10 tests). `continue-on-error: true` is in place; remove it in Session 10.
+
+## Nav2 Launch Gotchas (Session 10+)
+- `gz sim` WITHOUT `-s` launches a GUI that crashes on this machine (snap/glibc libpthread conflict)
+  and takes the Gazebo server down with it. Always use `gz sim -s -r <world>` (server only).
+  To view the simulation separately: `gz sim -g` (GUI client only).
+- The ros_gz_bridge must be delayed ~5s after Gazebo starts. If the bridge subscribes before
+  Gazebo's gz-transport publishers are up, the GZ→ROS subscriptions silently fail (no reconnect).
+- Nav2 Jazzy requires `use_composition: 'True'` (capital F). 'False' launches ~16 separate
+  processes that exhaust CycloneDDS domain 0 participant limit.
+- Nav2 Jazzy requires collision_monitor with `polygons` + `observation_sources` populated (empty
+  lists fail). Docking_server requires `dock_plugins`. Both added to nav2_params.yaml.
+- `robot_state_publisher` publishes TF frames using URDF link names verbatim (no robot_001/ prefix).
+  Gazebo diff_drive uses `robot_001/odom → robot_001/base_footprint` (with prefix). These are
+  two DISCONNECTED TF trees. Fix: add `frame_prefix: 'robot_001/'` to RSP parameters (if supported
+  in Jazzy) OR change diff_drive frame IDs to `odom`/`base_footprint` (no prefix) and update
+  nav2_params.yaml accordingly. See .superpowers/sdd/progress.md for full fix options.
+- Gazebo GPU lidar publishes scan with frame_id = `robot_001/base_footprint/lidar` (Gazebo internal
+  entity path), NOT `robot_001/lidar_link` (the URDF link name). A static TF bridge is needed
+  between these two frame names.
+- Nav2 bringup with `use_namespace:true` + `namespace:robot_001` remaps all Nav2 topics to
+  `/robot_001/` prefix. The action server is at `/robot_001/navigate_to_pose`.
+- AMCL `set_initial_pose: true` with initial_pose params works — sets pose to bedroom origin.
+- Self-hosted CI runner: labels `self-hosted, x86, gpu, rtx5080`. Service: actions.runner.*.service.
+  Token must be regenerated if expired (GitHub → Settings → Actions → Runners → Add Runner).
