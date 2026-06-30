@@ -16,7 +16,7 @@ amcl:
   ros__parameters:
     use_sim_time: true
     robot_model_type: "nav2_amcl::DifferentialMotionModel"
-    base_frame_id: "robot_001/base_link"
+    base_frame_id: "robot_001/base_footprint"
     odom_frame_id: "robot_001/odom"
     global_frame_id: "map"
     scan_topic: /robot_001/scan
@@ -151,7 +151,7 @@ map_server:
 collision_monitor:
   ros__parameters:
     use_sim_time: true
-    base_frame_id: "robot_001/base_link"
+    base_frame_id: "robot_001/base_footprint"
     odom_frame_id: "robot_001/odom"
     cmd_vel_in_topic: "cmd_vel_smoothed"
     cmd_vel_out_topic: "cmd_vel"

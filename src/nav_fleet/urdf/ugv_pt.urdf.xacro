@@ -13,6 +13,14 @@
 
   <!-- ══ LINKS ══════════════════════════════════════════════════════════ -->
 
+  <!-- base_footprint: 2-D projection of robot on the floor, required by Nav2 -->
+  <link name="base_footprint"/>
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0.125" rpy="0 0 0"/>
+  </joint>
+
   <!-- Base body -->
   <link name="base_link">
     <visual>
@@ -144,6 +152,27 @@
     <origin xyz="${base_length/2} 0 ${base_height/2 + 0.015}"/>
   </joint>
 
+  <!-- IMU -->
+  <link name="imu_link">
+    <inertial>
+      <mass value="0.01"/>
+      <inertia ixx="0.00001" ixy="0" ixz="0" iyy="0.00001" iyz="0" izz="0.00001"/>
+    </inertial>
+  </link>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0 0 0.05" rpy="0 0 0"/>
+  </joint>
+
+  <gazebo reference="imu_link">
+    <sensor name="imu" type="imu">
+      <topic>/robot_001/imu/data</topic>
+      <update_rate>200</update_rate>
+      <always_on>true</always_on>
+    </sensor>
+  </gazebo>
+
   <!-- ══ GAZEBO COLOURS ═════════════════════════════════════════════════
        OGRE2 in Gazebo Harmonic needs <diffuse> for visible surface colour
        under directional lighting. <ambient> alone = near-black surface.
@@ -208,7 +237,7 @@
       <odom_topic>/robot_001/odom</odom_topic>
       <tf_topic>/robot_001/tf</tf_topic>
       <frame_id>robot_001/odom</frame_id>
-      <child_frame_id>robot_001/base_link</child_frame_id>
+      <child_frame_id>robot_001/base_footprint</child_frame_id>
     </plugin>
 
     <plugin filename="gz-sim-pose-publisher-system"
