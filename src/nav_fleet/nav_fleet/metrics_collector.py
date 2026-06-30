@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""ROS2 topic Hz + collision metric collector. Implemented in Session 09."""
+"""ROS2 topic Hz + collision metric collector."""
 
 import json
 import time
