@@ -17,6 +17,7 @@ import time
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
+from rclpy.time import Time
 from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import PoseStamped
 
@@ -37,7 +38,7 @@ class NavRunner(Node):
         goal = NavigateToPose.Goal()
         goal.pose = PoseStamped()
         goal.pose.header.frame_id = 'map'
-        goal.pose.header.stamp = self.get_clock().now().to_msg()
+        goal.pose.header.stamp = Time().to_msg()  # zero = use latest TF, works with sim time
         goal.pose.pose.position.x = x
         goal.pose.pose.position.y = y
         goal.pose.pose.orientation.w = 1.0

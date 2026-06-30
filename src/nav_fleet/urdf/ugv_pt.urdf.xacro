@@ -236,8 +236,8 @@
       <topic>/robot_001/cmd_vel</topic>
       <odom_topic>/robot_001/odom</odom_topic>
       <tf_topic>/robot_001/tf</tf_topic>
-      <frame_id>robot_001/odom</frame_id>
-      <child_frame_id>robot_001/base_footprint</child_frame_id>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_footprint</child_frame_id>
     </plugin>
 
     <plugin filename="gz-sim-pose-publisher-system"

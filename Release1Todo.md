@@ -1947,7 +1947,7 @@ The changes below are the minimum needed to run correctly in the new project. De
 
 ### Steps
 
-- [ ] **Fix KDL root-link inertia warning (`base_footprint`)** — quick fix, clears the warning
+- [x] **Fix KDL root-link inertia warning (`base_footprint`)** — quick fix, clears the warning
   that appears every launch. ROS2 standard pattern: a massless root link with a fixed joint
   to `base_link`.
 
@@ -1971,7 +1971,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   base_frame_id: robot_001/base_footprint
   ```
 
-- [ ] **Add IMU sensor** — Nav2's `robot_localization` EKF fuses IMU + odometry for better pose
+- [x] **Add IMU sensor** — Nav2's `robot_localization` EKF fuses IMU + odometry for better pose
   estimates. Without IMU the pose drifts faster on longer runs. The real ugv_pt has an IMU
   at 200 Hz (see `robot_profiles/jetson_ugv_pt.yaml`).
 
@@ -2003,7 +2003,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   '/robot_001/imu/data@sensor_msgs/msg/Imu@gz.msgs.IMU',
   ```
 
-- [ ] **Implement `nav_runner.py`** — replace the stub in
+- [x] **Implement `nav_runner.py`** — replace the stub in
   `src/nav_fleet/nav_fleet/nav_runner.py`:
 
   ```python
@@ -2069,7 +2069,7 @@ The changes below are the minimum needed to run correctly in the new project. De
       main()
   ```
 
-- [ ] **Implement `metrics_collector.py`** — replace the stub in
+- [x] **Implement `metrics_collector.py`** — replace the stub in
   `src/nav_fleet/nav_fleet/metrics_collector.py`:
 
   ```python
@@ -2134,7 +2134,7 @@ The changes below are the minimum needed to run correctly in the new project. De
       main()
   ```
 
-- [ ] **Write `tests/test_navigation.py`** — these tests require a live Gazebo + Nav2 session
+- [x] **Write `tests/test_navigation.py`** — these tests require a live Gazebo + Nav2 session
   (run locally after `ros2 launch nav_fleet sim_launch.py`):
 
   ```python
@@ -2186,7 +2186,7 @@ The changes below are the minimum needed to run correctly in the new project. De
       assert metrics['scan_hz'] >= 9.0, f"scan Hz {metrics['scan_hz']} < 9"
   ```
 
-- [ ] **Register workstation as GitHub Actions self-hosted runner** — one-time setup that
+- [x] **Register workstation as GitHub Actions self-hosted runner** — one-time setup that
   handles both the Gazebo CI job (this session) and the Isaac Sim CI job (Session 11):
 
   ```bash
@@ -2220,7 +2220,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   > `.bashrc` is NOT sourced automatically. Source ROS2 explicitly in each CI job step (see
   > below) rather than relying on `.bashrc`.
 
-- [ ] **Wire the Gazebo CI job** — in `.github/workflows/ci.yml`, replace the `stage-3-sim`
+- [x] **Wire the Gazebo CI job** — in `.github/workflows/ci.yml`, replace the `stage-3-sim`
   stub with:
 
   ```yaml
@@ -2261,11 +2261,11 @@ The changes below are the minimum needed to run correctly in the new project. De
   > headless rendering mode. Your workstation is running Xorg (visible in nvidia-smi output),
   > so `:0` is already there — just needs to be declared for the non-interactive shell.
 
-- [ ] **Remove `continue-on-error: true` from Stage 0** in `ci.yml` — now that
+- [x] **Remove `continue-on-error: true` from Stage 0** in `ci.yml` — now that
   `test_navigation.py` covers the missing requirements, Stage 0 should fail the pipeline
   if traceability breaks.
 
-- [ ] **Also rename CI job labels to match** — the old `stage-0-requirements`,
+- [x] **Also rename CI job labels to match** — the old `stage-0-requirements`,
   `stage-1-quality`, `stage-2-arm64` job names can stay as-is; just ensure the `needs:`
   chain is correct: `sim-navigation` needs `arm64-build`.
 
