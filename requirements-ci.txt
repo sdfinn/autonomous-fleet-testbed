@@ -14,3 +14,4 @@ pymupdf>=1.24
 pytest==8.3.2
 pytest-cov>=5.0
 python-dotenv>=1.0
+pytest-timeout>=2.3
