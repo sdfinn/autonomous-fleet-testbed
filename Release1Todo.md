@@ -8,24 +8,24 @@
 
 ## Session Index
 
-| # | Title | Phase | Status |
-|---|---|---|---|
-| 01 | Ubuntu 24.04 Dual Boot | A | ✅ |
-| 02 | ROS2 Jazzy + Gazebo Harmonic | A | ✅ |
-| 03 | Docker + Tools + GitHub CLI | A | ✅ |
-| 04 | GitHub Repo + Project Skeleton | A | ✅ |
-| 05 | File Migration from Current Project | A | ✅ |
-| 06 | Stage 0 — Requirements Gate | A | ✅ |
-| 07 | Stage 1 — Code Quality Gate | A | ✅ |
-| 08 | Stage 2 — arm64 Cross-Compile + QEMU Baseline | A | ✅ |
-| 09 | Stage 3 Part 1 — URDF + Nav2 in Gazebo Headless | A | ✅ |
-| 10 | Stage 3 Part 2 — First Passing Nav Test + Drift Wired | A | ⬜ |
-| 11 | Tag ci-qemu-baseline + Document Timing | A | ⬜ |
-| 12 | Stage 4 — CUDA + NVIDIA Driver + Isaac Sim Perception | A | ⬜ |
-| 13 | Stage 5 — Reports + Dashboard | A | ⬜ |
-| 14 | Phase B — Jetson Dev Kit Setup + GHA Runner | B | ⬜ |
-| 15 | Phase B — Jetson Native Build + Timing Benchmark | B | ⬜ |
-| 16 | Phase C — Rover + Stage 6 Deploy + r1-complete | C | ⬜ |
+| # | Title | Status |
+|---|---|---|
+| 01 | Ubuntu 24.04 Dual Boot | ✅ |
+| 02 | ROS2 Jazzy + Gazebo Harmonic | ✅ |
+| 03 | Docker + Tools + GitHub CLI | ✅ |
+| 04 | GitHub Repo + Project Skeleton | ✅ |
+| 05 | File Migration from Current Project | ✅ |
+| 06 | Requirements Gate | ✅ |
+| 07 | Code Quality Gate | ✅ |
+| 08 | arm64 Cross-Compile + QEMU Baseline | ✅ |
+| 09 | URDF + Nav2 in Gazebo | ✅ |
+| 10 | First Passing Nav Test + Self-Hosted CI Runner | ⬜ |
+| 11 | Isaac Sim: Install + First Nav Test | ⬜ |
+| 12 | Reports + Dashboard: True End-to-End | ⬜ |
+| 13 | Agentic Test Loop in Sim | ⬜ |
+| 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | ⬜ |
+| 15 | Real Robot: Deploy + Sim-to-Real Comparison | ⬜ |
+| 16+ | Agentic Loop on Real Hardware + Advanced Missions | ⬜ |
 
 ---
 
@@ -1444,7 +1444,7 @@ The changes below are the minimum needed to run correctly in the new project. De
 
 ### Steps
 
-- [ ] **Get the Waveshare URDF as a reference:**
+- [x] **Get the Waveshare URDF as a reference:**
   ```bash
   cd ~
   git clone https://github.com/waveshareteam/ugv_ws.git waveshare_ref
@@ -1452,7 +1452,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   # Find the URDF files — copy the relevant xacro as a starting point
   ```
 
-- [ ] **Create a simplified URDF for Stage 3 (`urdf/ugv_pt.urdf.xacro`):**
+- [x] **Create a simplified URDF for Stage 3 (`urdf/ugv_pt.urdf.xacro`):**
 
   > **Note:** The full Waveshare URDF includes hardware-specific plugins. For Stage 3 (Gazebo only), use a simplified version with Gazebo diff-drive and lidar plugins. Refine to match real hardware specs in Session 15.
 
@@ -1652,7 +1652,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   </robot>
   ```
 
-- [ ] **Create a simple bedroom world (`worlds/bedroom_simple.sdf`):**
+- [x] **Create a simple bedroom world (`worlds/bedroom_simple.sdf`):**
   ```xml
   <?xml version="1.0"?>
   <sdf version="1.9">
@@ -1796,7 +1796,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   </sdf>
   ```
 
-- [ ] **Create a launch file (`src/nav_fleet/nav_fleet/sim_launch.py`):**
+- [x] **Create a launch file (`src/nav_fleet/nav_fleet/sim_launch.py`):**
 
   > This is the key file that wires URDF → Gazebo → ros_gz_bridge → Nav2 together.
 
@@ -1875,7 +1875,7 @@ The changes below are the minimum needed to run correctly in the new project. De
 
   > **Note:** `nav2_params.yaml` doesn't exist yet. Next step.
 
-- [ ] **Create `config/nav2_params.yaml`** — copy from nav2_bringup defaults and customize namespace:
+- [x] **Create `config/nav2_params.yaml`** — copy from nav2_bringup defaults and customize namespace:
   ```bash
   # Get the default nav2 params as a starting point
   cp /opt/ros/jazzy/share/nav2_bringup/params/nav2_params.yaml config/nav2_params.yaml
@@ -1890,7 +1890,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   ```
   The full nav2_params.yaml customization is a session in itself — at this stage, the default params get the robot moving. Tune in Session 10.
 
-- [ ] **Add urdf/ and worlds/ to the installed package** — update `setup.py` data_files:
+- [x] **Add urdf/ and worlds/ to the installed package** — update `setup.py` data_files:
   ```python
   data_files=[
       ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
@@ -1901,7 +1901,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   ],
   ```
 
-- [ ] **Rebuild and launch:**
+- [x] **Rebuild and launch:**
   ```bash
   cd ~/autonomous-fleet-testbed
   colcon build --symlink-install
@@ -1916,7 +1916,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   ros2 topic hz /robot_001/scan    # should show ~10 Hz
   ```
 
-- [ ] **Commit:**
+- [x] **Commit:**
   ```bash
   git add .
   git commit -m "feat: Stage 3 Part 1 — URDF, bedroom world, Gazebo+Nav2 launch file"
@@ -1931,44 +1931,27 @@ The changes below are the minimum needed to run correctly in the new project. De
 
 ---
 
-## Sessions 10–16 — Outlines (Expand When Reached)
-
 ---
 
-### Session 10 — Stage 3 Part 2: First Passing Nav Test + Drift Wired (~3 hrs)
+## Session 10 — First Passing Nav Test + Self-Hosted CI Runner (~3-4 hrs)
 
-**Goal:** Nav2 sends the robot from start to goal. Test asserts < 0.15m position error, zero collisions. `test_baseline.py` runs against the first real run report. `test_ros2_contracts.py` passes.
+### Recommended Reading
+- [Nav2 NavigateToPose action](https://docs.nav2.org/configuration/packages/configuring-bt-navigator.html) — understand the action server/client pattern
+- [GitHub Actions self-hosted runners](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/about-self-hosted-runners) — registration, labels, systemd service
+- [robot_localization EKF](https://docs.ros.org/en/jazzy/p/robot_localization/) — why IMU + odom fusion matters for Nav2 pose accuracy
+- [ros2 action CLI](https://docs.ros.org/en/jazzy/Tutorials/Beginner-CLI-Tools/Understanding-ROS2-Actions/Understanding-ROS2-Actions.html) — useful for testing nav goals manually
 
-**Carry-overs from Session 09 — robot fidelity (sim must match real ugv_pt as closely as possible):**
+### Prerequisites
+- Session 09 complete: `gz sim` opens bedroom world, robot spawns, odom ~50 Hz, scan ~10 Hz
+- `colcon build --symlink-install` currently clean
 
-- [ ] **Add IMU** — The real robot has an IMU at 200 Hz (see `robot_profiles/jetson_ugv_pt.yaml`).
-  Nav2's `robot_localization` EKF node fuses IMU + odometry for better pose estimates — without
-  IMU the pose estimate is odom-only and drifts faster. Add to `urdf/ugv_pt.urdf.xacro`:
-  - `imu_link` (fixed joint above base_link)
-  - `<sensor type="imu">` Gazebo plugin at 200 Hz
-  - Bridge `/robot_001/imu/data@sensor_msgs/msg/Imu@gz.msgs.IMU`
-  - Add `imu_topic` entry to Nav2 `robot_localization` config in `nav2_params.yaml`
+### Steps
 
-- [ ] **Upgrade camera to depth (OAK-D Lite)** — Real robot uses OAK-D Lite which gives RGB +
-  depth point cloud. Current sim has monocular only. Add depth to `camera_link` sensor:
-  - Add `<sensor type="depth_camera">` or `<sensor type="rgbd_camera">` in URDF Gazebo block
-  - Bridge `/robot_001/camera/depth/points@sensor_msgs/msg/PointCloud2@gz.msgs.PointCloudPacked`
-  - Nav2 3D obstacle layer uses this when configured — enables seeing objects shorter than lidar
+- [ ] **Fix KDL root-link inertia warning (`base_footprint`)** — quick fix, clears the warning
+  that appears every launch. ROS2 standard pattern: a massless root link with a fixed joint
+  to `base_link`.
 
-- [ ] **Evaluate skid-steer vs diff-drive** — Real robot has 4 driven wheels (ESP32 sub-controller
-  drives all 4, left-side together / right-side together = skid steer). Current sim uses
-  `gz-sim-diff-drive-system` which approximates this. For R1 Nav2 testing the approximation
-  is acceptable. If sim-to-real navigation accuracy falls below 70% threshold in Session 16,
-  switch to `gz-sim-wheel-slip-system` + `gz-sim-diff-drive-system` with slip compensation, or
-  use the `skid_steer_drive` plugin. Document the decision in BLUEPRINT.md Decisions Log.
-
-- [ ] **Verify actual ugv_pt physical dimensions** — Current URDF uses estimated dimensions
-  (0.35m × 0.30m × 0.15m body, wheel_radius=0.05m, wheel_separation=0.28m). Before Phase C
-  (real robot), measure the actual Waveshare UGV-PT and update URDF to match exactly.
-  Reference: [Waveshare UGV-PT product page](https://www.waveshare.com/ugv-pt.htm) for spec sheet.
-
-- [ ] **Fix KDL root-link inertia warning** — Add `base_footprint` as the root link (no mass/inertia)
-  with a fixed joint to `base_link` at z=0.125m. This is the ROS2 standard pattern:
+  Open `src/nav_fleet/urdf/ugv_pt.urdf.xacro`. Before `<link name="base_link">`, add:
   ```xml
   <link name="base_footprint"/>
   <joint name="base_footprint_joint" type="fixed">
@@ -1977,117 +1960,1255 @@ The changes below are the minimum needed to run correctly in the new project. De
     <origin xyz="0 0 0.125" rpy="0 0 0"/>
   </joint>
   ```
-  Then update diff-drive plugin `child_frame_id` to `robot_001/base_footprint` and
-  `nav2_params.yaml` `base_frame_id` to `robot_001/base_footprint`.
 
-**Primary Session 10 tasks:**
-- Implement `nav_runner.py` — sends a Nav2 action goal via `NavigateToPose` action client, records result
-- Implement `metrics_collector.py` — subscribes to `/robot_001/odom`, `/robot_001/scan`, measures Hz, detects collision via `/robot_001/scan` min range
-- Write `tests/test_navigation.py` — BR-01 (position error), BR-02 (collisions), BR-10 (BT success)
-- Enable `test_ros2_contracts.py` in Stage 3 CI job
-- Wire Stage 3 Gazebo job into CI (headless, `--headless-rendering` flag)
-- Remove `continue-on-error: true` from Stage 0 once all requirements are covered
-
-**Reference:** [Nav2 action client tutorial](https://docs.nav2.org/tutorials/docs/get_started.html)
-
----
-
-### Session 11 — Tag ci-qemu-baseline + Document Timing (~1 hr)
-
-**Goal:** All Stages 0–3 green. Tag the baseline. Record timings.
-
-**Key tasks:**
-- Confirm all stages green in GHA
-- Record Stage 2 QEMU build time from GHA summary (the "before" number)
-- Record Stage 3 Gazebo test time
-- `git tag ci-qemu-baseline && git push origin ci-qemu-baseline`
-- Update BLUEPRINT.md Decisions Log with both timing numbers
-
----
-
-### Session 12 — Stage 4: CUDA + NVIDIA Driver + Isaac Sim (~3 hrs)
-
-> **⚠️ DEFERRED (decision 2026-06-27 — see BLUEPRINT.md).** Stage 4 / Isaac Sim is
-> deferred-and-positioned: it becomes the "fidelity tier" and drops into its reserved
-> pipeline slot later, when a perception story is actually needed. Deferred on **priority,
-> not difficulty**. For R1, skip this session — go from Session 11 to Session 13. The R4
-> work (agentic loop + sim-to-real alignment + local-throughput benchmark) takes priority.
-> Keep the CI Stage 4 stub clean so this drops in with no rework. Original plan retained below.
-
-**Goal:** RTX 5080 validated in Ubuntu. Isaac Sim launches. Stage 4 perception test runs (YOLO mAP on simulated camera feed).
-
-**Key tasks:**
-- Install NVIDIA driver 570+ on Ubuntu: `sudo ubuntu-drivers install`
-- Install CUDA 13 toolkit from [developer.nvidia.com/cuda-downloads](https://developer.nvidia.com/cuda-downloads)
-- Install Isaac Sim 5.x via Omniverse Launcher (Ubuntu)
-- Write Stage 4 CI job: self-hosted runner with `[self-hosted, rtx5080]` label
-- Register workstation as GHA self-hosted runner for Stage 4
-
-**Note:** Isaac Sim install and first launch alone is a 2–3 hr task. This session may need to be split.
-
----
-
-### Session 13 — Stage 5: Reports + Dashboard (~3 hrs)
-
-**Goal:** Every CI run produces a JSON report saved to `reports/history/`. Dashboard shows run history. PDF report generates.
-
-**Key tasks:**
-- Complete `tools/telemetry_logger.py` — writes JSON to `reports/history/<run_id>.json`
-- Complete `tools/generate_test_report.py` — reads history, produces PDF via ReportLab
-- Complete `dashboard/app.py` — Streamlit multi-tab: Fleet Overview, Drift Alerts, Run Detail
-- Wire Stage 5 into CI: artifact upload of JSON report + PDF
-- Test that `baseline_monitor.py` reads 5+ history files and produces drift output
-
----
-
-### Session 14 — Phase B: Jetson Dev Kit Setup + GHA Runner (~3 hrs)
-
-**Goal:** Jetson Orin Nano Super Developer Kit is flashed, on the network, registered as a GHA runner.
-
-**Key tasks:**
-- Flash JetPack 7.2 via SDK Manager on Ubuntu host
-- Install ROS2 Jazzy on Jetson (native arm64, no QEMU)
-- Install CycloneDDS on Jetson
-- Register Jetson as GHA self-hosted runner with label `[self-hosted, arm64, jetson]`
-- Add `~/.bashrc` sourcing on Jetson: ROS2 + CycloneDDS
-
-**Reference:** [Jetson SDK Manager](https://developer.nvidia.com/sdk-manager), [Self-hosted GHA runners](https://docs.github.com/en/actions/hosting-your-own-runners)
-
----
-
-### Session 15 — Phase B: Jetson Native Build + Timing Benchmark (~3 hrs)
-
-**Goal:** Stage 2 now runs on the Jetson native arm64 runner. Measure and record the speedup.
-
-**Key tasks:**
-- Update Stage 2 CI job: change `runs-on` from `ubuntu-latest` to `[self-hosted, arm64, jetson]`
-- Push and let CI run
-- Record Stage 2 build time (expect ~3–5 min vs 25–30 min on QEMU)
-- `git tag ci-jetson-upgrade && git push origin ci-jetson-upgrade`
-- Compute and document the delta in BLUEPRINT.md: "Stage 2: 28 min → 3 min (89% reduction)"
-
----
-
-### Session 16 — Phase C: Rover + Stage 6 Deploy + r1-complete (~3 hrs)
-
-**Goal:** Waveshare UGV PT received, flashed, connected. Stage 6 deploys nav_fleet to the rover and runs a smoke test. R1 is done.
-
-**Key tasks:**
-- Transfer Jetson module from Dev Kit to UGV PT carrier board (or buy second module)
-- One-time SLAM map build:
-  ```bash
-  # On Jetson (SSH):
-  ros2 launch slam_toolbox online_async_launch.py use_sim_time:=false
-  # On workstation (teleop the rover around the room):
-  ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r /cmd_vel:=/robot_001/cmd_vel
-  # Save map:
-  ros2 run nav2_map_server map_saver_cli -f maps/bedroom_real
+  In the `<plugin filename="gz-sim-diff-drive-system"...>` block, update:
+  ```xml
+  <child_frame_id>robot_001/base_footprint</child_frame_id>
   ```
-- Write Stage 6 CI job: SSH deploy, `ros2 launch nav_fleet robot_launch.py`, smoke test (topic Hz assertions), auto-rollback on failure
-- Record sim-to-real comparison: run `tools/sim_vs_real_comparison.py` with sim DB and real DB. Check nav_success_rate and mean_position_error correlation.
-- If correlation >= 70%: R1 done. `git tag r1-complete && git push origin r1-complete`
-- If correlation < 70%: See "Kill Criteria" in BLUEPRINT.md
+
+  In `config/nav2_params.yaml`, under `amcl` and `controller_server`, update:
+  ```yaml
+  base_frame_id: robot_001/base_footprint
+  ```
+
+- [ ] **Add IMU sensor** — Nav2's `robot_localization` EKF fuses IMU + odometry for better pose
+  estimates. Without IMU the pose drifts faster on longer runs. The real ugv_pt has an IMU
+  at 200 Hz (see `robot_profiles/jetson_ugv_pt.yaml`).
+
+  Add to `src/nav_fleet/urdf/ugv_pt.urdf.xacro` after the camera joint:
+  ```xml
+  <link name="imu_link">
+    <inertial>
+      <mass value="0.01"/>
+      <inertia ixx="0.00001" ixy="0" ixz="0" iyy="0.00001" iyz="0" izz="0.00001"/>
+    </inertial>
+  </link>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0 0 0.05" rpy="0 0 0"/>
+  </joint>
+
+  <gazebo reference="imu_link">
+    <sensor name="imu" type="imu">
+      <topic>/robot_001/imu/data</topic>
+      <update_rate>200</update_rate>
+      <always_on>true</always_on>
+    </sensor>
+  </gazebo>
+  ```
+
+  Add to the bridge arguments list in `src/nav_fleet/launch/sim_launch.py`:
+  ```python
+  '/robot_001/imu/data@sensor_msgs/msg/Imu@gz.msgs.IMU',
+  ```
+
+- [ ] **Implement `nav_runner.py`** — replace the stub in
+  `src/nav_fleet/nav_fleet/nav_runner.py`:
+
+  ```python
+  # Copyright 2026 Mike. Licensed under Apache 2.0.
+  """Nav2 NavigateToPose action client — sends a goal and waits for result."""
+  import rclpy
+  from rclpy.node import Node
+  from rclpy.action import ActionClient
+  from nav2_msgs.action import NavigateToPose
+  from geometry_msgs.msg import PoseStamped
+  import time
+
+
+  class NavRunner(Node):
+      def __init__(self):
+          super().__init__('nav_runner')
+          self._client = ActionClient(
+              self, NavigateToPose, '/robot_001/navigate_to_pose'
+          )
+
+      def send_goal(self, x, y, timeout=90.0):
+          """Send goal pose and block until success or timeout. Returns bool."""
+          if not self._client.wait_for_server(timeout_sec=15.0):
+              self.get_logger().error('Nav2 action server not available')
+              return False
+
+          goal = NavigateToPose.Goal()
+          goal.pose = PoseStamped()
+          goal.pose.header.frame_id = 'map'
+          goal.pose.header.stamp = self.get_clock().now().to_msg()
+          goal.pose.pose.position.x = x
+          goal.pose.pose.position.y = y
+          goal.pose.pose.orientation.w = 1.0
+
+          future = self._client.send_goal_async(goal)
+          rclpy.spin_until_future_complete(self, future, timeout_sec=10.0)
+          goal_handle = future.result()
+          if not goal_handle or not goal_handle.accepted:
+              self.get_logger().error('Goal rejected')
+              return False
+
+          result_future = goal_handle.get_result_async()
+          deadline = time.time() + timeout
+          while not result_future.done():
+              rclpy.spin_once(self, timeout_sec=0.1)
+              if time.time() > deadline:
+                  self.get_logger().warn('Navigation timed out')
+                  return False
+
+          return result_future.result().status == 4  # STATUS_SUCCEEDED
+
+
+  def main():
+      rclpy.init()
+      runner = NavRunner()
+      success = runner.send_goal(1.0, 1.0)
+      print(f'Navigation {"succeeded" if success else "failed"}')
+      runner.destroy_node()
+      rclpy.shutdown()
+
+
+  if __name__ == '__main__':
+      main()
+  ```
+
+- [ ] **Implement `metrics_collector.py`** — replace the stub in
+  `src/nav_fleet/nav_fleet/metrics_collector.py`:
+
+  ```python
+  # Copyright 2026 Mike. Licensed under Apache 2.0.
+  """Collect topic Hz and collision metrics from a live ROS2 session."""
+  import rclpy
+  from rclpy.node import Node
+  from nav_msgs.msg import Odometry
+  from sensor_msgs.msg import LaserScan
+  import time
+  import json
+
+
+  class MetricsCollector(Node):
+      def __init__(self):
+          super().__init__('metrics_collector')
+          self._odom_times = []
+          self._scan_times = []
+          self._min_range = float('inf')
+          self.create_subscription(Odometry, '/robot_001/odom', self._odom_cb, 10)
+          self.create_subscription(LaserScan, '/robot_001/scan', self._scan_cb, 10)
+
+      def _odom_cb(self, msg):
+          self._odom_times.append(time.time())
+
+      def _scan_cb(self, msg):
+          self._scan_times.append(time.time())
+          valid = [r for r in msg.ranges if msg.range_min < r < msg.range_max]
+          if valid:
+              self._min_range = min(self._min_range, min(valid))
+
+      def collect(self, duration=5.0):
+          """Spin for duration seconds, return metrics dict."""
+          deadline = time.time() + duration
+          while time.time() < deadline:
+              rclpy.spin_once(self, timeout_sec=0.05)
+
+          def hz(times):
+              if len(times) < 2:
+                  return 0.0
+              elapsed = times[-1] - times[0]
+              return (len(times) - 1) / elapsed if elapsed > 0 else 0.0
+
+          return {
+              'odom_hz': round(hz(self._odom_times), 1),
+              'scan_hz': round(hz(self._scan_times), 1),
+              'min_scan_range_m': round(self._min_range, 3),
+              'collision_detected': self._min_range < 0.12,
+          }
+
+
+  def main():
+      rclpy.init()
+      collector = MetricsCollector()
+      metrics = collector.collect(duration=5.0)
+      print(json.dumps(metrics, indent=2))
+      collector.destroy_node()
+      rclpy.shutdown()
+
+
+  if __name__ == '__main__':
+      main()
+  ```
+
+- [ ] **Write `tests/test_navigation.py`** — these tests require a live Gazebo + Nav2 session
+  (run locally after `ros2 launch nav_fleet sim_launch.py`):
+
+  ```python
+  # Copyright 2026 Mike. Licensed under Apache 2.0.
+  """Navigation integration tests — require live Gazebo + Nav2 (not mocked)."""
+  import sys
+  import os
+  import pytest
+  import rclpy
+
+  sys.path.insert(0, os.path.join(
+      os.path.dirname(__file__), '..', 'src', 'nav_fleet', 'nav_fleet'
+  ))
+  from nav_runner import NavRunner  # noqa: E402
+  from metrics_collector import MetricsCollector  # noqa: E402
+
+
+  @pytest.fixture(scope='module')
+  def ros_ctx():
+      rclpy.init()
+      yield
+      rclpy.shutdown()
+
+
+  def test_navigation_succeeds(ros_ctx):
+      """BR-01: NavigateToPose action succeeds (robot reaches goal)."""
+      runner = NavRunner()
+      success = runner.send_goal(1.0, 1.0, timeout=90.0)
+      runner.destroy_node()
+      assert success, 'NavigateToPose did not return STATUS_SUCCEEDED within 90s'
+
+
+  def test_no_collision(ros_ctx):
+      """BR-02: min scan range > robot_radius (0.20m) during 30s observation."""
+      collector = MetricsCollector()
+      metrics = collector.collect(duration=30.0)
+      collector.destroy_node()
+      assert not metrics['collision_detected'], (
+          f"Collision: min scan range {metrics['min_scan_range_m']}m < 0.12m"
+      )
+
+
+  def test_topic_hz(ros_ctx):
+      """BR-10: odom >= 45 Hz, scan >= 9 Hz during normal operation."""
+      collector = MetricsCollector()
+      metrics = collector.collect(duration=5.0)
+      collector.destroy_node()
+      assert metrics['odom_hz'] >= 45.0, f"odom Hz {metrics['odom_hz']} < 45"
+      assert metrics['scan_hz'] >= 9.0, f"scan Hz {metrics['scan_hz']} < 9"
+  ```
+
+- [ ] **Register workstation as GitHub Actions self-hosted runner** — one-time setup that
+  handles both the Gazebo CI job (this session) and the Isaac Sim CI job (Session 11):
+
+  ```bash
+  mkdir -p ~/actions-runner && cd ~/actions-runner
+
+  # Get the exact download URL from:
+  # Your repo on GitHub → Settings → Actions → Runners → "New self-hosted runner"
+  # (Linux x64). Copy and run the curl + tar commands shown there — the version number
+  # changes with each release. The pattern is:
+  curl -o actions-runner-linux-x64-<VERSION>.tar.gz -L \
+    https://github.com/actions/runner/releases/download/v<VERSION>/actions-runner-linux-x64-<VERSION>.tar.gz
+  tar xzf ./actions-runner-linux-x64-<VERSION>.tar.gz
+
+  # Configure — the registration token is shown on the same GitHub page (expires in 1 hr):
+  ./config.sh \
+    --url https://github.com/sdfinn/autonomous-fleet-testbed \
+    --token <TOKEN_FROM_GITHUB_PAGE> \
+    --labels self-hosted,x86,gpu,rtx5080 \
+    --name mikeubuntu-runner \
+    --unattended
+
+  # Install and start as a systemd service (survives reboots):
+  sudo ./svc.sh install
+  sudo ./svc.sh start
+  sudo ./svc.sh status   # should show "active (running)"
+  ```
+
+  Verify on GitHub: Settings → Actions → Runners → `mikeubuntu-runner` shows as **Idle**.
+
+  > **Gotcha:** The systemd service runs as your user but in a non-interactive shell, so
+  > `.bashrc` is NOT sourced automatically. Source ROS2 explicitly in each CI job step (see
+  > below) rather than relying on `.bashrc`.
+
+- [ ] **Wire the Gazebo CI job** — in `.github/workflows/ci.yml`, replace the `stage-3-sim`
+  stub with:
+
+  ```yaml
+  sim-navigation:
+    runs-on: [self-hosted, x86, gpu]
+    needs: arm64-build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build workspace
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          colcon build --symlink-install
+          echo "source $(pwd)/install/setup.bash" >> $GITHUB_ENV
+
+      - name: Launch Gazebo (background) and wait for Nav2
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          DISPLAY=:0 ros2 launch nav_fleet sim_launch.py &
+          sleep 20
+        env:
+          DISPLAY: ':0'
+
+      - name: Run navigation tests
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          python -m pytest tests/test_navigation.py tests/test_ros2_contracts.py -v
+        env:
+          DISPLAY: ':0'
+
+      - name: Record timing
+        run: date >> reports/session10_timings.txt && cat reports/session10_timings.txt
+  ```
+
+  > **Why `DISPLAY=:0`?** Gazebo's OGRE2 renderer checks for a display server even in
+  > headless rendering mode. Your workstation is running Xorg (visible in nvidia-smi output),
+  > so `:0` is already there — just needs to be declared for the non-interactive shell.
+
+- [ ] **Remove `continue-on-error: true` from Stage 0** in `ci.yml` — now that
+  `test_navigation.py` covers the missing requirements, Stage 0 should fail the pipeline
+  if traceability breaks.
+
+- [ ] **Also rename CI job labels to match** — the old `stage-0-requirements`,
+  `stage-1-quality`, `stage-2-arm64` job names can stay as-is; just ensure the `needs:`
+  chain is correct: `sim-navigation` needs `arm64-build`.
+
+- [ ] **Build, launch locally, verify all three tests pass**:
+
+  ```bash
+  colcon build --symlink-install
+  source install/setup.bash
+
+  # Terminal 1 — launch simulation:
+  ros2 launch nav_fleet sim_launch.py
+
+  # Terminal 2 — run tests against live Gazebo (wait ~15s for Nav2 to initialise first):
+  python -m pytest tests/test_navigation.py tests/test_ros2_contracts.py -v
+  # All tests should pass
+
+  # Spot-check Hz:
+  ros2 topic hz /robot_001/odom       # ~50 Hz
+  ros2 topic hz /robot_001/imu/data   # ~200 Hz
+  ros2 topic hz /robot_001/scan       # ~10 Hz
+  ```
+
+- [ ] **Record bare-metal timing** and add to BLUEPRINT.md under Timings:
+  ```bash
+  time python -m pytest tests/test_navigation.py -v
+  # Note: includes Nav2 startup (~15s) + navigation execution (~30-60s depending on goal)
+  ```
+
+- [ ] **Commit and push** — CI will trigger on the self-hosted runner:
+  ```bash
+  git add .
+  git commit -m "feat(session-10): first passing nav test, IMU, base_footprint, self-hosted CI runner"
+  git push
+  gh run watch   # watch the sim-navigation job run on mikeubuntu-runner
+  ```
+
+### Session Complete When
+- `python -m pytest tests/test_navigation.py tests/test_ros2_contracts.py -v` — all tests green locally
+- GitHub Actions `sim-navigation` job green on the self-hosted runner
+- `continue-on-error` removed from Stage 0 and pipeline still green
+- Bare-metal nav test timing recorded in BLUEPRINT.md
 
 ---
 
-*End of Release1Todo.md — Sessions 10–16 to be expanded as each is reached.*
+## Session 11 — Isaac Sim: Install + First Nav Test (~3-4 hrs)
+
+### Recommended Reading
+- [Isaac Sim 5.x installation (pip)](https://docs.isaacsim.omniverse.nvidia.com/latest/installation/install_python.html) — pip install is the fastest path; no Omniverse Launcher needed
+- [Isaac Sim ROS2 bridge](https://docs.isaacsim.omniverse.nvidia.com/latest/ros2_tutorials/tutorial_ros2_overview.html) — how to enable the bridge and what topics it publishes
+- [USD basics for robotics](https://docs.isaacsim.omniverse.nvidia.com/latest/scene_setup/stage_setup.html) — Isaac uses USD (not SDF); understanding the stage/prim model helps
+- [Isaac Sim Python scripting](https://docs.isaacsim.omniverse.nvidia.com/latest/python_scripting/index.html) — how to drive Isaac from Python (needed for CI job)
+
+### Prerequisites
+- Session 10 complete and CI green
+- NVIDIA driver 595.71.05, CUDA 13.2 ✓ already installed (verified 2026-06-29)
+- Self-hosted runner already registered (`mikeubuntu-runner`)
+- ~25 GB free disk space for Isaac Sim
+
+### Steps
+
+- [ ] **Install Isaac Sim 5.x via pip** — fastest installation path; no Omniverse GUI needed:
+
+  ```bash
+  # Use a separate venv to avoid conflicts with the fleet-env:
+  python3 -m venv ~/isaac-env
+  source ~/isaac-env/bin/activate
+
+  # Install Isaac Sim (large download — ~20 GB, takes 20-40 min):
+  pip install isaacsim==5.0.0 \
+    --extra-index-url https://pypi.nvidia.com \
+    --extra-index-url https://download.pytorch.org/whl/cu121
+
+  # Verify:
+  python -c "import isaacsim; print('Isaac Sim installed')"
+  ```
+
+  > **Gotcha — first launch takes 30+ minutes.** Isaac Sim compiles shaders for your GPU
+  > on the first run. This is a one-time cost but must complete before any further steps.
+  > Launch headless and wait for the "Isaac Sim is running" log line:
+  > ```bash
+  > python -m isaacsim.kit --headless
+  > # Wait for: "[Isaac Sim] Simulation app is running"
+  > # Ctrl+C to exit once confirmed
+  > ```
+
+- [ ] **Enable the ROS2 bridge extension** — Isaac Sim loads extensions at runtime. Create
+  a startup script that enables the ROS2 bridge and loads a simple scene:
+
+  ```python
+  # scripts/isaac_ros2_bridge.py
+  """Start Isaac Sim with ROS2 bridge enabled."""
+  from isaacsim import SimulationApp
+
+  app = SimulationApp({'headless': True, 'renderer': 'RayTracedLighting'})
+
+  # Enable ROS2 bridge extension
+  from omni.isaac.core.utils.extensions import enable_extension
+  enable_extension('omni.isaac.ros2_bridge')
+
+  import omni
+  import rclpy
+  from omni.isaac.core import World
+
+  world = World()
+  world.reset()
+
+  print('[Isaac] ROS2 bridge enabled. Spinning...')
+  for _ in range(300):   # run for ~30 seconds at 10 Hz
+      world.step(render=False)
+
+  app.close()
+  ```
+
+  Run it and verify ROS2 topics appear:
+  ```bash
+  source ~/isaac-env/bin/activate
+  source /opt/ros/jazzy/setup.bash
+  python scripts/isaac_ros2_bridge.py &
+  sleep 10
+  ros2 topic list   # should show /clock and other Isaac topics
+  ```
+
+- [ ] **Load the bedroom world in Isaac** — Isaac uses USD format. The simplest first step
+  is a programmatic scene rather than converting the SDF. Create
+  `src/nav_fleet/worlds/bedroom_isaac.py`:
+
+  ```python
+  """Build the bedroom world in Isaac Sim programmatically (matches bedroom_simple.sdf)."""
+  import omni.isaac.core.utils.prims as prim_utils
+  from omni.isaac.core.objects import FixedCuboid
+  import numpy as np
+
+  def create_bedroom(world):
+      """Add walls and obstacles matching bedroom_simple.sdf geometry."""
+      # Floor
+      FixedCuboid('/World/floor', scale=np.array([7.0, 7.0, 0.02]),
+                  position=np.array([0, 0, -0.01]), color=np.array([0.8, 0.8, 0.8]))
+      # North wall
+      FixedCuboid('/World/wall_north', scale=np.array([7.0, 0.2, 1.0]),
+                  position=np.array([0, 3.5, 0.5]))
+      # South wall
+      FixedCuboid('/World/wall_south', scale=np.array([7.0, 0.2, 1.0]),
+                  position=np.array([0, -3.5, 0.5]))
+      # East wall
+      FixedCuboid('/World/wall_east', scale=np.array([0.2, 7.0, 1.0]),
+                  position=np.array([3.5, 0, 0.5]))
+      # West wall
+      FixedCuboid('/World/wall_west', scale=np.array([0.2, 7.0, 1.0]),
+                  position=np.array([-3.5, 0, 0.5]))
+      # Obstacle 1 (furniture)
+      FixedCuboid('/World/obstacle_1', scale=np.array([0.4, 0.4, 0.5]),
+                  position=np.array([1.0, 1.0, 0.25]), color=np.array([0.4, 0.2, 0.1]))
+      # Obstacle 2
+      FixedCuboid('/World/obstacle_2', scale=np.array([0.3, 0.6, 0.5]),
+                  position=np.array([-1.0, 0.5, 0.25]), color=np.array([0.3, 0.4, 0.6]))
+  ```
+
+- [ ] **Spawn ugv_pt and run a simple Nav2 test in Isaac** — wire nav_runner.py against
+  the Isaac ROS2 bridge (same topic namespace `/robot_001/`):
+
+  > **Note:** Full Nav2 in Isaac is more complex than Gazebo because Nav2 needs the transform
+  > tree and map to be published by Isaac. For Session 11, the goal is: robot spawned,
+  > `/robot_001/odom` and `/robot_001/scan` topics visible, and nav_runner.py can send
+  > a goal. A full nav test comparable to Session 10 can be a Session 11 stretch goal.
+
+  ```bash
+  # After Isaac is running with ROS2 bridge:
+  ros2 topic list | grep robot_001
+  ros2 topic hz /robot_001/odom   # target: ~50 Hz
+  ros2 topic hz /robot_001/scan   # target: ~10 Hz
+  ```
+
+- [ ] **Wire Isaac Sim CI job** — uses the same self-hosted runner as Session 10's
+  Gazebo job. Add to `.github/workflows/ci.yml` after `sim-navigation`:
+
+  ```yaml
+  isaac-validation:
+    runs-on: [self-hosted, x86, gpu]
+    needs: sim-navigation
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Isaac Sim nav test
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source ~/isaac-env/bin/activate
+          python scripts/isaac_ros2_bridge.py &
+          sleep 30
+          python -m pytest tests/test_navigation.py -v -k "hz"
+        env:
+          DISPLAY: ':0'
+      - name: Record Isaac timing
+        run: date >> reports/session11_timings.txt
+  ```
+
+- [ ] **Record Isaac Sim timing** — note first-launch shader compile time (one-time) vs
+  subsequent launch time. Add both to BLUEPRINT.md under Timings:
+  ```
+  Isaac Sim first launch (shader compile): ~XX min
+  Isaac Sim subsequent launch to ready: ~X min
+  Isaac nav test wall time: ~XX s
+  ```
+
+- [ ] **Commit**:
+  ```bash
+  git add .
+  git commit -m "feat(session-11): Isaac Sim bare metal, ROS2 bridge, isaac-validation CI job"
+  git push
+  ```
+
+### Session Complete When
+- `python scripts/isaac_ros2_bridge.py` launches without error, ROS2 topics visible
+- `/robot_001/odom` and `/robot_001/scan` publishing in Isaac (check with `ros2 topic hz`)
+- `isaac-validation` CI job green on self-hosted runner
+- Isaac timing numbers recorded in BLUEPRINT.md
+
+---
+
+## Session 12 — Reports + Dashboard: True End-to-End (~3 hrs)
+
+### Recommended Reading
+- [Streamlit documentation](https://docs.streamlit.io/) — multi-page apps, `st.sidebar`, `st.tabs`
+- [ReportLab PDF generation](https://docs.reportlab.com/reportlab/userguide/ch1_intro/) — generating PDFs programmatically
+- [Pandera data validation](https://pandera.readthedocs.io/en/stable/) — schema validation for the telemetry JSON
+
+### Prerequisites
+- Sessions 10 and 11 complete — at least one real run report in `reports/history/`
+- `pip install streamlit reportlab pandera` in fleet-env (already in requirements.txt)
+
+### Steps
+
+- [ ] **Complete `tools/telemetry_logger.py`** — writes a structured JSON file per CI run to
+  `reports/history/<run_id>.json`. The run_id is `YYYYMMDD_HHMMSS` or the GHA run number.
+
+  Key schema fields (match `tests/test_baseline.py` expectations):
+  ```json
+  {
+    "run_id": "20260629_143022",
+    "timestamp": "2026-06-29T14:30:22Z",
+    "robot_id": "robot_001",
+    "nav_success_rate": 1.0,
+    "mean_position_error_m": 0.08,
+    "odom_hz": 50.1,
+    "scan_hz": 10.0,
+    "collision_count": 0,
+    "mission_duration_s": 47.3,
+    "sim_engine": "gazebo"
+  }
+  ```
+
+  Call `telemetry_logger.log_run(metrics, sim_engine='gazebo')` at the end of
+  `test_navigation.py` to write the file automatically on each test run.
+
+- [ ] **Complete `tools/generate_test_report.py`** — reads all JSON files from
+  `reports/history/`, produces a PDF summary with run table + drift trend chart:
+
+  ```python
+  # Key output: reports/latest_report.pdf
+  # Sections: Run Summary table, Position Error trend (matplotlib), Pass/Fail per run
+  ```
+
+  Test locally:
+  ```bash
+  python tools/generate_test_report.py
+  # Should produce reports/latest_report.pdf — open with a PDF viewer to verify
+  evince reports/latest_report.pdf
+  ```
+
+- [ ] **Complete `dashboard/app.py`** — Streamlit app with three tabs:
+
+  - **Fleet Overview** — table of all runs, pass/fail, position error trend line chart
+  - **Drift Alerts** — runs where any metric breached `config/drift_config.yaml` thresholds
+  - **Run Detail** — select a run_id and see all metrics for that run
+
+  Test locally:
+  ```bash
+  streamlit run dashboard/app.py
+  # Opens browser at localhost:8501 — verify all three tabs render with real data
+  ```
+
+- [ ] **Wire the Reports CI job** — add to `ci.yml` after `isaac-validation`:
+
+  ```yaml
+  reports-dashboard:
+    runs-on: ubuntu-latest
+    needs: isaac-validation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-ci.txt
+      - name: Generate report
+        run: python tools/generate_test_report.py
+      - name: Upload PDF report
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-${{ github.run_number }}
+          path: reports/latest_report.pdf
+      - name: Upload JSON history
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-history-${{ github.run_number }}
+          path: reports/history/
+  ```
+
+- [ ] **Test `baseline_monitor.py`** — generate 5+ run JSON files (run the nav test five
+  times or copy/tweak existing ones), then:
+  ```bash
+  python tools/baseline_monitor.py
+  # Should print drift summary — any metric outside drift_config.yaml thresholds flagged
+  ```
+
+- [ ] **Commit**:
+  ```bash
+  git add .
+  git commit -m "feat(session-12): reports, dashboard, E2E pipeline complete"
+  git push
+  ```
+
+### Session Complete When
+- `streamlit run dashboard/app.py` shows real run data in all three tabs
+- `reports/latest_report.pdf` generates from real run history
+- `reports-dashboard` CI job green, PDF artifact downloadable from GitHub Actions run
+- `baseline_monitor.py` detects a simulated drift breach when you inject a bad run
+
+---
+
+## Session 13 — Agentic Test Loop in Sim (~4 hrs)
+
+> **This is the differentiator.** The pipeline now closes the loop: Claude watches test
+> results, diagnoses failures, generates new scenarios, and proposes improvements.
+> Human approval is required before any change is applied.
+
+### Recommended Reading
+- [Anthropic tool use / function calling](https://docs.anthropic.com/en/docs/tool-use) — how to give Claude structured output capabilities
+- [Claude API Python SDK](https://github.com/anthropics/anthropic-sdk-python) — `anthropic` package, Messages API
+- [Nav2 BT Navigator](https://docs.nav2.org/configuration/packages/bt-navigator.html) — understand what a Behavior Tree failure means in the telemetry
+- [Gazebo SDF reference](https://gazebosim.org/api/sim/8/sdf_worlds.html) — needed for generative world creation
+
+### Prerequisites
+- Session 12 complete — `reports/history/` has real run JSON files
+- `pip install anthropic` in fleet-env (already in requirements.txt)
+- `ANTHROPIC_API_KEY` set in environment (add to `.env` or export in shell):
+  ```bash
+  echo 'export ANTHROPIC_API_KEY=sk-ant-...' >> ~/.bashrc
+  source ~/.bashrc
+  ```
+
+### Steps
+
+- [ ] **Create `tools/agentic_loop.py`** — the main orchestrator. Reads the latest run
+  report, calls Claude with telemetry context, gets a structured diagnosis + proposed
+  action, presents it to the human for approval, then applies the approved action:
+
+  ```python
+  # Copyright 2026 Mike. Licensed under Apache 2.0.
+  """Agentic test loop: diagnose failures, propose fixes, await human approval."""
+  import anthropic
+  import json
+  import os
+  import glob
+  import subprocess
+  from pathlib import Path
+
+  client = anthropic.Anthropic()
+
+  # Named locations matching the bedroom world geometry.
+  # Claude uses these names in mission plans instead of raw (x, y) coordinates.
+  SEMANTIC_MAP = {
+      'home_base':       (-1.276, 1.09),   # robot spawn point
+      'center':          (0.0,   0.0),
+      'north_corridor':  (0.0,   2.5),
+      'south_corridor':  (0.0,  -2.5),
+      'east_zone':       (2.5,   0.0),
+      'west_zone':       (-2.5,  0.0),
+      'obstacle_zone_1': (1.0,   1.0),     # furniture obstacle 1 in SDF
+      'obstacle_zone_2': (-1.0,  0.5),     # furniture obstacle 2 in SDF
+  }
+
+  TOOLS = [
+      {
+          'name': 'propose_nav_param_change',
+          'description': 'Propose a change to nav2_params.yaml to address a navigation failure.',
+          'input_schema': {
+              'type': 'object',
+              'properties': {
+                  'param_path': {'type': 'string', 'description': 'Dot-separated param key'},
+                  'current_value': {'type': 'string'},
+                  'proposed_value': {'type': 'string'},
+                  'rationale': {'type': 'string'},
+              },
+              'required': ['param_path', 'proposed_value', 'rationale'],
+          },
+      },
+      {
+          'name': 'generate_world_variant',
+          'description': 'Generate a new SDF world file with different obstacle positions for broader test coverage.',
+          'input_schema': {
+              'type': 'object',
+              'properties': {
+                  'variant_name': {'type': 'string'},
+                  'obstacle_layout': {
+                      'type': 'array',
+                      'items': {
+                          'type': 'object',
+                          'properties': {
+                              'name': {'type': 'string'},
+                              'x': {'type': 'number'},
+                              'y': {'type': 'number'},
+                              'size_x': {'type': 'number'},
+                              'size_y': {'type': 'number'},
+                          },
+                      },
+                  },
+                  'rationale': {'type': 'string'},
+              },
+              'required': ['variant_name', 'obstacle_layout', 'rationale'],
+          },
+      },
+      {
+          'name': 'propose_mission_plan',
+          'description': (
+              'Generate a sequence of Nav2 goal poses from a natural language mission description. '
+              'Prefer named locations from SEMANTIC_MAP over raw coordinates.'
+          ),
+          'input_schema': {
+              'type': 'object',
+              'properties': {
+                  'mission_description': {'type': 'string'},
+                  'goals': {
+                      'type': 'array',
+                      'items': {
+                          'type': 'object',
+                          'properties': {
+                              'location': {
+                                  'type': 'string',
+                                  'description': 'Named location from SEMANTIC_MAP, or "custom"',
+                              },
+                              'label': {'type': 'string', 'description': 'Human-readable step label'},
+                              'x': {'type': 'number', 'description': 'Only if location is "custom"'},
+                              'y': {'type': 'number', 'description': 'Only if location is "custom"'},
+                          },
+                          'required': ['location', 'label'],
+                      },
+                  },
+                  'rationale': {'type': 'string'},
+              },
+              'required': ['mission_description', 'goals', 'rationale'],
+          },
+      },
+  ]
+
+
+  def load_latest_run():
+      """Load the most recent run JSON from reports/history/."""
+      files = sorted(glob.glob('reports/history/*.json'))
+      if not files:
+          raise FileNotFoundError('No run reports found in reports/history/')
+      with open(files[-1]) as f:
+          return json.load(f)
+
+
+  def resolve_goals(goals):
+      """Resolve named locations to (x, y) coordinates."""
+      resolved = []
+      for g in goals:
+          loc = g.get('location', 'custom')
+          if loc in SEMANTIC_MAP:
+              x, y = SEMANTIC_MAP[loc]
+          else:
+              x, y = g.get('x', 0.0), g.get('y', 0.0)
+          resolved.append({'x': x, 'y': y, 'label': g.get('label', loc)})
+      return resolved
+
+
+  def diagnose(run_data):
+      """Call Claude with telemetry; get structured diagnosis and proposed action."""
+      locations_str = '\n'.join(f'  {k}: {v}' for k, v in SEMANTIC_MAP.items())
+      prompt = f"""You are an autonomous robotics test engineer.
+
+  The latest nav test run produced these results:
+  {json.dumps(run_data, indent=2)}
+
+  Drift thresholds (from config/drift_config.yaml):
+  - nav_success_rate: >= 0.95
+  - mean_position_error_m: <= 0.15
+  - odom_hz: >= 45
+  - scan_hz: >= 9
+  - collision_count: 0
+
+  Available named locations in this environment (use these in mission plans):
+{locations_str}
+
+  Analyse the results. If any metric is outside threshold, diagnose the likely cause
+  and use ONE tool to propose a concrete action. If all metrics are healthy, use
+  propose_mission_plan with semantic location names to create a more challenging
+  multi-waypoint mission (e.g. "patrol north and south corridors, return to home_base")
+  or use generate_world_variant to propose a harder obstacle layout."""
+
+      response = client.messages.create(
+          model='claude-sonnet-4-6',
+          max_tokens=2048,
+          tools=TOOLS,
+          messages=[{'role': 'user', 'content': prompt}],
+      )
+      return response
+
+
+  def apply_world_variant(layout, name):
+      """Write a new SDF world file from Claude's obstacle layout."""
+      obstacles_sdf = ''
+      for obs in layout:
+          obstacles_sdf += f"""
+    <model name="{obs['name']}">
+      <static>true</static>
+      <pose>{obs['x']} {obs['y']} 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>{obs['size_x']} {obs['size_y']} 0.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>{obs['size_x']} {obs['size_y']} 0.5</size></box></geometry>
+          <material><diffuse>0.5 0.3 0.1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>"""
+
+      world_path = Path(f'src/nav_fleet/worlds/{name}.sdf')
+      # Read the base world template and inject obstacles
+      base = Path('src/nav_fleet/worlds/bedroom_simple.sdf').read_text()
+      # Insert before </world>
+      new_world = base.replace('  </world>', obstacles_sdf + '\n  </world>')
+      world_path.write_text(new_world)
+      print(f'[agentic] Created world variant: {world_path}')
+      return world_path
+
+
+  def human_approval(action_type, details):
+      """Print the proposed action and ask for human approval."""
+      print(f'\n{"="*60}')
+      print(f'PROPOSED ACTION: {action_type}')
+      print(json.dumps(details, indent=2))
+      print('="*60}')
+      answer = input('\nApprove? [y/N]: ').strip().lower()
+      return answer == 'y'
+
+
+  def run_loop():
+      run_data = load_latest_run()
+      print(f'[agentic] Loaded run: {run_data["run_id"]}')
+
+      response = diagnose(run_data)
+
+      for block in response.content:
+          if block.type == 'tool_use':
+              tool = block.name
+              inputs = block.input
+              print(f'\n[agentic] Claude proposes: {tool}')
+
+              if not human_approval(tool, inputs):
+                  print('[agentic] Proposal rejected by human. Exiting.')
+                  return
+
+              if tool == 'generate_world_variant':
+                  apply_world_variant(inputs['obstacle_layout'], inputs['variant_name'])
+                  print(f'[agentic] World variant created. Re-run: '
+                        f'ros2 launch nav_fleet sim_launch.py world:={inputs["variant_name"]}')
+
+              elif tool == 'propose_nav_param_change':
+                  print(f'[agentic] Apply this change to config/nav2_params.yaml:')
+                  print(f'  {inputs["param_path"]}: {inputs["proposed_value"]}')
+                  print(f'  Rationale: {inputs["rationale"]}')
+
+              elif tool == 'propose_mission_plan':
+                  resolved = resolve_goals(inputs['goals'])
+                  plan = {**inputs, 'goals_resolved': resolved}
+                  plan_path = Path('reports/mission_plan.json')
+                  plan_path.write_text(json.dumps(plan, indent=2))
+                  print(f'[agentic] Mission plan saved to {plan_path}')
+                  print(f'  Mission: {inputs["mission_description"]}')
+                  for step in resolved:
+                      print(f'    → {step["label"]}: ({step["x"]}, {step["y"]})')
+
+          elif block.type == 'text':
+              print(f'\n[Claude analysis]\n{block.text}')
+
+
+  if __name__ == '__main__':
+      run_loop()
+  ```
+
+- [ ] **Test the loop end-to-end on bare metal**:
+  ```bash
+  # Make sure a run report exists:
+  ls reports/history/
+
+  # Run the agentic loop:
+  python tools/agentic_loop.py
+  # Claude analyses the run, proposes an action
+  # You see the proposal and approve/reject
+  # If approved: world variant created OR nav param change shown OR mission plan saved
+  ```
+
+- [ ] **Inject a failure and verify diagnosis** — manually edit a copy of a run report,
+  set `nav_success_rate` to 0.7 and `mean_position_error_m` to 0.22, save it as a new
+  file in `reports/history/`, then run `agentic_loop.py` and check that Claude correctly
+  identifies the failure and proposes a nav param change:
+  ```bash
+  cp reports/history/<latest>.json reports/history/injected_failure.json
+  # Edit injected_failure.json: nav_success_rate=0.7, mean_position_error_m=0.22
+  python tools/agentic_loop.py
+  # Claude should propose: propose_nav_param_change (e.g. increase inflation_radius or reduce speed)
+  ```
+
+- [ ] **Test generative world variant** — when all metrics are healthy, Claude should call
+  `generate_world_variant`. Approve it, then verify the new SDF file is valid:
+  ```bash
+  python tools/agentic_loop.py
+  # After approval, a new .sdf should appear in src/nav_fleet/worlds/
+  gz sdf -k src/nav_fleet/worlds/<variant_name>.sdf  # validate the SDF
+  ```
+
+- [ ] **Commit**:
+  ```bash
+  git add .
+  git commit -m "feat(session-13): agentic loop — diagnosis, world generation, mission planning"
+  git push
+  ```
+
+### Session Complete When
+- `python tools/agentic_loop.py` runs end-to-end: loads report, Claude diagnoses, proposes action, human approves, action applied
+- Injected failure triggers a `propose_nav_param_change` response
+- Healthy run triggers a `generate_world_variant` response
+- New SDF world variant passes `gz sdf -k` validation
+
+---
+
+## Session 14 — Jetson Orin Nano: Flash + ROS2 + CI Runner (~3 hrs)
+
+### Recommended Reading
+- [NVIDIA SDK Manager](https://developer.nvidia.com/sdk-manager) — the flashing tool; install on Ubuntu host
+- [JetPack 6.x release notes](https://developer.nvidia.com/embedded/jetpack-sdk-62) — check ROS2 Jazzy compatibility; JetPack 6.x = Ubuntu 22.04 base on Jetson, may need ROS2 Humble instead
+- [Self-hosted runners: adding from org](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners) — same flow as Session 10 but on the Jetson
+
+> **Hardware dependency:** This session requires the Jetson Orin Nano Super Developer Kit
+> to be physically on hand. Sessions 10–13 can be completed while waiting for hardware.
+>
+> **JetPack / ROS2 compatibility note:** JetPack 6.x ships Ubuntu 22.04 (not 24.04).
+> ROS2 Jazzy requires Ubuntu 24.04. On the Jetson you will likely use **ROS2 Humble**
+> (Ubuntu 22.04 native) and keep Jazzy on the x86 workstation. The arm64 CI build
+> (Docker) already uses the `ros:jazzy-ros-base` image which is multiarch — this
+> is fine. The Jetson native runner builds and tests on Humble. Confirm the JetPack
+> version you receive and adjust accordingly.
+
+### Prerequisites
+- Sessions 10–13 complete
+- Jetson Orin Nano Super Developer Kit received
+- Ubuntu workstation with SDK Manager installed
+- USB-C cable + power supply for Jetson
+- Ethernet cable (Jetson to router or direct to workstation)
+
+### Steps
+
+- [ ] **Install NVIDIA SDK Manager on workstation**:
+  ```bash
+  # Download .deb from https://developer.nvidia.com/sdk-manager
+  sudo apt install ./sdkmanager_<version>_amd64.deb
+  sdkmanager  # launches GUI
+  ```
+
+- [ ] **Flash JetPack via SDK Manager**:
+  - Connect Jetson in recovery mode (hold RECOVERY button, press POWER)
+  - SDK Manager → select Jetson Orin Nano → latest JetPack (6.x)
+  - Select: Jetson Linux (BSP) + ROS-related components if offered
+  - Flash — takes 20–40 min
+  - On completion: Jetson boots to Ubuntu desktop
+
+- [ ] **Initial Jetson setup** (SSH from workstation — find Jetson IP via router or `arp -a`):
+  ```bash
+  ssh mike@<jetson-ip>
+  sudo apt update && sudo apt upgrade -y
+
+  # Install ROS2 (Humble on Ubuntu 22.04 / Jazzy on Ubuntu 24.04 — match your JetPack):
+  sudo apt install software-properties-common curl -y
+  sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+    -o /usr/share/keyrings/ros-archive-keyring.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+    http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+    | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+  sudo apt update
+  sudo apt install ros-<DISTRO>-desktop ros-<DISTRO>-navigation2 ros-<DISTRO>-nav2-bringup \
+    ros-<DISTRO>-rmw-cyclonedds-cpp python3-colcon-common-extensions -y
+
+  # Add to .bashrc:
+  echo "source /opt/ros/<DISTRO>/setup.bash" >> ~/.bashrc
+  echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
+  source ~/.bashrc
+  ```
+
+- [ ] **Clone the repo and do a native arm64 build**:
+  ```bash
+  # On Jetson:
+  cd ~
+  git clone https://github.com/sdfinn/autonomous-fleet-testbed.git
+  cd autonomous-fleet-testbed
+  colcon build --symlink-install
+  # This is the native arm64 build — record the time:
+  time colcon build --symlink-install
+  ```
+
+- [ ] **Register Jetson as GHA self-hosted runner**:
+  ```bash
+  # On Jetson — same flow as Session 10 but with arm64 labels:
+  mkdir -p ~/actions-runner && cd ~/actions-runner
+  # Get the arm64 runner download URL from GitHub →
+  # Your repo → Settings → Actions → Runners → New self-hosted runner → Linux → ARM64
+  curl -o actions-runner-linux-arm64-<VERSION>.tar.gz -L <URL>
+  tar xzf ./actions-runner-linux-arm64-<VERSION>.tar.gz
+  ./config.sh \
+    --url https://github.com/sdfinn/autonomous-fleet-testbed \
+    --token <TOKEN> \
+    --labels self-hosted,arm64,jetson \
+    --name jetson-runner \
+    --unattended
+  sudo ./svc.sh install && sudo ./svc.sh start
+  ```
+
+- [ ] **Update the `arm64-build` CI job** in `ci.yml` to use the Jetson runner**:
+  ```yaml
+  arm64-build:
+    runs-on: [self-hosted, arm64, jetson]   # was: ubuntu-latest
+    needs: code-quality
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native arm64 build
+        run: |
+          source /opt/ros/<DISTRO>/setup.bash
+          colcon build --symlink-install
+      - name: Record build time
+        run: echo "arm64 native build at $(date)" >> reports/session14_timings.txt
+  ```
+
+  > **Gotcha:** Remove (or comment out) the Docker buildx steps that ran QEMU emulation
+  > — the Jetson native runner makes them obsolete. Keep the Dockerfile in the repo for
+  > reference but the CI no longer needs it for the arm64 build job.
+
+- [ ] **Push and record the speedup**:
+  ```bash
+  git add .
+  git commit -m "feat(session-14): Jetson arm64 native CI runner replaces QEMU"
+  git push
+  gh run watch   # watch the arm64 build run on jetson-runner
+  # Compare time vs QEMU baseline recorded in BLUEPRINT.md (Session 08)
+  ```
+
+  Record in BLUEPRINT.md:
+  ```
+  arm64 build — QEMU (Session 08): ~25-30 min
+  arm64 build — Jetson native (Session 14): ~X min
+  Speedup: ~Xx reduction
+  ```
+
+### Session Complete When
+- Jetson boots, SSH accessible, ROS2 installed
+- `colcon build` succeeds on Jetson (native arm64)
+- `arm64-build` CI job runs green on `jetson-runner`
+- Speedup vs QEMU recorded in BLUEPRINT.md
+
+---
+
+## Session 15 — Real Robot: Deploy + Sim-to-Real Comparison (~3 hrs)
+
+### Recommended Reading
+- [SLAM Toolbox online async](https://github.com/SteveMacenski/slam_toolbox#readme) — for building the real-room map
+- [Nav2 map server](https://docs.nav2.org/configuration/packages/configuring-map-server.html) — serving the saved SLAM map
+- [teleop_twist_keyboard](https://index.ros.org/p/teleop_twist_keyboard/) — driving the robot during SLAM mapping
+
+> **Hardware dependency:** Requires Jetson module transferred to the UGV-PT carrier board
+> (or a second Jetson module purchased). The Jetson from Session 14 can be transferred;
+> buy a second module if you want to keep the Dev Kit as the CI runner.
+>
+> **Waveshare UGV-PT dimensions note (carry-over from Session 10):** Before running real
+> nav missions, measure the actual robot and update `urdf/ugv_pt.urdf.xacro` to match:
+> body dimensions, wheel_radius, wheel_separation. Reference:
+> [Waveshare UGV-PT spec sheet](https://www.waveshare.com/ugv-pt.htm).
+
+### Prerequisites
+- Sessions 10–14 complete
+- Jetson Orin Nano transferred to / installed in Waveshare UGV-PT
+- Robot powered on, accessible via SSH over WiFi or Ethernet
+- Real bedroom clear enough to drive the robot safely for SLAM mapping
+
+### Steps
+
+- [ ] **Build a real-room SLAM map** — drive the robot around the room once while
+  SLAM Toolbox records the map:
+
+  ```bash
+  # Terminal 1 — on the Jetson (SSH):
+  source /opt/ros/<DISTRO>/setup.bash
+  ros2 launch slam_toolbox online_async_launch.py use_sim_time:=false
+
+  # Terminal 2 — on workstation (teleop):
+  source /opt/ros/jazzy/setup.bash
+  ros2 run teleop_twist_keyboard teleop_twist_keyboard \
+    --ros-args -r /cmd_vel:=/robot_001/cmd_vel
+  # Drive the robot slowly around the room perimeter + past furniture
+
+  # Terminal 3 — on workstation, save the map when coverage looks good:
+  ros2 run nav2_map_server map_saver_cli -f src/nav_fleet/maps/bedroom_real
+  # Creates: maps/bedroom_real.pgm + maps/bedroom_real.yaml
+  ```
+
+- [ ] **Create `src/nav_fleet/launch/robot_launch.py`** — launches Nav2 on the real robot
+  (no Gazebo, no bridge — real sensors only):
+
+  ```python
+  # Copyright 2026 Mike. Licensed under Apache 2.0.
+  """Launch Nav2 on the real ugv_pt robot (Jetson, no simulation)."""
+  import os
+  from pathlib import Path
+  from launch import LaunchDescription
+  from launch.actions import IncludeLaunchDescription
+  from launch.launch_description_sources import PythonLaunchDescriptionSource
+  from launch_ros.actions import Node
+  from ament_index_python.packages import get_package_share_directory
+
+  def generate_launch_description():
+      pkg = Path(__file__).parent.parent
+      nav2_params = str(pkg / 'config' / 'nav2_params.yaml')
+      map_yaml = str(pkg / 'maps' / 'bedroom_real.yaml')
+      pkg_nav2 = get_package_share_directory('nav2_bringup')
+
+      return LaunchDescription([
+          IncludeLaunchDescription(
+              PythonLaunchDescriptionSource(
+                  os.path.join(pkg_nav2, 'launch', 'bringup_launch.py')
+              ),
+              launch_arguments={
+                  'use_sim_time': 'false',
+                  'params_file': nav2_params,
+                  'map': map_yaml,
+                  'namespace': 'robot_001',
+              }.items(),
+          ),
+      ])
+  ```
+
+- [ ] **Write the Stage 6 CI job** — SSH deploy + smoke test + auto-rollback on failure.
+  Add to `ci.yml` (runs on a schedule or `workflow_dispatch`, not every push):
+
+  ```yaml
+  real-robot-deploy:
+    runs-on: ubuntu-latest
+    needs: reports-dashboard
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to robot via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ROBOT_IP }}
+          username: mike
+          key: ${{ secrets.ROBOT_SSH_KEY }}
+          script: |
+            cd ~/autonomous-fleet-testbed
+            git pull origin main
+            source /opt/ros/<DISTRO>/setup.bash
+            colcon build --symlink-install
+            source install/setup.bash
+            # Smoke test: launch Nav2 and check topics
+            ros2 launch nav_fleet robot_launch.py &
+            sleep 15
+            ros2 topic hz /robot_001/odom --once | grep -q "Hz" || exit 1
+            ros2 topic hz /robot_001/scan --once | grep -q "Hz" || exit 1
+            echo "Smoke test passed"
+  ```
+
+  > **Gotcha — SSH secrets:** `ROBOT_IP` and `ROBOT_SSH_KEY` must be set in
+  > GitHub → Settings → Secrets. Generate a dedicated key pair for the robot:
+  > `ssh-keygen -t ed25519 -f ~/.ssh/robot_deploy_key` on the workstation, then
+  > `ssh-copy-id -i ~/.ssh/robot_deploy_key mike@<robot-ip>`.
+
+- [ ] **Run sim-to-real comparison**:
+  ```bash
+  # Run the same nav goal on the real robot that you ran in Gazebo (1.0, 1.0):
+  # On robot (SSH): ros2 launch nav_fleet robot_launch.py
+  # On workstation:
+  python -c "
+  import rclpy
+  import sys; sys.path.insert(0, 'src/nav_fleet/nav_fleet')
+  from nav_runner import NavRunner
+  rclpy.init()
+  r = NavRunner()
+  print(r.send_goal(1.0, 1.0))
+  r.destroy_node(); rclpy.shutdown()
+  "
+  # telemetry_logger.py writes a real run JSON to reports/history/ with sim_engine='real'
+
+  # Compare:
+  python tools/sim_vs_real_comparison.py
+  # Reports: correlation between sim and real nav_success_rate, mean_position_error
+  # Target: correlation >= 70%
+  ```
+
+- [ ] **Tag r1-complete** if sim-to-real correlation >= 70%:
+  ```bash
+  git tag r1-complete
+  git push origin r1-complete
+  ```
+  If correlation < 70%: check BLUEPRINT.md Kill Criteria section and decide next steps
+  (usually: tune nav2_params, fix URDF dimensions, or accept the gap with documentation).
+
+- [ ] **Commit**:
+  ```bash
+  git add .
+  git commit -m "feat(session-15): real robot deploy, SLAM map, sim-to-real comparison, r1-complete"
+  git push
+  ```
+
+### Session Complete When
+- `bedroom_real.pgm` + `bedroom_real.yaml` saved and committed
+- `robot_launch.py` launches Nav2 on the real robot successfully
+- Real robot navigates to (1.0, 1.0) without collision
+- `sim_vs_real_comparison.py` reports correlation >= 70%
+- `git tag r1-complete` pushed
+
+---
+
+## Session 16+ — Agentic Loop on Real Hardware + Advanced Missions
+
+> Expand this section when Session 15 is complete. At this point the agentic loop from
+> Session 13 runs against real robot telemetry instead of simulated data. The learning
+> loop feeds live results back into both sim improvement and nav parameter tuning.
+
+**Direction for Session 16:**
+- Run `tools/agentic_loop.py` against real run reports (`sim_engine: 'real'`)
+- Claude compares real vs sim metrics, identifies sim fidelity gaps, proposes sim
+  parameter updates to close the gap
+- Advanced mission types: natural language mission → Claude generates goal sequence →
+  robot executes → results fed back to Claude for next iteration
+- Log real-world navigation videos + telemetry for portfolio/demo
+
+---
+
+*End of Release1Todo.md*

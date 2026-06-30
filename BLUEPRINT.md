@@ -31,13 +31,22 @@ The pipeline validates the planner; the planner generates the scenarios the pipe
 
 ## Career context — the actual optimization target
 
-- **Who:** Mike, 66, Principal Test Engineer with 20 years in enterprise automation, test pipelines, CI/CD, and release management (call-center software). Building this at home.
-- **Goal:** Within ~6 months, have a portfolio artifact strong enough to (a) transition out of call-center software into a **Principal AI Infrastructure / MLOps** role in robotics-adjacent industry, and/or (b) seed a product on the side while still employed. Leverage the experience card, not the youth card.
-- **Honest monetization read (VC/startup hat):**
-  - Classic VC rocketship, solo, at 66 → low probability. Not the bet to optimize for.
-  - **High-credibility paths:** commercial open-source (Temporal/Tailscale/Sidero model) and **founding-architect / principal-infra** roles. The 20-year release-discipline background is a genuine, nameable moat in a field starved for it.
-  - **Highest risk-adjusted outcome:** a polished open-source artifact + a metrics-driven technical write-up that lands a principal role — possibly while keeping the day job until something concrete lands.
-  - The job artifact, the OSS project, and the product seed are **the same deliverable.** No effort split.
+- **Who:** Mike, 66, Principal Test Engineer with 20 years in enterprise automation, test pipelines, CI/CD, and release management (call-center software). Prior Brain Corp context (isaac_project). Building this at home.
+- **Goal (80% probability path):** Transition into a Principal / Staff robotics engineering role — AI infrastructure, MLOps, or test/validation at an autonomous mobile robot company. Brain Corp, Locus Robotics, Vecna, Symbotic, Boston Dynamics, Agility Robotics, or similar. The Brain Corp background is a credibility signal — this project uses the same stack (ROS2, Gazebo, GHA, arm64 cross-compile, HIL testing) but local-first, open-source, with an agentic layer added.
+- **20% path:** Commercial open-source or founding-architect role (Temporal/Tailscale/Sidero model). The polished OSS artifact is the same deliverable either way.
+- **Honest monetization read:** Classic VC rocketship, solo, at 66 → low probability. Not the bet to optimize for.
+- The job artifact, the OSS project, and the product seed are **the same deliverable.** No effort split.
+
+## Showcase strategy
+
+**Format:** Each release ships two companion deliverables — a short video of the sim run and a short video of the real robot doing the same mission. Side-by-side, they get more compelling with every release. R1 shows a single nav test closing the loop. The agentic loop iteration makes R2/R4 the memorable demo.
+
+**Distribution:**
+- **GitHub:** Public README + video links/embeds. Code stays private (request access to contact).
+- **YouTube:** Short (1–2 min) per-release videos, unlisted or public. Linked from README.
+- **Code access:** Private repo. Share on request to serious contacts only — forces a conversation.
+
+**Target audience:** Engineering directors and Principal engineers at AMR companies who recognize the stack immediately. The Brian Corp stack (ROS2, Gazebo, GHA, arm64, HIL) plus the agentic layer plus the local-first economics story = a demonstrably rare combination.
 
 ---
 
@@ -136,6 +145,27 @@ colcon build (1s) → gz sim headless → nav2 → nav_runner → metrics_collec
 ```
 This is the loop that finds 90% of bugs. Commit to CI only when the x86 pipeline is clean.
 
+## Architecture framing (vocabulary that resonates with AMR companies)
+
+This project implements the same architectural patterns used in production AMR systems.
+Using the correct vocabulary makes the work immediately legible to hiring directors in this space:
+
+| What we build | Enterprise term | Where it lives |
+|---|---|---|
+| Nav2 AMCL + costmaps + behavior tree | **Probabilistic AI layer** | `src/nav_fleet/`, `nav2_params.yaml` |
+| Scan min-range assertion + collision check | **Deterministic safety layer** | `tests/test_navigation.py` |
+| Session 15 SLAM map build (drive once, auto after) | **Teach Run / Teach-and-Repeat** | `maps/bedroom_real.*` |
+| Jetson + UGV-PT testing (Sessions 14–15) | **Hardware-in-the-Loop (HIL)** | Stage 6 CI |
+| Stage 6 SSH deploy + smoke test + rollback | **OTA update pipeline** | `.github/workflows/ci.yml` |
+| `telemetry_logger.py` + `baseline_monitor.py` | **Networked fleet learning loop** (1-robot scale) | `tools/` |
+| Session 13 agentic loop with SEMANTIC_MAP | **VLA-lite semantic mission planning** | `tools/agentic_loop.py` |
+
+The dual-layer safety split (probabilistic AI + deterministic safety) is the pattern
+Brain Corp uses in BrainOS®. Our Nav2 layer IS the probabilistic layer; our `collision_detected`
+assertion IS the deterministic layer. Name it that way in the README and write-ups.
+
+---
+
 ## Design principles (preserve across all releases)
 
 - **Data-driven:** thresholds, requirements, profiles in YAML — never hardcoded in Python.
@@ -144,6 +174,57 @@ This is the loop that finds 90% of bugs. Commit to CI only when the x86 pipeline
 - **Pipeline as product:** the CI/CD pipeline IS the deliverable, not just a quality gate.
 - **Under-claim, over-deliver:** especially on agentic autonomy.
 - **Tier 1 first:** develop and debug on x86 bare metal Gazebo; go to arm64 only to validate compatibility, not to find common bugs.
+
+---
+
+## What's Next — Release 3 and Beyond
+
+These ideas are captured here to prevent scope creep in R1 and the agentic layer work.
+Pull forward only when a specific role, customer, or demo demands it.
+
+**Infrastructure / platform:**
+- **MQTT telemetry** — replace JSON file polling with MQTT pub/sub for real-time edge-to-cloud telemetry (matches the IoT protocol pattern used by production AMR fleets)
+- **RaaS framing doc** — document the framework as a Robotics-as-a-Service offering: hardware lease + software subscription, OTA updates included
+- **Safety certification framing** — annotate the dual-layer architecture against SIL2 / UL 60730-1 requirements (not certification, just the mapping)
+- **Dynamic SLAM** — handle moving obstacles (people, forklifts) using a costmap layer that ages out dynamic detections
+
+**AI / intelligence:**
+- **Full VLA models** — replace LLM mission planning with Vision-Language-Action models for visually grounded semantic navigation ("go to the area with the green box")
+- **SelfPath-style auto-route generation** — autonomous route planning without human-defined waypoints; robot generates its own coverage path
+- **Closed-loop sim-to-real auto-tuning** — automatically adjust URDF/nav2 params to minimize the sim-to-real gap based on telemetry comparison
+
+**Robot / fleet expansion:**
+- **Multi-robot fleet (R2)** — 2+ robots, coordinated missions, inter-robot collision avoidance
+- **Drone integration (R3A)** — aerial + ground coordination, combined sensing
+- **Fully autonomous missions (R3B)** — AI defines and runs its own test missions with no scripted waypoints
+
+**Demo / portfolio:**
+- **Per-release video series** — YouTube shorts showing sim + real robot doing the same mission; compile into a progression reel for R3
+
+---
+
+### Background: Traditional Architectures vs. VLA Models
+
+Traditional robotic software relies on a modular, hand-coded pipeline — separate components acting like train cars, each passing data to the next. VLA models replace the entire chain with a single unified neural network that behaves like one brain processing vision, language, and motor output simultaneously.
+
+| Feature | Traditional Architecture | VLA Model Architecture |
+|---|---|---|
+| **Data processing** | Separates perception (camera), localization (SLAM), and motion planning into distinct modules | Merges vision, text instructions, and motor controls into a single framework |
+| **Adaptability** | Low — requires explicit reprogramming if an object changes shape or location | High — generalizes to new objects and environments via prior training |
+| **Logic layer** | Rigid — runs on geometric maps and exact numeric coordinates | Intuitive — uses probabilistic, semantic associations to predict next actions |
+| **Failure mode** | Cascading — if perception misidentifies an object, the entire pipeline breaks | Hallucination — may misunderstand a physical constraint or environmental context |
+
+Our Session 13 agentic loop is **VLA-lite**: Claude handles the language → action translation while Nav2 handles the deterministic execution. The SEMANTIC_MAP bridges the two — named locations give Claude spatial grounding without requiring a full neural perception stack. Full VLA integration (where the model directly generates motor commands from camera + language) is the R3 destination.
+
+### Background: Semantic Mapping in Dynamic Environments
+
+Traditional robots see a busy public space (retail store, airport, warehouse) as a fluctuating cloud of obstacles. They avoid collisions but do not understand what they are avoiding. Semantic mapping overlays meaning onto geometry:
+
+- **Contextual tracking:** Instead of labeling a moving mass as "unidentified dynamic barrier," a semantically grounded robot classifies it as "shopper with shopping cart" and predicts it will continue moving forward — whereas a cardboard display will not.
+- **Affordance awareness:** The robot links objects to their function. A wet floor requires a reroute; a dropped piece of soft packaging can be rolled over. These distinctions require semantic labels, not just geometry.
+- **Mitigating VLA weaknesses:** VLA models are stochastic — their outputs can be unpredictable. Embedding a fixed semantic 3D world model gives the robot a reliable safety framework to double-check the VLA's decisions against the physical reality of the environment. This is the same dual-layer principle (probabilistic AI + deterministic safety) used in BrainOS®.
+
+Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a first step. The R3 version upgrades this to a live semantic costmap updated by camera detections.
 
 ---
 
@@ -159,6 +240,8 @@ This is the loop that finds 90% of bugs. Commit to CI only when the x86 pipeline
   - **Local RTX 5080 workstation (QEMU, pip+colcon only — apt layers cached from failed first attempt):** 37m23s — full uncached local ~60+ min
   - **Phase B Jetson native arm64 runner:** TBD — Session 15 (expect 3–5 min; delta vs GHA baseline = the headline speedup number)
   - Decision: develop and debug on Tier 1 (x86 bare metal Gazebo, ~1s build, ~3–10 min full cycle) before committing to CI. x86 is not the target OS but finds 90% of bugs at 23× less wait time per iteration.
+- **2026-06-29 — Showcase strategy locked.** Video-first portfolio (sim + real robot, one per release). Code stays private; README + YouTube videos public; code on request only. Primary audience: AMR companies (Brain Corp-adjacent). Brain Corp architectural vocabulary added to BLUEPRINT.md. Session plan (10–16) fully expanded with code snippets. SEMANTIC_MAP added to Session 13 agentic loop for named-location mission planning. "What's Next (R3+)" section added to capture deferred ideas.
+- **2026-06-29 — Session numbering cleaned up.** Stage/Phase/R4 labels dropped from session headings — session numbers only. Isaac Sim pulled forward to Session 11 (previously deferred). Timing records integrated into each session rather than a standalone session.
 - **2026-06-28 — Session 09 complete (Stage 3 Part 1).** ugv_pt robot spawned in Gazebo Harmonic bedroom world with `/robot_001/odom` at 50 Hz and `/robot_001/scan` at 10 Hz. Key design decisions:
   - **World geometry** reused from `BC/isaac_project/scripts/generate_map.py` OBSTACLES (real measured bedroom, same XY coordinates) so the pre-built Nav2 map (`maps/living_room.pgm`, 0.05 m/px) matches the Gazebo world — no SLAM needed for Session 10.
   - **URDF**: 4-wheel layout (2 rear driven by `gz-sim-diff-drive-system` + 2 front passive fixed joints). Diff-drive is an approximation of the real robot's 4WD skid-steer (ESP32 sub-controller). Acceptable for Nav2; evaluate in Session 16 sim-to-real delta.
