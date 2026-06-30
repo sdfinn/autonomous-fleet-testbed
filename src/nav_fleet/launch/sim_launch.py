@@ -125,11 +125,27 @@ def generate_launch_description():
         )],
     )
 
+    # Gazebo Harmonic names the GPU lidar frame as {model}/{parent_link}/{sensor}
+    # = robot_001/base_footprint/lidar, but RSP publishes robot_001/lidar_link.
+    # Bridge the two so AMCL can look up scan → base_footprint chain.
+    lidar_frame_bridge = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='lidar_frame_bridge',
+        arguments=['0', '0', '0', '0', '0', '0',
+                   'robot_001/lidar_link',
+                   'robot_001/base_footprint/lidar'],
+        remappings=[
+            ('/tf_static', '/robot_001/tf_static'),
+        ],
+    )
+
     return LaunchDescription([
         headless_arg,
         robot_state_publisher,
         gazebo,
         spawn_robot,
         bridge,
+        lidar_frame_bridge,
         nav2,
     ])
