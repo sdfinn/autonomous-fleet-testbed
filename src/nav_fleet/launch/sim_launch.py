@@ -22,8 +22,11 @@ launched directly — both contain urdf/, worlds/, maps/ after colcon build.
 import os
 import pathlib
 
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, TimerAction
+from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
+                            IncludeLaunchDescription, TimerAction)
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -94,10 +97,27 @@ def generate_launch_description():
         output='screen',
     )
 
+    nav2_bringup_dir = get_package_share_directory('nav2_bringup')
+    nav2 = TimerAction(
+        period=8.0,
+        actions=[IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(nav2_bringup_dir, 'launch', 'bringup_launch.py')
+            ),
+            launch_arguments={
+                'namespace': 'robot_001',
+                'use_sim_time': 'true',
+                'params_file': str(PKG / 'config' / 'nav2_params.yaml'),
+                'map': str(PKG / 'maps' / 'living_room.yaml'),
+            }.items(),
+        )],
+    )
+
     return LaunchDescription([
         headless_arg,
         robot_state_publisher,
         gazebo,
         spawn_robot,
         bridge,
+        nav2,
     ])
