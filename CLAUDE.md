@@ -84,23 +84,44 @@ docker buildx build --platform linux/arm64 \
 ## Nav2 Launch Gotchas (Session 10+)
 - `gz sim` WITHOUT `-s` launches a GUI that crashes on this machine (snap/glibc libpthread conflict)
   and takes the Gazebo server down with it. Always use `gz sim -s -r <world>` (server only).
-  To view the simulation separately: `gz sim -g` (GUI client only).
+  To view the simulation separately: `gz sim -g` (GUI client only, connects to running server).
 - The ros_gz_bridge must be delayed ~5s after Gazebo starts. If the bridge subscribes before
   Gazebo's gz-transport publishers are up, the GZ→ROS subscriptions silently fail (no reconnect).
 - Nav2 Jazzy requires `use_composition: 'True'` (capital F). 'False' launches ~16 separate
   processes that exhaust CycloneDDS domain 0 participant limit.
 - Nav2 Jazzy requires collision_monitor with `polygons` + `observation_sources` populated (empty
   lists fail). Docking_server requires `dock_plugins`. Both added to nav2_params.yaml.
-- `robot_state_publisher` publishes TF frames using URDF link names verbatim (no robot_001/ prefix).
-  Gazebo diff_drive uses `robot_001/odom → robot_001/base_footprint` (with prefix). These are
-  two DISCONNECTED TF trees. Fix: add `frame_prefix: 'robot_001/'` to RSP parameters (if supported
-  in Jazzy) OR change diff_drive frame IDs to `odom`/`base_footprint` (no prefix) and update
-  nav2_params.yaml accordingly. See .superpowers/sdd/progress.md for full fix options.
+- Nav2 Jazzy `controller_server` requires `progress_checker_plugins` (plural, list) NOT the old
+  `progress_checker_plugin` (singular string). Also requires `controller_frequency`,
+  `costmap_update_timeout`, `failure_tolerance`, `use_realtime_priority` — see Jazzy defaults.
+- **TF architecture (multi-robot):** RSP publishes frames by URDF link name (no prefix: `odom`,
+  `base_footprint`, `lidar_link`). diff_drive `<frame_id>` and `<child_frame_id>` must also be
+  unprefixed (`odom`, `base_footprint`). Both sources publish to `/robot_001/tf` (RSP remapped).
+  Nav2 with `namespace:robot_001` + `use_namespace:true` subscribes to `/robot_001/tf` — per-robot
+  TF isolation is at the TOPIC level, not the frame-name level. frame_prefix NOT supported in
+  Jazzy RSP 3.3.4.
+- nav2_params.yaml frame names (`base_frame_id`, `odom_frame_id`, `robot_base_frame`) must use
+  unprefixed frame names (`odom`, `base_footprint`, `base_link`) to match RSP output.
+  Topic names (`scan_topic`, `odom_topic`) still use `/robot_001/` prefix — those are correct.
+- **ros_gz_bridge direction:** Use `[` (GZ→ROS) and `]` (ROS→GZ) NOT `@` (bidirectional).
+  Bidirectional on `/robot_001/tf` creates an echo loop: AMCL's map→odom goes ROS→GZ→ROS,
+  causing "jump back in time" warnings that clear the TF buffer continuously.
+  Rule: odom/scan/camera/imu/tf/clock = `[` (GZ→ROS). cmd_vel = `]` (ROS→GZ).
 - Gazebo GPU lidar publishes scan with frame_id = `robot_001/base_footprint/lidar` (Gazebo internal
-  entity path), NOT `robot_001/lidar_link` (the URDF link name). A static TF bridge is needed
-  between these two frame names.
+  entity path). A zero-offset static TF from `lidar_link` → `robot_001/base_footprint/lidar`
+  is needed in the launch file (lidar_frame_bridge node).
 - Nav2 bringup with `use_namespace:true` + `namespace:robot_001` remaps all Nav2 topics to
   `/robot_001/` prefix. The action server is at `/robot_001/navigate_to_pose`.
 - AMCL `set_initial_pose: true` with initial_pose params works — sets pose to bedroom origin.
+- **Gazebo RTF:** RTX 5080 runs Gazebo at ~3x real-time. After 95s wall time, sim time is ~280s.
+  Old sim-time TF data from a previous run can pollute a fresh TF buffer if the nav2 container
+  isn't fully killed. Power down between debug sessions to avoid stale data.
+- **Killing sim processes:** `pkill` on individual processes is unreliable — orphaned Gazebo
+  and nav2 container processes persist. Correct approach: Ctrl+C on the `ros2 launch` foreground
+  process (it sends SIGINT to the whole process group). For CI, the launch process is killed by
+  the runner's job cleanup. Never chain `pkill` calls hoping to clean up mid-session.
+- **nav_runner goal stamp:** Use `Time().to_msg()` (zero timestamp = "use latest TF") for the
+  NavigateToPose goal header stamp. Wall-clock `get_clock().now()` will be rejected by Nav2
+  which uses sim time (far-future wall timestamp has no TF data in Nav2's buffer).
 - Self-hosted CI runner: labels `self-hosted, x86, gpu, rtx5080`. Service: actions.runner.*.service.
   Token must be regenerated if expired (GitHub → Settings → Actions → Runners → Add Runner).

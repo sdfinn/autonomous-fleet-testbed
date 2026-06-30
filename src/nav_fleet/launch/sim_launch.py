@@ -94,13 +94,15 @@ def generate_launch_description():
             package='ros_gz_bridge',
             executable='parameter_bridge',
             arguments=[
-                '/robot_001/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
-                '/robot_001/odom@nav_msgs/msg/Odometry@gz.msgs.Odometry',
-                '/robot_001/scan@sensor_msgs/msg/LaserScan@gz.msgs.LaserScan',
-                '/robot_001/camera/image_raw@sensor_msgs/msg/Image@gz.msgs.Image',
-                '/robot_001/tf@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V',
-                '/robot_001/imu/data@sensor_msgs/msg/Imu@gz.msgs.IMU',
-                '/clock@rosgraph_msgs/msg/Clock@gz.msgs.Clock',
+                # ] = ROS→GZ only (Nav2 sends velocity commands to Gazebo)
+                '/robot_001/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
+                # [ = GZ→ROS only (Gazebo publishes sensor/state data; ROS reads it)
+                '/robot_001/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
+                '/robot_001/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
+                '/robot_001/camera/image_raw@sensor_msgs/msg/Image[gz.msgs.Image',
+                '/robot_001/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
+                '/robot_001/imu/data@sensor_msgs/msg/Imu[gz.msgs.IMU',
+                '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
             ],
             output='screen',
         )],
@@ -126,14 +128,14 @@ def generate_launch_description():
     )
 
     # Gazebo Harmonic names the GPU lidar frame as {model}/{parent_link}/{sensor}
-    # = robot_001/base_footprint/lidar, but RSP publishes robot_001/lidar_link.
+    # = robot_001/base_footprint/lidar, but RSP publishes lidar_link (no prefix).
     # Bridge the two so AMCL can look up scan → base_footprint chain.
     lidar_frame_bridge = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='lidar_frame_bridge',
         arguments=['0', '0', '0', '0', '0', '0',
-                   'robot_001/lidar_link',
+                   'lidar_link',
                    'robot_001/base_footprint/lidar'],
         parameters=[{'use_sim_time': True}],
         remappings=[
