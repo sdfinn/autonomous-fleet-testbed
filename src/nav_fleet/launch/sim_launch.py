@@ -85,24 +85,30 @@ def generate_launch_description():
         )],
     )
 
-    bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
-        arguments=[
-            '/robot_001/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
-            '/robot_001/odom@nav_msgs/msg/Odometry@gz.msgs.Odometry',
-            '/robot_001/scan@sensor_msgs/msg/LaserScan@gz.msgs.LaserScan',
-            '/robot_001/camera/image_raw@sensor_msgs/msg/Image@gz.msgs.Image',
-            '/robot_001/tf@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V',
-            '/robot_001/imu/data@sensor_msgs/msg/Imu@gz.msgs.IMU',
-            '/clock@rosgraph_msgs/msg/Clock@gz.msgs.Clock',
-        ],
-        output='screen',
+    # Delayed 5 s so gz-transport discovery completes before the bridge
+    # subscribes. Starting the bridge before Gazebo publishers are live causes
+    # the GZ→ROS subscriptions to silently fail (no reconnect in this version).
+    bridge = TimerAction(
+        period=5.0,
+        actions=[Node(
+            package='ros_gz_bridge',
+            executable='parameter_bridge',
+            arguments=[
+                '/robot_001/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
+                '/robot_001/odom@nav_msgs/msg/Odometry@gz.msgs.Odometry',
+                '/robot_001/scan@sensor_msgs/msg/LaserScan@gz.msgs.LaserScan',
+                '/robot_001/camera/image_raw@sensor_msgs/msg/Image@gz.msgs.Image',
+                '/robot_001/tf@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V',
+                '/robot_001/imu/data@sensor_msgs/msg/Imu@gz.msgs.IMU',
+                '/clock@rosgraph_msgs/msg/Clock@gz.msgs.Clock',
+            ],
+            output='screen',
+        )],
     )
 
     nav2_bringup_dir = get_package_share_directory('nav2_bringup')
     nav2 = TimerAction(
-        period=8.0,
+        period=13.0,
         actions=[IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(nav2_bringup_dir, 'launch', 'bringup_launch.py')
