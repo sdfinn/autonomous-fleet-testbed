@@ -106,9 +106,12 @@ def generate_launch_description():
             ),
             launch_arguments={
                 'namespace': 'robot_001',
+                'use_namespace': 'true',
                 'use_sim_time': 'true',
                 'params_file': str(PKG / 'config' / 'nav2_params.yaml'),
                 'map': str(PKG / 'maps' / 'living_room.yaml'),
+                'use_composition': 'false',
+                'autostart': 'true',
             }.items(),
         )],
     )
