@@ -180,6 +180,26 @@ assertion IS the deterministic layer. Name it that way in the README and write-u
 
 Config lives in `src/nav_fleet/config/nav2_params.yaml`.
 
+### Simulation platform compatibility matrix
+
+Verified before Session 11 install. Isaac Sim runs on the x86 dev machine only — not on Jetson.
+JetPack is the compatibility target for Stage 6 real-robot deploy, not for running Isaac Sim.
+
+| Requirement | Isaac Sim 6.0.1.0 spec | x86 dev machine | JetPack 7.2 (Orin Nano) | Status |
+|---|---|---|---|---|
+| Isaac Sim version | 6.0.1.0 | 6.0.1.0 (pip, pypi.nvidia.com) | n/a — sim runs on x86 | ✅ |
+| Ubuntu | 24.04 (primary target) | 24.04 bare metal | 24.04 (L4T 39.2) | ✅ |
+| Python | 3.12 (cp312 wheels) | 3.12.3 | 3.12 | ✅ |
+| ROS2 distro | Jazzy (native on 24.04) | Jazzy | Jazzy | ✅ |
+| CUDA | 12.x+ | 13.2 | 13.2 | ✅ |
+| GPU driver | 570+ | 595.71.05 (RTX 5080) | n/a (Jetson integrated) | ✅ |
+| GLIBC | 2.34+ (manylinux_2_34) | 2.39 | 2.39 | ✅ |
+| ROS2 bridge | Jazzy auto-loaded on 24.04 | sourced from `/opt/ros/jazzy` | sourced from `/opt/ros/jazzy` | ✅ |
+
+> **Note:** Isaac Sim 5.x was never published to pypi.nvidia.com; 6.0.x is the first pip-installable
+> release. Isaac Sim 5.x + Jazzy had known Python 3.11/3.12 mismatch bugs. 6.0.x resolves this.
+> RTX 5080 (Blackwell) not explicitly listed in NVIDIA's tested GPU matrix but driver requirement met.
+
 ---
 
 ## Design principles (preserve across all releases)
