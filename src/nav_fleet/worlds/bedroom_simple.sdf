@@ -196,6 +196,26 @@
       </link>
     </model>
 
+    <!-- ═══ NAVIGATION TARGET MARKER ════════════════════════════════════ -->
+    <!-- 3-inch (76mm) green sphere at the BR-01 nav goal (0.0, 3.7).
+         Centre of the bedroom floor, fully clear of all furniture inflation zones:
+         0.71m from Dresser (north face y=2.99), 0.72m from Bed (south face y=4.42).
+         No collision geometry — sphere sits below the lidar scan plane
+         (sphere top z=0.076m, lidar z=0.225m) so Nav2 never sees it. -->
+    <model name="goal_marker">
+      <static>true</static>
+      <pose>0.0 3.7 0.0381 0 0 0</pose>
+      <link name="link">
+        <visual name="v">
+          <geometry><sphere><radius>0.0381</radius></sphere></geometry>
+          <material>
+            <ambient>0.0 0.6 0.0 1</ambient>
+            <diffuse>0.0 0.9 0.0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
     <!-- ═══ FURNITURE ══════════════════════════════════════════════════════ -->
 
     <!-- Dresser: warm brown -->

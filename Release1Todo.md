@@ -19,7 +19,7 @@
 | 07 | Code Quality Gate | ✅ |
 | 08 | arm64 Cross-Compile + QEMU Baseline | ✅ |
 | 09 | URDF + Nav2 in Gazebo | ✅ |
-| 10 | First Passing Nav Test + Self-Hosted CI Runner | ⬜ |
+| 10 | First Passing Nav Test + Self-Hosted CI Runner | ✅ |
 | 11 | Isaac Sim: Install + First Nav Test | ⬜ |
 | 12 | Reports + Dashboard: True End-to-End | ⬜ |
 | 13 | Agentic Test Loop in Sim | ⬜ |
@@ -2269,7 +2269,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   `stage-1-quality`, `stage-2-arm64` job names can stay as-is; just ensure the `needs:`
   chain is correct: `sim-navigation` needs `arm64-build`.
 
-- [ ] **Build, launch locally, verify all three tests pass**:
+- [x] **Build, launch locally, verify all three tests pass**:
 
   ```bash
   colcon build --symlink-install
@@ -2288,13 +2288,13 @@ The changes below are the minimum needed to run correctly in the new project. De
   ros2 topic hz /robot_001/scan       # ~10 Hz
   ```
 
-- [ ] **Record bare-metal timing** and add to BLUEPRINT.md under Timings:
+- [x] **Record bare-metal timing** and add to BLUEPRINT.md under Timings:
   ```bash
   time python -m pytest tests/test_navigation.py -v
   # Note: includes Nav2 startup (~15s) + navigation execution (~30-60s depending on goal)
   ```
 
-- [ ] **Commit and push** — CI will trigger on the self-hosted runner:
+- [x] **Commit and push** — CI will trigger on the self-hosted runner:
   ```bash
   git add .
   git commit -m "feat(session-10): first passing nav test, IMU, base_footprint, self-hosted CI runner"

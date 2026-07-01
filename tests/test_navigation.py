@@ -42,8 +42,14 @@ def metrics(ros_context):
 
 
 def test_navigation_succeeds(nav_runner):
-    """BR-01: robot reaches goal position within timeout."""
-    result = nav_runner.send_goal(1.0, 1.0, timeout=90.0)
+    """BR-01: robot reaches bedroom goal from outer hallway doorway within timeout.
+
+    Spawn: (-1.276, 1.2) facing north. Goal: (0.0, 3.7) bedroom floor centre.
+    SMAC planner routes NNE (~27° heading error). RPP rotate-to-heading threshold
+    is 17° so robot rotates ~27° CW before driving northeast through the corridor
+    and bedroom doorway to the green sphere.
+    """
+    result = nav_runner.send_goal(0.0, 3.7, timeout=90.0)
     assert result is True
 
 

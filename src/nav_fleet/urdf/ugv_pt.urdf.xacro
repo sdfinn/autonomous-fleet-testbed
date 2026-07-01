@@ -82,7 +82,7 @@
     <axis xyz="0 0 1"/>
   </joint>
 
-  <!-- Front left wheel (passive — fixed joint, gives 4-wheel UGV appearance) -->
+  <!-- Front left wheel (passive — continuous joint, freewheels under ground contact) -->
   <link name="front_left_wheel">
     <visual>
       <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
@@ -96,13 +96,14 @@
       <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.002"/>
     </inertial>
   </link>
-  <joint name="front_left_wheel_joint" type="fixed">
+  <joint name="front_left_wheel_joint" type="continuous">
     <parent link="base_link"/>
     <child link="front_left_wheel"/>
     <origin xyz="${wheel_x_offset} ${wheel_separation/2} -${base_height/2}" rpy="-1.5708 0 0"/>
+    <axis xyz="0 0 1"/>
   </joint>
 
-  <!-- Front right wheel (passive — fixed joint) -->
+  <!-- Front right wheel (passive — continuous joint, freewheels under ground contact) -->
   <link name="front_right_wheel">
     <visual>
       <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
@@ -116,10 +117,11 @@
       <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.002"/>
     </inertial>
   </link>
-  <joint name="front_right_wheel_joint" type="fixed">
+  <joint name="front_right_wheel_joint" type="continuous">
     <parent link="base_link"/>
     <child link="front_right_wheel"/>
     <origin xyz="${wheel_x_offset} -${wheel_separation/2} -${base_height/2}" rpy="-1.5708 0 0"/>
+    <axis xyz="0 0 1"/>
   </joint>
 
   <!-- LiDAR -->
@@ -137,10 +139,10 @@
     <origin xyz="0.05 0 ${base_height/2 + 0.025}"/>
   </joint>
 
-  <!-- Camera -->
+  <!-- Camera — no visual/collision geometry: GPU lidar uses visual mesh for ray casting,
+       so any geometry here appears as a self-return inside the footprint and causes
+       the collision_monitor to zero all cmd_vel. Camera sensor is in the gazebo block below. -->
   <link name="camera_link">
-    <visual><geometry><box size="0.02 0.08 0.03"/></geometry></visual>
-    <collision><geometry><box size="0.02 0.08 0.03"/></geometry></collision>
     <inertial>
       <mass value="0.1"/>
       <inertia ixx="0.00001" ixy="0" ixz="0" iyy="0.00001" iyz="0" izz="0.00001"/>
@@ -216,20 +218,15 @@
       <diffuse>0.20 0.60 0.80 1</diffuse>
     </material>
   </gazebo>
-  <gazebo reference="camera_link">
-    <material>
-      <ambient>0.08 0.08 0.08 1</ambient>
-      <diffuse>0.12 0.12 0.12 1</diffuse>
-    </material>
-  </gazebo>
-
   <!-- ══ GAZEBO PLUGINS ══════════════════════════════════════════════════ -->
 
   <gazebo>
     <plugin filename="gz-sim-diff-drive-system"
             name="gz::sim::systems::DiffDrive">
       <left_joint>rear_left_wheel_joint</left_joint>
+      <left_joint>front_left_wheel_joint</left_joint>
       <right_joint>rear_right_wheel_joint</right_joint>
+      <right_joint>front_right_wheel_joint</right_joint>
       <wheel_separation>${wheel_separation}</wheel_separation>
       <wheel_radius>${wheel_radius}</wheel_radius>
       <odom_publish_frequency>50</odom_publish_frequency>
