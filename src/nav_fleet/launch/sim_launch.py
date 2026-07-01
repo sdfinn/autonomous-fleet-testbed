@@ -78,8 +78,8 @@ def generate_launch_description():
             arguments=[
                 '-name', 'robot_001',
                 '-topic', '/robot_description',
-                '-x', '-1.276', '-y', '1.09', '-z', '0.15',
-                '-Y', '1.5708',  # facing North (+Y) into the room
+                '-x', '-1.276', '-y', '1.2', '-z', '0.15',
+                '-Y', '1.5708',   # facing North (+Y)
             ],
             output='screen',
         )],

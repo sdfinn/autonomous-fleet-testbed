@@ -125,3 +125,23 @@ docker buildx build --platform linux/arm64 \
   which uses sim time (far-future wall timestamp has no TF data in Nav2's buffer).
 - Self-hosted CI runner: labels `self-hosted, x86, gpu, rtx5080`. Service: actions.runner.*.service.
   Token must be regenerated if expired (GitHub → Settings → Actions → Runners → Add Runner).
+- **4-wheel diff-drive: ALL wheel joints must be in the plugin.** The Gazebo Harmonic
+  `gz-sim-diff-drive-system` plugin supports multiple `<left_joint>`/`<right_joint>` entries.
+  If only rear wheels are driven and front wheels are passive `continuous` joints, the front
+  wheels resist in-place rotation via lateral friction — the robot cannot rotate. The odom is
+  computed from the DRIVEN wheel joint positions only, so it reports rotation even when the body
+  is physically stationary. Fix: include all four wheel joints.
+  ```xml
+  <left_joint>rear_left_wheel_joint</left_joint>
+  <left_joint>front_left_wheel_joint</left_joint>
+  <right_joint>rear_right_wheel_joint</right_joint>
+  <right_joint>front_right_wheel_joint</right_joint>
+  ```
+- **RPP (RegulatedPurePursuitController) — two params required for in-place rotation:**
+  `use_collision_detection: false` (default true fires before rotation on tight corridors) and
+  `rotate_to_heading_min_angle: 0.3` (17° — lower than the 45° default to catch small heading
+  errors from diagonal SMAC paths).
+- **SMAC Planner 2D vs NavFn:** NavFn A* penalises diagonal grid moves (cost √2 vs 1.0),
+  producing north-first paths. SMAC 2D uses equal cost for all 8 directions — it naturally
+  routes diagonally toward the goal. Use SMAC when diagonal paths matter for controller heading
+  error. Plugin: `nav2_smac_planner::SmacPlanner2D`.
