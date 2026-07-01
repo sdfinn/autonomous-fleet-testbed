@@ -164,6 +164,22 @@ The dual-layer safety split (probabilistic AI + deterministic safety) is the pat
 Brain Corp uses in BrainOS®. Our Nav2 layer IS the probabilistic layer; our `collision_detected`
 assertion IS the deterministic layer. Name it that way in the README and write-ups.
 
+### Nav2 plugin stack (as of Session 10)
+
+| Role | Plugin | Notes |
+|---|---|---|
+| Localization motion model | `nav2_amcl::DifferentialMotionModel` | Non-holonomic; noise tuned via alpha1–5 |
+| Laser model | likelihood field (AMCL built-in) | Beam endpoint vs. nearest map obstacle |
+| Global planner | `nav2_smac_planner::SmacPlanner2D` | Equal diagonal/cardinal cost → true NNE paths |
+| Path follower | `nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController` | `use_collision_detection:false`, `rotate_to_heading_min_angle:0.3` |
+| BT navigator | `nav2_bt_navigator::NavigateToPoseNavigator` | Default Nav2 behavior tree |
+| Progress checker | `nav2_controller::SimpleProgressChecker` | 0.1m in 60s or abort |
+| Goal checker | `nav2_controller::SimpleGoalChecker` | xy_tolerance 0.15m, yaw_tolerance 0.5 rad |
+| Global costmap layers | `StaticLayer` → `ObstacleLayer` → `InflationLayer` | inflation_radius 0.30m |
+| Local costmap layers | `ObstacleLayer` → `InflationLayer` | inflation_radius 0.25m, rolling 4×4m window |
+
+Config lives in `src/nav_fleet/config/nav2_params.yaml`.
+
 ---
 
 ## Design principles (preserve across all releases)
