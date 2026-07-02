@@ -145,3 +145,32 @@ docker buildx build --platform linux/arm64 \
   producing north-first paths. SMAC 2D uses equal cost for all 8 directions — it naturally
   routes diagonally toward the goal. Use SMAC when diagonal paths matter for controller heading
   error. Plugin: `nav2_smac_planner::SmacPlanner2D`.
+
+## Isaac Sim Gotchas (Session 11+)
+- **Version:** `isaacsim==6.0.1.0` is the correct pip package (`isaacsim[all,extscache]==6.0.1.0`
+  for the full bundle). Isaac Sim 5.x was never published to pypi.nvidia.com.
+- **EULA:** Set `OMNI_KIT_ACCEPT_EULA=YES` env var (or `os.environ` before import) for headless
+  non-interactive use. Without it, the process hangs at an interactive prompt.
+- **Import ordering:** ALL `omni.*` and `isaacsim.*` imports must come AFTER `SimulationApp` is
+  instantiated. The Carbonite framework won't load extensions before the app exists.
+- **URDF import API (6.0):** Use `URDFImporter(URDFImporterConfig(...)).import_urdf()` from
+  `isaacsim.asset.importer.urdf`. The old `omni.kit.commands.execute("URDFCreateImportConfig")`
+  command is not registered in 6.0.
+- **URDF prim layout after import:** The importer adds a `Geometry` layer:
+  `/ugv_pt/Geometry/base_footprint/base_link/...` (not `/ugv_pt/base_footprint/...`).
+  Joints are at `/ugv_pt/Physics/`. Always traverse the stage after import to discover paths.
+- **USD output path:** Pass `usd_path="/tmp/..."` (outside the repo). If the path already exists,
+  the importer creates versioned subdirs (`ugv_pt_1/`, `ugv_pt_2/`, ...) inside it.
+- **RTX lidar headless:** In headless mode, `IsaacSensorCreateRtxLidar` creates an `OmniLidar`
+  prim (not a Camera prim). No sensor-specific render product is created — only the generic
+  `/Render/OmniverseKit/HydraTextures/Replicator` product exists. `ROS2RtxLidarHelper` can't
+  get scan data from it. Use `RotatingLidarPhysX` (PhysX raycasting) for headless scan publishing.
+- **RotatingLidarPhysX frame key:** Frame dict key is `'linear_depth'` (not `'linear_depth_data'`).
+  Call `lidar.add_linear_depth_data_to_frame()` before `initialize()`, then `get_current_frame()`
+  in the loop. Publish via rclpy `sensor_msgs/LaserScan` manually.
+- **IsaacSensorCreateRtxLidar orientation:** Pass `Gf.Quatd(w, x, y, z)` not a plain tuple —
+  plain tuples are interpreted as `GfVec4d` and cause a USD type mismatch error.
+- **ROS2 bridge extension name (6.0):** `isaacsim.ros2.bridge` (not `omni.isaac.ros2_bridge`).
+  Import path: `from isaacsim.core.utils.extensions import enable_extension`.
+- **OmniGraph odom chassis prim:** `IsaacComputeOdometry` needs the articulation root (`/ugv_pt`),
+  not a link prim. Link prims fail with "not a valid rigid body or articulation root".

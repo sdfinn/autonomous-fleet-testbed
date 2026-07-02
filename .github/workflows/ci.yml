@@ -156,3 +156,46 @@ jobs:
       - name: Shutdown Gazebo
         if: always()
         run: pkill -f "gz sim" || true
+
+  stage-4-isaac:
+    name: "Stage 4 — Isaac Sim ROS2 Bridge Validation"
+    runs-on: [self-hosted, x86, gpu, rtx5080]
+    needs: stage-3-gazebo
+    timeout-minutes: 10
+    env:
+      OMNI_KIT_ACCEPT_EULA: "YES"
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Launch Isaac Sim robot (odom + scan)
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source ~/isaac-env/bin/activate
+          python scripts/isaac_robot.py &
+          ISAAC_PID=$!
+          # Wait for topics to appear (up to 90 s)
+          for i in $(seq 1 45); do
+            ros2 topic list 2>/dev/null | grep -q "robot_001/odom" && break
+            sleep 2
+          done
+
+      - name: Verify odom Hz >= 50
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          RATE=$(timeout 6 ros2 topic hz /robot_001/odom 2>/dev/null \
+            | grep "average rate" | tail -1 | awk '{print $3}' | cut -d. -f1)
+          echo "Odom Hz: $RATE"
+          [ "${RATE:-0}" -ge 50 ] || (echo "FAIL: odom Hz $RATE < 50" && exit 1)
+
+      - name: Verify scan Hz >= 5
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          RATE=$(timeout 8 ros2 topic hz /robot_001/scan 2>/dev/null \
+            | grep "average rate" | tail -1 | awk '{print $3}' | cut -d. -f1)
+          echo "Scan Hz: $RATE"
+          [ "${RATE:-0}" -ge 5 ] || (echo "FAIL: scan Hz $RATE < 5" && exit 1)
+
+      - name: Stop Isaac Sim
+        if: always()
+        run: pkill -f "isaac_robot.py" || true

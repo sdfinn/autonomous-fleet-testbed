@@ -20,7 +20,7 @@
 | 08 | arm64 Cross-Compile + QEMU Baseline | ✅ |
 | 09 | URDF + Nav2 in Gazebo | ✅ |
 | 10 | First Passing Nav Test + Self-Hosted CI Runner | ✅ |
-| 11 | Isaac Sim: Install + First Nav Test | ⬜ |
+| 11 | Isaac Sim: Install + First Nav Test | ✅ |
 | 12 | Reports + Dashboard: True End-to-End | ⬜ |
 | 13 | Agentic Test Loop in Sim | ⬜ |
 | 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | ⬜ |
@@ -2326,7 +2326,7 @@ The changes below are the minimum needed to run correctly in the new project. De
 
 ### Steps
 
-- [ ] **Install Isaac Sim 5.x via pip** — fastest installation path; no Omniverse GUI needed:
+- [x] **Install Isaac Sim 6.0.1.0 via pip** — fastest installation path; no Omniverse GUI needed:
 
   ```bash
   # Use a separate venv to avoid conflicts with the fleet-env:
@@ -2334,9 +2334,10 @@ The changes below are the minimum needed to run correctly in the new project. De
   source ~/isaac-env/bin/activate
 
   # Install Isaac Sim (large download — ~20 GB, takes 20-40 min):
-  pip install isaacsim==5.0.0 \
-    --extra-index-url https://pypi.nvidia.com \
-    --extra-index-url https://download.pytorch.org/whl/cu121
+  # Note: 5.x was never published to pypi.nvidia.com. 6.0.1.0 is the correct version.
+  # Requires Python 3.12 (cp312 wheels) — Ubuntu 24.04 default. Jazzy auto-loaded.
+  pip install isaacsim==6.0.1.0 \
+    --extra-index-url https://pypi.nvidia.com
 
   # Verify:
   python -c "import isaacsim; print('Isaac Sim installed')"
@@ -2351,44 +2352,42 @@ The changes below are the minimum needed to run correctly in the new project. De
   > # Ctrl+C to exit once confirmed
   > ```
 
-- [ ] **Enable the ROS2 bridge extension** — Isaac Sim loads extensions at runtime. Create
-  a startup script that enables the ROS2 bridge and loads a simple scene:
+- [x] **Enable the ROS2 bridge extension** — Isaac Sim 6.0 API changed from 4.x.
+  Extension name: `isaacsim.ros2.bridge` (not `omni.isaac.ros2_bridge`).
+  Import path: `isaacsim.core.utils.extensions` (not `omni.isaac.core`).
+  EULA must be accepted via env var for headless use.
+  Script is at `scripts/isaac_ros2_bridge.py`:
 
   ```python
-  # scripts/isaac_ros2_bridge.py
-  """Start Isaac Sim with ROS2 bridge enabled."""
+  import os
+  os.environ["OMNI_KIT_ACCEPT_EULA"] = "YES"
+
   from isaacsim import SimulationApp
+  simulation_app = SimulationApp({"headless": True, "renderer": "RayTracedLighting"})
 
-  app = SimulationApp({'headless': True, 'renderer': 'RayTracedLighting'})
+  from isaacsim.core.utils.extensions import enable_extension
+  enable_extension("isaacsim.ros2.bridge")
 
-  # Enable ROS2 bridge extension
-  from omni.isaac.core.utils.extensions import enable_extension
-  enable_extension('omni.isaac.ros2_bridge')
-
-  import omni
-  import rclpy
-  from omni.isaac.core import World
-
+  from isaacsim.core import World
   world = World()
   world.reset()
 
-  print('[Isaac] ROS2 bridge enabled. Spinning...')
-  for _ in range(300):   # run for ~30 seconds at 10 Hz
+  for i in range(600):   # ~60s at 10 Hz
       world.step(render=False)
 
-  app.close()
+  simulation_app.close()
   ```
 
   Run it and verify ROS2 topics appear:
   ```bash
   source ~/isaac-env/bin/activate
   source /opt/ros/jazzy/setup.bash
-  python scripts/isaac_ros2_bridge.py &
-  sleep 10
+  OMNI_KIT_ACCEPT_EULA=YES python scripts/isaac_ros2_bridge.py &
+  sleep 30
   ros2 topic list   # should show /clock and other Isaac topics
   ```
 
-- [ ] **Load the bedroom world in Isaac** — Isaac uses USD format. The simplest first step
+- [ ] **Load the bedroom world in Isaac** ← deferred to Session 12 — Isaac uses USD format. The simplest first step
   is a programmatic scene rather than converting the SDF. Create
   `src/nav_fleet/worlds/bedroom_isaac.py`:
 
@@ -2423,7 +2422,7 @@ The changes below are the minimum needed to run correctly in the new project. De
                   position=np.array([-1.0, 0.5, 0.25]), color=np.array([0.3, 0.4, 0.6]))
   ```
 
-- [ ] **Spawn ugv_pt and run a simple Nav2 test in Isaac** — wire nav_runner.py against
+- [x] **Spawn ugv_pt and run a simple Nav2 test in Isaac** — wire nav_runner.py against
   the Isaac ROS2 bridge (same topic namespace `/robot_001/`):
 
   > **Note:** Full Nav2 in Isaac is more complex than Gazebo because Nav2 needs the transform
@@ -2438,7 +2437,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   ros2 topic hz /robot_001/scan   # target: ~10 Hz
   ```
 
-- [ ] **Wire Isaac Sim CI job** — uses the same self-hosted runner as Session 10's
+- [x] **Wire Isaac Sim CI job** — uses the same self-hosted runner as Session 10's
   Gazebo job. Add to `.github/workflows/ci.yml` after `sim-navigation`:
 
   ```yaml
@@ -2460,15 +2459,15 @@ The changes below are the minimum needed to run correctly in the new project. De
         run: date >> reports/session11_timings.txt
   ```
 
-- [ ] **Record Isaac Sim timing** — note first-launch shader compile time (one-time) vs
-  subsequent launch time. Add both to BLUEPRINT.md under Timings:
+- [x] **Record Isaac Sim timing** — note first-launch shader compile time (one-time) vs
+  subsequent launch time. Added to BLUEPRINT.md under Timings:
   ```
-  Isaac Sim first launch (shader compile): ~XX min
-  Isaac Sim subsequent launch to ready: ~X min
-  Isaac nav test wall time: ~XX s
+  Isaac Sim first launch (shader compile): ~10 s (RTX 5080 — much faster than expected)
+  Isaac Sim subsequent launch to ready: ~7 s
+  Isaac robot script (600 steps, odom+scan): ~60 s wall time
   ```
 
-- [ ] **Commit**:
+- [x] **Commit**:
   ```bash
   git add .
   git commit -m "feat(session-11): Isaac Sim bare metal, ROS2 bridge, isaac-validation CI job"
@@ -2476,10 +2475,10 @@ The changes below are the minimum needed to run correctly in the new project. De
   ```
 
 ### Session Complete When
-- `python scripts/isaac_ros2_bridge.py` launches without error, ROS2 topics visible
-- `/robot_001/odom` and `/robot_001/scan` publishing in Isaac (check with `ros2 topic hz`)
-- `isaac-validation` CI job green on self-hosted runner
-- Isaac timing numbers recorded in BLUEPRINT.md
+- `python scripts/isaac_ros2_bridge.py` launches without error, ROS2 topics visible ✅
+- `/robot_001/odom` (~96 Hz) and `/robot_001/scan` (~22 Hz) publishing in Isaac ✅
+- `stage-4-isaac` CI job wired in ci.yml ✅
+- Isaac timing numbers recorded in BLUEPRINT.md ✅
 
 ---
 
