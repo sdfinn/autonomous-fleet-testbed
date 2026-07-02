@@ -43,21 +43,34 @@ class NavRunner(Node):
         goal.pose.pose.position.y = y
         goal.pose.pose.orientation.w = 1.0
 
-        send_goal_future = self._action_client.send_goal_async(goal)
+        # wait_for_server() only confirms the action is discoverable on the ROS graph, which
+        # happens as soon as bt_navigator's node exists — not that its lifecycle state is
+        # ACTIVE. A goal sent in that gap is rejected ("Action server is inactive"), so retry
+        # a few times with a short backoff rather than treating one rejection as final.
+        goal_handle = None
+        for attempt in range(5):
+            send_goal_future = self._action_client.send_goal_async(goal)
 
-        deadline = time.time() + 10.0
-        while time.time() < deadline:
-            if send_goal_future.done():
+            deadline = time.time() + 10.0
+            while time.time() < deadline:
+                if send_goal_future.done():
+                    break
+                rclpy.spin_once(self, timeout_sec=0.1)
+
+            if not send_goal_future.done():
+                self.get_logger().warning('Goal send timed out')
+                return False
+
+            goal_handle = send_goal_future.result()
+            if goal_handle.accepted:
                 break
-            rclpy.spin_once(self, timeout_sec=0.1)
 
-        if not send_goal_future.done():
-            self.get_logger().warning('Goal send timed out')
-            return False
-
-        goal_handle = send_goal_future.result()
-        if not goal_handle.accepted:
-            self.get_logger().error('Goal rejected')
+            self.get_logger().warning(
+                f'Goal rejected (attempt {attempt + 1}/5) — bt_navigator likely not '
+                'active yet, retrying')
+            time.sleep(1.0)
+        else:
+            self.get_logger().error('Goal rejected after all retries')
             return False
 
         result_future = goal_handle.get_result_async()

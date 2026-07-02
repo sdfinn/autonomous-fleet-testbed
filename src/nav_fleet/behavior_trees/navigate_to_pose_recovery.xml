@@ -1,0 +1,48 @@
+<!--
+  Based on nav2_bt_navigator's default navigate_to_pose_w_replanning_and_recovery.xml.
+
+  The default tree gates its recovery subtree behind WouldAPlannerRecoveryHelp /
+  WouldAControllerRecoveryHelp condition nodes, which decide — based on the numeric
+  error code — whether a recovery is worth attempting. Empirically, in this room,
+  a "Start occupied" failure (SmacPlanner2D and SmacPlannerHybrid both hit this at the
+  narrow doorway threshold, mid heading-correction) never triggers those conditions:
+  no ClearEntireCostmap call is ever logged, and the goal just fails outright with no
+  recovery attempt. Since clearing the costmap wouldn't fix a static-map wall anyway,
+  but Spin/Wait/BackUp plausibly could (the "occupied" condition is heading-dependent,
+  not a permanent obstruction), this tree drops the error-code gating entirely and
+  always runs the recovery round-robin on ANY pipeline failure, retried up to 6 times
+  by the outer RecoveryNode.
+
+  ClearingActions (clear local+global costmap) was removed from the rotation: it can't
+  fix a static-map obstruction anyway, and it was actively breaking the other two
+  recovery actions — Spin/BackUp run in behavior_server, a separate node from
+  controller_server, so they collision-check against a *subscribed snapshot* of the
+  local costmap (nav2_costmap_2d::CostmapSubscriber), not the live costmap object.
+  Every time Spin or BackUp landed right after a ClearEntireCostmap call in the
+  rotation, that snapshot hadn't caught up yet, so the projected pose fell outside the
+  cached grid ("Pose Goes Off Grid"), which the collision checker conservatively
+  treated as unsafe and aborted instantly. Wait was the only action in the rotation
+  that ever completed, because it doesn't check the costmap at all.
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <ControllerSelector selected_controller="{selected_controller}" default_controller="FollowPath" topic_name="controller_selector"/>
+        <PlannerSelector selected_planner="{selected_planner}" default_planner="GridBased" topic_name="planner_selector"/>
+        <RateController hz="1.0">
+          <ComputePathToPose goal="{goal}" path="{path}" planner_id="{selected_planner}" error_code_id="{compute_path_error_code}"/>
+        </RateController>
+        <FollowPath path="{path}" controller_id="{selected_controller}" error_code_id="{follow_path_error_code}"/>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Spin spin_dist="1.57" error_code_id="{spin_error_code}"/>
+          <Wait wait_duration="5.0"/>
+          <BackUp backup_dist="0.30" backup_speed="0.15" error_code_id="{backup_code_id}"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

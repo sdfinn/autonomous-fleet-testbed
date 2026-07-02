@@ -277,6 +277,29 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   - **Phase B Jetson native arm64 runner:** TBD — Session 15 (expect 3–5 min; delta vs GHA baseline = the headline speedup number)
   - Decision: develop and debug on Tier 1 (x86 bare metal Gazebo, ~1s build, ~3–10 min full cycle) before committing to CI. x86 is not the target OS but finds 90% of bugs at 23× less wait time per iteration.
 - **2026-06-29 — Showcase strategy locked.** Video-first portfolio (sim + real robot, one per release). Code stays private; README + YouTube videos public; code on request only. Primary audience: AMR companies (Brain Corp-adjacent). Brain Corp architectural vocabulary added to BLUEPRINT.md. Session plan (10–16) fully expanded with code snippets. SEMANTIC_MAP added to Session 13 agentic loop for named-location mission planning. "What's Next (R3+)" section added to capture deferred ideas.
+- **2026-07-02 — Isaac nav debugging: BR-01 passing green (Session 11/12).** Goal:
+  `tests/test_navigation.py::test_navigation_succeeds` passing against Isaac Sim (GUI mode) —
+  **achieved**, after the four early fixes below plus a much larger pivot once they weren't
+  enough on their own:
+  1. **Scan timestamps (GUI):** `get_current_time()` reads stale app thread in GUI mode. Fix: rclpy clock gated on `nanoseconds > 0`.
+  2. **cmd_vel delivery:** `spin_once(timeout_sec=0)` with CycloneDDS returns immediately, missing async messages. Fix: background `SingleThreadedExecutor` daemon thread.
+  3. **PhysX wheel drives:** URDF importer creates `damping=0` drives; `set_joint_velocity_targets()` silently ignored. Fix: programmatically set `damping=100` via `UsdPhysics.DriveAPI` after `robot.initialize()`.
+  4. **Global costmap "Start occupied":** Live scan data in global obstacle_layer marks replan start cell as occupied when robot is adjacent to furniture. Fix: removed `obstacle_layer` from `global_costmap.plugins` (static map + inflation only).
+
+  Those four weren't sufficient — ~15 more iterations chasing a circular-footprint-vs-doorway
+  tradeoff, `SmacPlannerHybrid`, a broken `behavior_server` recovery path, and an AMCL false
+  positive (`Goal succeeded` reported while the robot was actually stuck spinning against the
+  Dresser — extended in-place rotation next to a large close surface is a classic scan-matching
+  divergence trigger). Root cause of the divergence class of problems: layering AMCL +
+  `SmacPlannerHybrid` + `collision_monitor` + recovery behaviors on all at once with no working
+  baseline underneath made it impossible to tell a real bug apart from a tuning problem apart
+  from a false positive. Found `BC/isaac_project` (same room, a Jetbot, already proven working)
+  and matched its minimal architecture instead: `NavfnPlanner` + plain `robot_radius`, a
+  one-shot BT (`navigate_simple.xml`, no periodic replanning, no recovery dependency), and a
+  static `map→odom` TF instead of AMCL. Full writeup, deferred capability (AMCL hardening,
+  recovery, accurate footprint planning, multi-robot launch parameterization), and two hard-won
+  ROS2/Nav2 launch gotchas are in `Release1Todo.md` Session 16+ and `CLAUDE.md`.
+  **Process note:** DDS TRANSIENT_LOCAL caches Isaac's full TF history — must kill Isaac AND Nav2 together between runs. Start Nav2 within ~5s of Isaac ready. See CLAUDE.md "Isaac GUI Nav Test — Terminal Procedure".
 - **2026-07-01 — Session 11 complete (Stage 4 — Isaac Sim bare metal, ROS2 bridge + scan working).** Isaac Sim 6.0.1.0 installed via pip (~20 GB). Key findings:
   - **RTX lidar (RTX render product) does not work headless.** `IsaacSensorCreateRtxLidar` creates an `OmniLidar` prim, but no sensor-specific render product is created in headless mode — only the generic `/Render/OmniverseKit/HydraTextures/Replicator` product exists. `ROS2RtxLidarHelper` OmniGraph node can't produce scan data from it.
   - **Solution: `RotatingLidarPhysX`** (PhysX raycasting, `isaacsim.sensors.physx`). Works natively headless, no render product needed. Frame key is `'linear_depth'`. Published via rclpy `sensor_msgs/LaserScan` in the simulation loop.

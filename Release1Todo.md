@@ -2480,6 +2480,43 @@ The changes below are the minimum needed to run correctly in the new project. De
 - `stage-4-isaac` CI job wired in ci.yml ✅
 - Isaac timing numbers recorded in BLUEPRINT.md ✅
 
+### GUI Nav Test Procedure (pre-Session-12, 3 terminals)
+
+> **Critical:** Start Nav2 within ~5s of Isaac ready. DDS TRANSIENT_LOCAL caches TF history —
+> a late Nav2 start gets thousands of old messages replayed → goal rejected. Kill BOTH Isaac
+> AND Nav2 between runs (never restart Nav2 alone).
+
+**Terminal 1 — Isaac (start first):**
+```bash
+cd ~/autonomous-fleet-testbed
+colcon build --symlink-install && source install/setup.bash
+source ~/isaac-env/bin/activate   # isaacsim lives here, NOT in fleet-env (kept separate
+                                   # to avoid its heavy deps — torch, usd-exchange, etc. —
+                                   # polluting the project venv, see Session 11 install step)
+DISPLAY=:0 OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 python -u scripts/isaac_bedroom_gui.py
+```
+Wait for: `[Isaac] *** Simulation running ***`
+
+**Terminal 2 — Nav2 (start IMMEDIATELY after Terminal 1 ready):**
+```bash
+cd ~/autonomous-fleet-testbed
+ros2 launch src/nav_fleet/launch/nav2_isaac_launch.py
+```
+Wait for: `Managed nodes are active` and `Setting pose … -1.276 1.200 1.571`
+
+**Terminal 3 — Test:**
+```bash
+cd ~/autonomous-fleet-testbed
+python -m pytest tests/test_navigation.py::test_navigation_succeeds -v --timeout=120
+```
+
+**Terminal 4 — Monitor AMCL (optional, run after Nav2 active):**
+```bash
+ros2 topic echo /robot_001/amcl_pose
+```
+
+**Between runs:** `pkill -9 -f "isaac_bedroom|component_container_isolated|robot_state_publisher"` then wait 5s.
+
 ---
 
 ## Session 12 — Reports + Dashboard: True End-to-End (~3 hrs)
@@ -3207,6 +3244,87 @@ The changes below are the minimum needed to run correctly in the new project. De
 - Advanced mission types: natural language mission → Claude generates goal sequence →
   robot executes → results fed back to Claude for next iteration
 - Log real-world navigation videos + telemetry for portfolio/demo
+
+### Deferred Nav2 capability (from Session 11/12 Isaac debugging)
+
+Session 11/12's Isaac Sim nav test was stripped down to a minimal, hand-rolled Nav2 stack
+(modeled on the proven-working `BC/isaac_project` reference) after ~20 debugging iterations on
+the full stack (AMCL + SmacPlannerHybrid + collision_monitor + recovery behaviors, layered on
+all at once with no working baseline underneath). **Result: BR-01 passes green** —
+`nav2_isaac_launch.py` now runs `robot_state_publisher`, a static `map→odom` TF, `map_server`,
+`controller_server` (RPP + `NavfnPlanner`, plain `robot_radius: 0.24`), `planner_server`,
+`bt_navigator` (minimal one-shot `navigate_simple.xml`, no periodic replanning, no recovery
+dependency), and two lifecycle managers — nothing else. This deliberately defers capability the
+fleet needs before Session 16 is for real — captured here so it doesn't quietly get forgotten:
+
+- **AMCL / real localization.** Replaced with a hardcoded static `map→odom` TF, because the
+  spawn pose is known in advance. This isn't just "a real robot can't assume a known start pose"
+  in the abstract — we hit a **concrete, confirmed failure**: AMCL reported `Goal succeeded`
+  while the robot was actually stuck spinning in place against the Dresser, nowhere near the
+  goal. Extended in-place rotation next to a large, close, flat surface is a classic
+  scan-matching divergence trigger for a particle filter — the lidar sweeps the same nearby
+  surface repeatedly with little else to disambiguate against, and the estimate can drift to a
+  false pose while the physical robot hasn't moved. A false "success" is worse than an honest
+  failure for a CI-style pipeline whose whole point is a trustworthy signal. Re-add AMCL as its
+  own isolated step, with a regression test, and specifically re-test the "stuck spinning near a
+  wall/furniture" scenario before trusting it again — don't just check that it converges from a
+  known start.
+- **Recovery behaviors (spin/backup).** `behavior_server`'s collision check is broken:
+  `nav2_behaviors::Spin`/`BackUp` failed 100% of attempts with `Pose Goes Off Grid` — they
+  collision-check against a *subscribed* costmap snapshot (`nav2_costmap_2d::CostmapSubscriber`)
+  that never appeared to get populated correctly in our setup, independent of timing or of
+  whether a costmap clear preceded the call. Unattended real-hardware operation needs working
+  recovery — nobody can Ctrl-C a fleet robot stuck in a warehouse aisle. Root-cause this (check
+  whether `/robot_001/local_costmap/costmap_raw` is actually being published/received while
+  `behavior_server` is running) before Session 14+.
+- **Accurate footprint-aware planning (`SmacPlannerHybrid`/`Lattice`).** Reverted to
+  `NavfnPlanner`'s circular `robot_radius` approximation for the passing test. A circle can't
+  correctly represent a rectangular chassis in tight spaces — this was the single biggest time
+  sink in Session 11/12 (a radius sized for the doorway clipped furniture; a radius sized for
+  furniture clearance couldn't fit the doorway). Revisit once the basic pipeline is solid; this
+  will matter more, not less, once the fleet includes robots of different shapes/sizes.
+- **`collision_monitor`.** Neutered (one real polygon, sized 2cm — smaller than lidar's own
+  0.12m minimum range, so it can never actually trigger) rather than disabled outright — an
+  empty `polygons: []`/`observation_sources: []` crashes `collision_monitor` when it's loaded as
+  a composable node (see gotcha below). It also turned out `collision_monitor` sits *between*
+  `controller_server` and Isaac in the cmd_vel pipeline (`cmd_vel_smoothed → cmd_vel`) and can
+  silently clamp the outgoing command to zero independent of `use_collision_detection` — once
+  the robot got close enough that any nonzero speed read as "too close," it self-locked (distance
+  never changes if the robot never moves). No error logged; looked identical to the robot just
+  stopping. Re-enabling this for real needs the neutered-polygon workaround kept in mind, and a
+  specific eye on this self-lock failure mode.
+- **Multi-robot launch parameterization.** The minimal launch (`nav2_isaac_launch.py`) hardcodes
+  `robot_001` as literal strings in remap targets and the spawn-pose TF, rather than a
+  `LaunchConfiguration('namespace')` — `nav2_bringup`'s `bringup_launch.py` had this for free via
+  `ReplaceString`/`<robot_namespace>` templating; our hand-rolled replacement doesn't. Adding
+  `robot_002` right now means copying and hand-editing this file, not passing an argument. (Note:
+  `nav2_params.yaml`'s topic *values* — `scan topic: /robot_001/scan` etc. — were already
+  hardcoded per-robot before this session, so a per-robot params file was always going to be
+  needed too; this isn't a new category of problem, just a second file added to the same list.)
+
+**Two hard-won ROS2/Nav2 launch gotchas from writing the minimal launch file** (worth folding
+into `CLAUDE.md` if we keep hand-rolling Nav2 launches):
+- A ROS2 params YAML's top-level key (`controller_server:`, `local_costmap:`, ...) only matches
+  a node whose **exact, unqualified name** equals that key. Giving a node `namespace='robot_001'`
+  changes its real name to `/robot_001/controller_server`, which silently fails to match — no
+  error, just a fall-through to compiled-in defaults (this is exactly how we ended up with
+  `DWBLocalPlanner` loaded instead of our configured RPP, with "no critics defined" as the only
+  clue). `nav2_bringup` avoids this with its own namespace-templating machinery. Our workaround
+  for hand-rolled launches: don't namespace the node at all — apply the `/robot_001/` prefix
+  entirely through explicit **absolute** topic/action remappings instead.
+- Composable nodes loaded via a container's `load_node` service call (as `nav2_bringup`'s
+  composition does) can't accept an empty-list parameter (`polygons: []`) — the parameter
+  bridging code can't infer the array's element type from zero elements and crashes with
+  `Expected 'value' to be ... got '()' of type 'tuple'`. A reference config with this exact
+  syntax can still "work" if its launch never actually instantiates that node live.
+
+**Suggested re-introduction order:** AMCL alone first (its own regression test, including the
+stuck-near-an-obstacle scenario above) → `collision_monitor` (aware of the cmd_vel self-lock) →
+accurate footprint/Hybrid planner → recovery behaviors last, once the `CostmapSubscriber` bug is
+actually understood. Get a green nav test after each single addition before layering on the
+next — the Session 11/12 mistake was combining all of these at once with no working baseline
+underneath, which made it impossible to tell a real bug (recovery) apart from a tuning problem
+(footprint sizing) apart from a false positive (AMCL).
 
 ---
 

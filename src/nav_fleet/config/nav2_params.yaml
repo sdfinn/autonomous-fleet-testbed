@@ -3,7 +3,15 @@
 # Base: BC/isaac_project nav2 params (tuned for 3.05x3.96m bedroom, proven working).
 # Changes from BC project:
 #   - use_sim_time: true  (Gazebo publishes /clock, not wall time)
-#   - robot_radius: 0.15 → 0.20  (ugv_pt is larger than Jetbot)
+#   - robot_radius 0.15 → 0.20 → 0.25 → rectangular footprint → back to robot_radius 0.24
+#     with NavfnPlanner + a minimal one-shot BT (navigate_simple.xml). SmacPlannerHybrid +
+#     AMCL + collision_monitor + recovery behaviors compounded into an unsolvable-in-one-
+#     session tangle (behavior_server's recovery has a real, separate bug — "Pose Goes Off
+#     Grid" — that surfaced independent of everything else). Reverted to the exact structure
+#     proven working in BC/isaac_project (NavfnPlanner, plain robot_radius, no periodic
+#     replanning, no recovery dependency) to get a real passing baseline. Deferred capability
+#     (AMCL hardening, recovery, accurate footprint planning) tracked in Release1Todo.md
+#     Session 16+ "Deferred Nav2 capability" — re-add one at a time with a green test each step.
 #   - Frame IDs: odom, base_footprint, base_link (no prefix — per-robot TF topic isolates frames)
 #   - Scan/odom topics: /scan → /robot_001/scan, /odom → /robot_001/odom
 #   - Added AMCL for localization against living_room.pgm map
@@ -70,6 +78,13 @@ bt_navigator:
     navigators: ["navigate_to_pose"]
     navigate_to_pose:
       plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+    # Minimal one-shot tree (matches BC/isaac_project reference) — compute path once, follow
+    # once, no periodic replanning, no recovery dependency. The recovery-capable tree
+    # (navigate_to_pose_recovery.xml) is kept in the repo for when behavior_server's
+    # "Pose Goes Off Grid" bug is fixed (see Release1Todo.md Session 16+). Path is relative
+    # to repo root, matching this launch file's existing pathlib.Path(__file__).parent.parent
+    # convention (see CLAUDE.md).
+    default_nav_to_pose_bt_xml: "src/nav_fleet/behavior_trees/navigate_simple.xml"
 
 controller_server:
   ros__parameters:
@@ -103,7 +118,15 @@ controller_server:
       max_lookahead_dist: 0.9
       use_velocity_scaled_lookahead_dist: false
       transform_tolerance: 0.5
-      use_collision_detection: false        # collision_monitor handles safety; RPP collision abort fires before rotation executes
+      use_collision_detection: false        # true confirmed RPP's preemptive stop works
+                                            # correctly at the Dresser corner, but recovery
+                                            # (spin/backup) is broken — behavior_server's
+                                            # costmap-subscriber check fails "Pose Goes Off
+                                            # Grid" 100% of the time (separate, unresolved bug).
+                                            # Any preemptive stop is a guaranteed deadlock with
+                                            # no way out, so back to false: rely on the passive
+                                            # collision_monitor slowdown instead, now paired with
+                                            # the accurate footprint + SmacPlannerHybrid path.
       use_rotate_to_heading: true
       rotate_to_heading_min_angle: 0.3     # 17° — triggers in-place rotation for the initial NNE heading error (~30°)
 
@@ -112,23 +135,15 @@ planner_server:
     use_sim_time: true
     planner_plugins: ["GridBased"]
     GridBased:
-      plugin: "nav2_smac_planner::SmacPlanner2D"
+      # Reverted to NavfnPlanner (matches BC/isaac_project reference exactly) — SmacPlannerHybrid
+      # is the more correct planner long-term (see Session 16+ notes) but its interaction with
+      # AMCL + periodic replanning + recovery cost most of Session 11/12. NavfnPlanner is a
+      # classic circular-footprint A*/Dijkstra planner; combined with the minimal one-shot BT
+      # (navigate_simple.xml — no periodic replanning), it never re-checks "start occupied" from
+      # an awkward mid-transit pose, which was the actual recurring failure.
+      plugin: "nav2_navfn_planner::NavfnPlanner"
       tolerance: 0.3            # accept goal within 0.3m if exact cell is occupied
-      downsample_costmap: false
-      downsampling_factor: 1
-      allow_unknown: true
-      max_iterations: 1000000
-      max_on_approach_iterations: 1000
-      max_planning_time: 2.0
-      cost_travel_multiplier: 2.0
-      use_final_approach_orientation: false
-      smoother:
-        max_iterations: 1000
-        w_smooth: 0.3
-        w_data: 0.2
-        tolerance: 1.0e-10
-        do_refinement: true
-        refinement_num: 2
+      use_astar: true
 
 local_costmap:
   local_costmap:
@@ -138,7 +153,12 @@ local_costmap:
       width: 4
       height: 4
       resolution: 0.05
-      robot_radius: 0.20   # ugv_pt (was 0.15 for Jetbot)
+      # Plain circular robot_radius (matches reference) — NavfnPlanner is circular-footprint
+      # only anyway, so a rectangular footprint bought nothing here. 0.24 covers the chassis's
+      # real diagonal (0.237m, from ugv_pt.urdf.xacro half-length 0.175 / half-width 0.16) with
+      # a small margin — comfortably clears the 0.665m doorway (diameter 0.48m) since there's no
+      # periodic replanning to catch it mid-turn anymore.
+      robot_radius: 0.24
       robot_base_frame: "base_footprint"
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
@@ -149,14 +169,18 @@ local_costmap:
           max_obstacle_height: 2.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.25   # bumped from 0.20 for ugv_pt clearance
+        inflation_radius: 0.25
 
 global_costmap:
   global_costmap:
     ros__parameters:
       use_sim_time: true
-      robot_radius: 0.20   # ugv_pt
+      robot_radius: 0.24
       robot_base_frame: "base_footprint"
+      # obstacle_layer restored (removed in Session 11 to fix a "Start occupied" bug that was
+      # specific to periodic replanning accumulating live scan data mid-transit — the minimal
+      # BT has no periodic replanning, so that failure mode no longer applies, and this now
+      # matches the reference project exactly.
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
@@ -168,7 +192,7 @@ global_costmap:
           topic: /robot_001/scan
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.30   # bumped from 0.30 (same, provides clearance buffer)
+        inflation_radius: 0.30
 
 map_server:
   ros__parameters:
@@ -187,11 +211,25 @@ collision_monitor:
     source_timeout: 1.0
     base_shift_correction: True
     stop_pub_timeout: 2.0
+    # Neutered, not removed — FootprintApproach sat between controller_server and Isaac in the
+    # cmd_vel pipeline (cmd_vel_smoothed -> cmd_vel) and rewrote the outgoing command
+    # independently of use_collision_detection above (that only controls RPP's own internal
+    # abort). Once the robot got close enough that any nonzero speed read as "too close," it
+    # clamped cmd_vel toward zero — and since the robot then wasn't moving, the distance never
+    # changed, so the clamp never lifted (silent self-lock, no error logged, matches exactly
+    # what was observed: one real command, then zero for ~225s).
+    # The reference project sets polygons/observation_sources to [] — but that only worked
+    # because its launch never actually starts collision_monitor as a live node. Ours does
+    # (loaded as a composable node via nav2_bringup), and composable-node parameter loading
+    # can't handle empty-list params ("Expected 'value' to be ... got '()' of type 'tuple'" —
+    # the type can't be inferred from zero elements). So: one real polygon, sized 2cm square,
+    # smaller than the lidar's own minimum range (0.12m) — no real scan point can ever fall
+    # inside it, so it can never trigger. Functionally a no-op without an empty-list parameter.
     polygons: ["FootprintApproach"]
     FootprintApproach:
       type: "polygon"
       action_type: "approach"
-      footprint_topic: "/robot_001/local_costmap/published_footprint"
+      points: "[[0.01, 0.01], [0.01, -0.01], [-0.01, -0.01], [-0.01, 0.01]]"
       time_before_collision: 0.1
       simulation_time_step: 0.1
       min_points: 6

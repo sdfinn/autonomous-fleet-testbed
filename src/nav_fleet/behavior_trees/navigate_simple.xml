@@ -1,0 +1,24 @@
+<!--
+  Minimal navigate-to-pose BT, modeled directly on the proven-working
+  BC/isaac_project reference (ros2_src/nav_test/behavior_trees/navigate_simple.xml).
+
+  Compute the path once, follow it once. No RateController replanning loop, no
+  RecoveryNode, no dependency on behavior_server's spin/backup (currently broken —
+  see Release1Todo.md Session 16+ "Deferred Nav2 capability"). If FollowPath fails,
+  the whole thing fails cleanly — no infinite retry loop, no deadlock.
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <Sequence name="NavigateToGoal">
+      <ComputePathToPose
+        goal="{goal}"
+        path="{path}"
+        planner_id="{planner_id}"
+        error_code_id="{compute_path_error_code}"/>
+      <FollowPath
+        path="{path}"
+        controller_id="{controller_id}"
+        error_code_id="{follow_path_error_code}"/>
+    </Sequence>
+  </BehaviorTree>
+</root>
