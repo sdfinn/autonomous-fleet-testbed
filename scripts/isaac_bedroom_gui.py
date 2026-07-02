@@ -5,7 +5,7 @@ What this script does:
   - Opens Isaac Sim in GUI mode showing the bedroom world (matching bedroom_simple.sdf)
   - Spawns ugv_pt at (-1.276, 1.2, 0.15) facing north — same as Gazebo Session 10
   - Green goal sphere at (0.0, 3.7, 0.04)
-  - Publishes: /robot_001/odom, /robot_001/scan, /robot_001/tf, /clock
+  - Publishes: /clock, /robot_001/odom, /robot_001/scan, /robot_001/tf
   - Subscribes: /robot_001/cmd_vel → DifferentialController → wheel joint velocities
   - Runs until the GUI window is closed (or Ctrl+C)
 
@@ -27,6 +27,7 @@ Wheel geometry (ugv_pt.urdf.xacro):
   DOF order: [rear_left, rear_right, front_left, front_right]
 """
 import os
+import sys
 import math
 import pathlib
 import threading
@@ -35,8 +36,13 @@ os.environ["OMNI_KIT_ACCEPT_EULA"] = "YES"
 
 from isaacsim import SimulationApp
 
-# GUI mode — omit headless
-simulation_app = SimulationApp({"renderer": "RayTracedLighting"})
+# Pass --headless to run without a display window (e.g. for nav test iteration).
+# GUI mode requires DISPLAY=:0 and a running X server.
+_headless = "--headless" in sys.argv
+_cfg = {"headless": _headless}
+if not _headless:
+    _cfg["renderer"] = "RayTracedLighting"
+simulation_app = SimulationApp(_cfg)
 
 import omni.graph.core as og
 import omni.timeline
@@ -47,7 +53,6 @@ from isaacsim.core.utils.extensions import enable_extension
 from isaacsim.asset.importer.urdf import URDFImporter, URDFImporterConfig
 from isaacsim.sensors.physx import RotatingLidarPhysX
 from isaacsim.core.prims import Articulation
-from isaacsim.core.utils.types import ArticulationAction
 from isaacsim.robot.wheeled_robots import DifferentialController
 import isaacsim.core.utils.stage as stage_utils
 
@@ -150,7 +155,7 @@ if robot_prim and robot_prim.IsValid():
     xf.AddTranslateOp().Set(Gf.Vec3d(SPAWN_X, SPAWN_Y, SPAWN_Z))
     w = math.cos(SPAWN_YAW / 2)
     z = math.sin(SPAWN_YAW / 2)
-    xf.AddOrientOp().Set(Gf.Quatd(w, 0.0, 0.0, z))
+    xf.AddOrientOp().Set(Gf.Quatf(w, 0.0, 0.0, z))
     print(f"[Isaac] Robot placed at ({SPAWN_X}, {SPAWN_Y}, {SPAWN_Z}), yaw=90°")
 else:
     print(f"[Isaac] WARNING: robot prim {ARTIC_ROOT} not found after stage open")
@@ -176,18 +181,20 @@ og.Controller.edit(
     {"graph_path": f"{ARTIC_ROOT}/ros2_odom", "evaluator_name": "execution"},
     {
         keys.CREATE_NODES: [
-            ("OnTick",      "omni.graph.action.OnPlaybackTick"),
-            ("SimTime",     "isaacsim.core.nodes.IsaacReadSimulationTime"),
-            ("Context",     "isaacsim.ros2.bridge.ROS2Context"),
-            ("ComputeOdom", "isaacsim.core.nodes.IsaacComputeOdometry"),
-            ("PublishOdom", "isaacsim.ros2.bridge.ROS2PublishOdometry"),
-            ("PublishTF",   "isaacsim.ros2.bridge.ROS2PublishRawTransformTree"),
+            ("OnTick",        "omni.graph.action.OnPlaybackTick"),
+            ("SimTime",       "isaacsim.core.nodes.IsaacReadSimulationTime"),
+            ("Context",       "isaacsim.ros2.bridge.ROS2Context"),
+            ("ComputeOdom",   "isaacsim.core.nodes.IsaacComputeOdometry"),
+            ("PublishOdom",   "isaacsim.ros2.bridge.ROS2PublishOdometry"),
+            ("PublishTF",     "isaacsim.ros2.bridge.ROS2PublishRawTransformTree"),
+            ("PublishClock",  "isaacsim.ros2.bridge.ROS2PublishClock"),
         ],
         keys.SET_VALUES: [
             ("ComputeOdom.inputs:chassisPrim",      [Sdf.Path(ARTIC_ROOT)]),
             ("PublishOdom.inputs:topicName",        f"/{NS}/odom"),
             ("PublishOdom.inputs:odomFrameId",      "odom"),
             ("PublishOdom.inputs:chassisFrameId",   "base_footprint"),
+            ("PublishTF.inputs:topicName",          f"/{NS}/tf"),
             ("PublishTF.inputs:childFrameId",       "base_footprint"),
             ("PublishTF.inputs:parentFrameId",      "odom"),
             ("Context.inputs:domain_id",            0),
@@ -206,6 +213,9 @@ og.Controller.edit(
             ("ComputeOdom.outputs:orientation",      "PublishTF.inputs:rotation"),
             ("SimTime.outputs:simulationTime",       "PublishTF.inputs:timeStamp"),
             ("Context.outputs:context",              "PublishTF.inputs:context"),
+            ("OnTick.outputs:tick",                  "PublishClock.inputs:execIn"),
+            ("SimTime.outputs:simulationTime",       "PublishClock.inputs:timeStamp"),
+            ("Context.outputs:context",              "PublishClock.inputs:context"),
         ],
     },
 )
@@ -214,11 +224,18 @@ og.Controller.edit(
 print("[Isaac] Setting up rclpy...")
 import rclpy
 from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.executors import SingleThreadedExecutor
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 
 rclpy.init()
-ros_node = Node("isaac_bedroom_node")
+# use_sim_time=True: clock is fed by /clock published from OmniGraph's ROS2PublishClock
+# (physics thread). get_clock().now() after spin_once() returns the correct sim time.
+# Do NOT use omni.timeline.get_timeline_interface().get_current_time() — in GUI mode that
+# reads from the Python/app thread which lags the physics thread by a large margin.
+ros_node = Node("isaac_bedroom_node",
+    parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)])
 scan_pub = ros_node.create_publisher(LaserScan, f"/{NS}/scan", 10)
 
 _cmd_vel_lock = threading.Lock()
@@ -231,6 +248,16 @@ def _cmd_vel_cb(msg: Twist):
 
 ros_node.create_subscription(Twist, f"/{NS}/cmd_vel", _cmd_vel_cb, 10)
 
+# Spin rclpy in a daemon thread. spin_once(timeout_sec=0) in the physics loop
+# uses CycloneDDS wait_set with zero timeout and consistently misses messages
+# that arrive asynchronously between iterations. A background executor thread
+# calls callbacks the moment messages arrive, with no timing dependency on the
+# physics loop rate. _cmd_vel_lock protects _current_cmd across threads.
+_ros_executor = SingleThreadedExecutor()
+_ros_executor.add_node(ros_node)
+_ros_spin_thread = threading.Thread(target=_ros_executor.spin, daemon=True)
+_ros_spin_thread.start()
+
 ANGLE_INCREMENT = math.radians(0.4)
 
 # ── Start simulation ──────────────────────────────────────────────────────────
@@ -242,6 +269,23 @@ simulation_app.update()
 robot = Articulation(ARTIC_ROOT)
 robot.initialize()
 print(f"[Isaac] Robot DOFs: {robot.dof_names}")
+
+# The URDF has no <dynamics damping="..."> on wheel joints, so the URDF importer
+# creates velocity drives with damping=0. PhysX velocity drives with gain=0 silently
+# ignore set_joint_velocity_targets. Set a high damping here so velocity targets are tracked.
+from pxr import UsdPhysics as _UsdPhysics
+for _dof in robot.dof_names:
+    _jp = stage.GetPrimAtPath(f"{ARTIC_ROOT}/Physics/{_dof}")
+    if not _jp.IsValid():
+        print(f"[Isaac] WARNING: joint prim not found: {ARTIC_ROOT}/Physics/{_dof}")
+        continue
+    _drive = _UsdPhysics.DriveAPI.Get(_jp, "angular")
+    if not _drive:
+        _drive = _UsdPhysics.DriveAPI.Apply(_jp, "angular")
+        _drive.GetTypeAttr().Set("velocity")
+    _drive.GetDampingAttr().Set(100.0)
+    _drive.GetStiffnessAttr().Set(0.0)
+print("[Isaac] Wheel joint velocity drives configured (damping=1e8)")
 
 diff_ctrl = DifferentialController(
     name="diff_drive",
@@ -259,8 +303,6 @@ try:
     while simulation_app.is_running():
         simulation_app.update()
 
-        rclpy.spin_once(ros_node, timeout_sec=0)
-
         with _cmd_vel_lock:
             cmd = list(_current_cmd)
 
@@ -269,16 +311,19 @@ try:
             vl = float(drive_action.joint_velocities[0])
             vr = float(drive_action.joint_velocities[1])
             # DOF order: [rear_left, rear_right, front_left, front_right]
-            robot.apply_action(ArticulationAction(
-                joint_velocities=np.array([vl, vr, vl, vr])
-            ))
+            # Use set_joint_velocity_targets directly — avoids ArticulationAction version mismatch
+            robot.set_joint_velocity_targets(np.array([[vl, vr, vl, vr]]))
 
         if step % 6 == 0:
             frame = lidar.get_current_frame()
-            if frame and "linear_depth" in frame:
+            clock_now = ros_node.get_clock().now()
+            if frame and "linear_depth" in frame and clock_now.nanoseconds > 0:
+                # Gate on clock_now > 0: skip until /clock is received from OmniGraph.
+                # In GUI mode get_current_time() reads the stale Python/app thread (always
+                # ~0.017s); get_clock().now() reads /clock from the physics thread (correct).
                 depth = frame["linear_depth"].flatten()
                 msg = LaserScan()
-                msg.header.stamp    = ros_node.get_clock().now().to_msg()
+                msg.header.stamp    = clock_now.to_msg()
                 msg.header.frame_id = "lidar_link"
                 msg.angle_min       = -math.pi
                 msg.angle_max       =  math.pi
@@ -300,5 +345,6 @@ try:
 except KeyboardInterrupt:
     print("\n[Isaac] Shutting down...")
 
+_ros_executor.shutdown()
 rclpy.shutdown()
 simulation_app.close()

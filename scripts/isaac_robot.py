@@ -91,18 +91,20 @@ og.Controller.edit(
     {"graph_path": f"{ARTIC_ROOT}/ros2_odom", "evaluator_name": "execution"},
     {
         keys.CREATE_NODES: [
-            ("OnTick",      "omni.graph.action.OnPlaybackTick"),
-            ("SimTime",     "isaacsim.core.nodes.IsaacReadSimulationTime"),
-            ("Context",     "isaacsim.ros2.bridge.ROS2Context"),
-            ("ComputeOdom", "isaacsim.core.nodes.IsaacComputeOdometry"),
-            ("PublishOdom", "isaacsim.ros2.bridge.ROS2PublishOdometry"),
-            ("PublishTF",   "isaacsim.ros2.bridge.ROS2PublishRawTransformTree"),
+            ("OnTick",        "omni.graph.action.OnPlaybackTick"),
+            ("SimTime",       "isaacsim.core.nodes.IsaacReadSimulationTime"),
+            ("Context",       "isaacsim.ros2.bridge.ROS2Context"),
+            ("ComputeOdom",   "isaacsim.core.nodes.IsaacComputeOdometry"),
+            ("PublishOdom",   "isaacsim.ros2.bridge.ROS2PublishOdometry"),
+            ("PublishTF",     "isaacsim.ros2.bridge.ROS2PublishRawTransformTree"),
+            ("PublishClock",  "isaacsim.ros2.bridge.ROS2PublishClock"),
         ],
         keys.SET_VALUES: [
             ("ComputeOdom.inputs:chassisPrim",     [Sdf.Path(ARTIC_ROOT)]),
             ("PublishOdom.inputs:topicName",       f"/{NS}/odom"),
             ("PublishOdom.inputs:odomFrameId",     "odom"),
             ("PublishOdom.inputs:chassisFrameId",  "base_footprint"),
+            ("PublishTF.inputs:topicName",          f"/{NS}/tf"),
             ("PublishTF.inputs:childFrameId",      "base_footprint"),
             ("PublishTF.inputs:parentFrameId",     "odom"),
             ("Context.inputs:domain_id",           0),
@@ -121,6 +123,9 @@ og.Controller.edit(
             ("ComputeOdom.outputs:orientation",    "PublishTF.inputs:rotation"),
             ("SimTime.outputs:simulationTime",     "PublishTF.inputs:timeStamp"),
             ("Context.outputs:context",            "PublishTF.inputs:context"),
+            ("OnTick.outputs:tick",                "PublishClock.inputs:execIn"),
+            ("SimTime.outputs:simulationTime",     "PublishClock.inputs:timeStamp"),
+            ("Context.outputs:context",            "PublishClock.inputs:context"),
         ],
     },
 )
@@ -130,6 +135,7 @@ print("[Isaac] Setting up rclpy scan publisher...")
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
+from builtin_interfaces.msg import Time as RosTime
 import numpy as np
 
 rclpy.init()
@@ -155,7 +161,8 @@ for i in range(600):
         if frame and "linear_depth" in frame:
             depth = frame["linear_depth"].flatten()
             msg = LaserScan()
-            msg.header.stamp    = scan_node.get_clock().now().to_msg()
+            t_sim = omni.timeline.get_timeline_interface().get_current_time()
+            msg.header.stamp    = RosTime(sec=int(t_sim), nanosec=int((t_sim % 1) * 1e9))
             msg.header.frame_id = "lidar_link"
             msg.angle_min       = -math.pi
             msg.angle_max       =  math.pi

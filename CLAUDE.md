@@ -174,3 +174,111 @@ docker buildx build --platform linux/arm64 \
   Import path: `from isaacsim.core.utils.extensions import enable_extension`.
 - **OmniGraph odom chassis prim:** `IsaacComputeOdometry` needs the articulation root (`/ugv_pt`),
   not a link prim. Link prims fail with "not a valid rigid body or articulation root".
+- **`/clock` must be explicitly published via OmniGraph.** `isaacsim.ros2.bridge` does NOT
+  auto-publish `/clock`. Without it, Nav2 nodes with `use_sim_time: true` stay at time 0 — their
+  clocks never advance, they request TF at t≈0, but all TF data from Isaac starts at the sim time
+  when Isaac started (e.g. t=24s). Add `ROS2PublishClock` to the OmniGraph:
+  ```python
+  ("PublishClock", "isaacsim.ros2.bridge.ROS2PublishClock"),
+  # connect: OnTick→execIn, SimTime→timeStamp, Context→context
+  ```
+- **Scan timestamps must use Isaac timeline directly** (`omni.timeline.get_timeline_interface().get_current_time()`),
+  NOT `rclpy Node.get_clock().now()`. The rclpy clock with `use_sim_time` returns 0 before the first
+  /clock message arrives, causing AMCL to anchor map→odom at t≈0 while odom TF starts at t=24s+.
+- **OmniGraph TF topic must be namespaced:** `PublishTF.inputs:topicName` defaults to `/tf` but
+  Nav2 with `namespace:robot_001` + `use_namespace:true` subscribes to `/robot_001/tf`. Set:
+  `("PublishTF.inputs:topicName", f"/{NS}/tf")`
+- **PhysX wheel velocity drives must be set programmatically.** The URDF importer warns
+  "Stiffness and damping not available" for wheel joints with no `<dynamics>` tag — it creates
+  velocity drives with damping=0. `set_joint_velocity_targets()` is silently ignored. Fix:
+  set `damping=100` via `UsdPhysics.DriveAPI.Apply` AFTER `robot.initialize()`:
+  ```python
+  from pxr import UsdPhysics
+  for dof in robot.dof_names:
+      jp = stage.GetPrimAtPath(f"{ARTIC_ROOT}/Physics/{dof}")
+      drive = UsdPhysics.DriveAPI.Get(jp, "angular") or UsdPhysics.DriveAPI.Apply(jp, "angular")
+      drive.GetDampingAttr().Set(100.0)
+      drive.GetStiffnessAttr().Set(0.0)
+  ```
+- **Scan timestamp source (GUI mode):** `omni.timeline.get_timeline_interface().get_current_time()`
+  reads the Python/app thread which is stale in GUI mode. Use `rclpy Node.get_clock().now()` AFTER
+  OmniGraph has published `/clock` (gate on `clock_now.nanoseconds > 0`).
+- **`spin_once(timeout_sec=0)` misses cmd_vel with CycloneDDS.** Zero-timeout returns immediately;
+  async DDS messages are consistently missed. Fix: background `SingleThreadedExecutor` daemon thread:
+  ```python
+  from rclpy.executors import SingleThreadedExecutor
+  import threading
+  _exec = SingleThreadedExecutor(); _exec.add_node(ros_node)
+  threading.Thread(target=_exec.spin, daemon=True).start()
+  ```
+  Remove `rclpy.spin_once()` calls from the main loop entirely.
+- **DDS TRANSIENT_LOCAL TF replay — must restart Isaac AND Nav2 together.** Isaac's
+  `/robot_001/tf` publisher uses TRANSIENT_LOCAL QoS. DDS caches the full TF history. Any new
+  Nav2 subscriber (even if Isaac kept running) gets the entire history replayed, causing thousands
+  of "jump back in time" warnings and goal rejection. Rule: kill BOTH Isaac and Nav2 between runs.
+  Start Nav2 within ~5s of Isaac's "Simulation running" message so the replayed history is small.
+- **Global costmap obstacle_layer causes "Start occupied" on replan — only with periodic
+  replanning.** During navigation, live lidar scans of furniture (e.g. PC tower) accumulate in
+  the global costmap's obstacle layer. If the BT triggers a *periodic* replan from a position
+  adjacent to that furniture, the global planner finds the start cell occupied and aborts.
+  Session 11 fix was to remove `obstacle_layer` from `global_costmap.plugins`. Session 11/12's
+  minimal one-shot BT (`navigate_simple.xml` — plan once, no `RateController` replanning loop)
+  removes the actual trigger for this, so `obstacle_layer` was restored to the global costmap
+  (matches `BC/isaac_project`). If a future BT reintroduces periodic replanning, this failure
+  mode comes back and `obstacle_layer` should come back out of `global_costmap.plugins`.
+- **`PYTHONUNBUFFERED=1` + `python -u` required.** Isaac's stdout is fully buffered when piped
+  to a file — the "Simulation running" message is never flushed without these flags.
+- **A ROS2 params YAML's top-level key must equal a node's exact, unqualified name.** Giving a
+  node `namespace='robot_001'` in a hand-rolled launch file changes its real name to
+  `/robot_001/controller_server`, which no longer matches a plain `controller_server:` key in
+  the params file — no error, just a silent fall-through to compiled-in defaults (this is how
+  `DWBLocalPlanner` got loaded instead of our configured RPP, with "no critics defined" as the
+  only clue). `nav2_bringup`'s `bringup_launch.py` avoids this with its own namespace-templating
+  machinery (`ReplaceString`/`<robot_namespace>`). For hand-rolled Nav2 launches: don't namespace
+  the node at all — apply the `/robot_001/` prefix entirely through explicit **absolute**
+  topic/action remappings instead (see `nav2_isaac_launch.py`).
+- **Composable nodes can't accept an empty-list parameter.** A node loaded via a container's
+  `load_node` service call (as `nav2_bringup`'s composition does) crashes on `polygons: []` /
+  `observation_sources: []` — `Expected 'value' to be ... got '()' of type 'tuple'`. The
+  parameter bridging code can't infer an empty array's element type. A reference config with
+  this exact syntax can still "work" if its launch never actually instantiates that node live
+  (that's why `BC/isaac_project`'s config has this and never hits the bug). Workaround for
+  `collision_monitor`: give it one real, harmless polygon instead of an empty list — e.g. a 2cm
+  square, smaller than the lidar's own minimum range, so it can never actually trigger.
+
+## Isaac GUI Nav Test — Terminal Procedure (Session 12+)
+
+Three terminals. **Do not start Nav2 more than ~5s after Isaac is ready** (DDS TF history grows
+with every second Isaac runs; a late Nav2 startup gets thousands of replayed messages).
+
+**Terminal 1 — Isaac (start first):**
+```bash
+# New terminal (auto-sources from .bashrc)
+cd ~/autonomous-fleet-testbed
+colcon build --symlink-install && source install/setup.bash
+DISPLAY=:0 OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 python -u scripts/isaac_bedroom_gui.py
+```
+Wait for: `[Isaac] *** Simulation running ***`
+
+**Terminal 2 — Nav2 (start IMMEDIATELY after Terminal 1 is ready):**
+```bash
+# New terminal
+cd ~/autonomous-fleet-testbed
+ros2 launch src/nav_fleet/launch/nav2_isaac_launch.py
+```
+Wait for: `Managed nodes are active` and `Setting pose … -1.276 1.200 1.571`
+
+**Terminal 3 — Test:**
+```bash
+# New terminal
+cd ~/autonomous-fleet-testbed
+python -m pytest tests/test_navigation.py::test_navigation_succeeds -v --timeout=120
+```
+
+**Optional Terminal 4 — Monitor AMCL (run after Nav2 active):**
+```bash
+ros2 topic echo /robot_001/amcl_pose
+```
+
+**Between runs:** `pkill -9 -f "isaac_bedroom|component_container_isolated|robot_state_publisher"`
+then wait 5s for DDS to clear before restarting.
