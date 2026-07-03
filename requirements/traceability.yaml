@@ -5,14 +5,22 @@ requirements:
   - id: BR-01
     description: "Robot reaches goal within 0.15m Euclidean distance"
     tests:
-      - tests/test_navigation.py::test_goal_position_error
+      # Session 10 implemented this as test_navigation_succeeds, not the placeholder name
+      # below that was never updated to match. It checks the NavigateToPose action result
+      # (status == SUCCEEDED), which requires reaching the goal within xy_goal_tolerance.
+      - tests/test_navigation.py::test_navigation_succeeds
   - id: BR-02
     description: "Zero collisions per navigation run"
     tests:
-      - tests/test_navigation.py::test_zero_collisions
+      - tests/test_navigation.py::test_no_collision
   - id: BR-03
     description: "Recovery behavior completes within 10s if triggered"
     tests:
+      # Genuinely not implemented — recovery behaviors (spin/backup) are broken
+      # ("Pose Goes Off Grid" on every attempt, root cause not yet found). Tracked as
+      # deferred work in Release1Todo.md Session 16+. This requirement stays failing
+      # (not skipped — it's a real gap, not a profile limitation) until that's fixed;
+      # stage-0's traceability step has continue-on-error for this reason.
       - tests/test_navigation.py::test_recovery_timeout
   - id: BR-04
     description: "/robot_001/odom publishes at >= 50 Hz"
@@ -25,7 +33,9 @@ requirements:
   - id: BR-10
     description: "Nav2 behavior tree returns SUCCESS"
     tests:
-      - tests/test_navigation.py::test_bt_success
+      # Same underlying check as BR-01 — the NavigateToPose action result status
+      # (SUCCEEDED) *is* the BT's overall success/failure outcome.
+      - tests/test_navigation.py::test_navigation_succeeds
   - id: SC-04
     description: "/robot_001/scan publishes at >= 10 Hz"
     tests:
