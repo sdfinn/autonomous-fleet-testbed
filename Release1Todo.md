@@ -2387,7 +2387,7 @@ The changes below are the minimum needed to run correctly in the new project. De
   ros2 topic list   # should show /clock and other Isaac topics
   ```
 
-- [ ] **Load the bedroom world in Isaac** ← deferred to Session 12 — Isaac uses USD format. The simplest first step
+- [x] **Load the bedroom world in Isaac** ← deferred to Session 12 — Isaac uses USD format. The simplest first step
   is a programmatic scene rather than converting the SDF. Create
   `src/nav_fleet/worlds/bedroom_isaac.py`:
 
@@ -2949,12 +2949,14 @@ ros2 topic echo /robot_001/amcl_pose
 > **Hardware dependency:** This session requires the Jetson Orin Nano Super Developer Kit
 > to be physically on hand. Sessions 10–13 can be completed while waiting for hardware.
 >
-> **JetPack / ROS2 compatibility note:** JetPack 6.x ships Ubuntu 22.04 (not 24.04).
-> ROS2 Jazzy requires Ubuntu 24.04. On the Jetson you will likely use **ROS2 Humble**
-> (Ubuntu 22.04 native) and keep Jazzy on the x86 workstation. The arm64 CI build
-> (Docker) already uses the `ros:jazzy-ros-base` image which is multiarch — this
-> is fine. The Jetson native runner builds and tests on Humble. Confirm the JetPack
-> version you receive and adjust accordingly.
+> **JetPack / ROS2 compatibility note (reconciled 2026-07-03):** BLUEPRINT.md's verified
+> compatibility matrix targets **JetPack 7.2** (L4T 39.2 = Ubuntu 24.04 → ROS2 **Jazzy**
+> natively — same distro as the x86 workstation and the stage-2 Docker image). An earlier
+> version of this note assumed JetPack 6.x (Ubuntu 22.04 → Humble); that only applies if
+> the board can't take JetPack 7.x. **Verify on flash day:** `cat /etc/os-release` after
+> first boot. If you do land on 22.04/Humble, the stage-2 Docker image (Jazzy, arm64)
+> becomes the way to keep one distro everywhere — the container-runtime question deferred
+> in the 2026-07-03 BLUEPRINT decision would then tip toward "yes."
 
 ### Prerequisites
 - Sessions 10–13 complete
@@ -2978,6 +2980,19 @@ ros2 topic echo /robot_001/amcl_pose
   - Select: Jetson Linux (BSP) + ROS-related components if offered
   - Flash — takes 20–40 min
   - On completion: Jetson boots to Ubuntu desktop
+
+- [ ] **Storage: flash to MicroSD and record a baseline (decision 2026-07-03):**
+  R1 boots from MicroSD (the dev kit default). NVMe SSD migration is a Session 16+ item —
+  swapping later is a reflash, not a redesign (nothing in the repo cares about the storage
+  medium; all paths are relative to `~`). Measuring the same numbers on SD now and NVMe later
+  produces a published before/after table — the same "measured, marketed" pattern as the
+  QEMU→native build number. Record during this session:
+  - apt/ROS2 install wall time
+  - `time colcon build --symlink-install` (native arm64 on SD)
+  - first `docker pull` time of the stage-2 image (see container step below)
+  > **SD hygiene until the NVMe migration:** don't record rosbags or heavy logs to the SD
+  > card — storage write speed only bites when *recording*, and sustained writes are what
+  > wear SD cards out. DDS traffic itself is RAM-to-RAM and doesn't touch storage.
 
 - [ ] **Initial Jetson setup** (SSH from workstation — find Jetson IP via router or `arp -a`):
   ```bash
@@ -3012,6 +3027,28 @@ ros2 topic echo /robot_001/amcl_pose
   time colcon build --symlink-install
   ```
 
+- [ ] **Pull the stage-2 CI image on the Jetson and run the unit tests inside it** — this is
+  the "hardware-verified binaries to the edge" claim made literal: the *exact arm64 artifact*
+  stage-2 built and pushed to GHCR runs on the target silicon, not a rebuild from source.
+  The image only bakes in `src/` (no `tests/`), so mount the repo checkout for the test files:
+  ```bash
+  # On Jetson (Docker Engine install: same apt-repo method as Session 03):
+  time docker pull ghcr.io/sdfinn/autonomous-fleet-testbed:latest   # record — SD baseline number
+  docker run --rm --network=host \
+    -v ~/autonomous-fleet-testbed:/repo -w /repo \
+    ghcr.io/sdfinn/autonomous-fleet-testbed:latest \
+    bash -c "source /ros2_ws/install/setup.bash && python3 -m pytest tests/ -v \
+      --ignore=tests/test_ros2_contracts.py --ignore=tests/test_navigation.py"
+  ```
+  > **Decision (2026-07-03 — bare metal + container hybrid):** bare metal stays the runner/
+  > build path for Session 14 (simplest first boot, and it produces the QEMU→native speedup
+  > headline). The stage-2 image is NOT retired — it's repurposed as this artifact-parity
+  > check. Whether the robot *drives* from a container is deferred until the JetPack version
+  > is confirmed on flash day: a Humble-native Jetson would strengthen the container-runtime
+  > case (Jazzy everywhere via the image); a Jazzy-native Jetson weakens it (bare metal is
+  > simpler and distro-identical anyway). If the container ever drives hardware it needs
+  > `--network=host` (DDS) plus `--device` passthrough for the serial/lidar ports.
+
 - [ ] **Register Jetson as GHA self-hosted runner**:
   ```bash
   # On Jetson — same flow as Session 10 but with arm64 labels:
@@ -3044,9 +3081,11 @@ ros2 topic echo /robot_001/amcl_pose
         run: echo "arm64 native build at $(date)" >> reports/session14_timings.txt
   ```
 
-  > **Gotcha:** Remove (or comment out) the Docker buildx steps that ran QEMU emulation
-  > — the Jetson native runner makes them obsolete. Keep the Dockerfile in the repo for
-  > reference but the CI no longer needs it for the arm64 build job.
+  > **Gotcha (amended 2026-07-03):** The Jetson native runner replaces QEMU for the *build*
+  > job, but stage-2's image build is NOT obsolete — the artifact-parity step above depends
+  > on stage-2 continuing to push the arm64 image to GHCR. Keep stage-2 producing the image
+  > (natively on the Jetson runner now, so it should drop from ~24 min to minutes); what goes
+  > away is only the QEMU emulation, not the Dockerfile or the image.
 
 - [ ] **Push and record the speedup**:
   ```bash
@@ -3087,6 +3126,13 @@ ros2 topic echo /robot_001/amcl_pose
 > nav missions, measure the actual robot and update `urdf/ugv_pt.urdf.xacro` to match:
 > body dimensions, wheel_radius, wheel_separation. Reference:
 > [Waveshare UGV-PT spec sheet](https://www.waveshare.com/ugv-pt.htm).
+>
+> **Same code, same topics — but expect a param-tuning pass (2026-07-03):** "the brain code
+> doesn't change" is true for *code*, not *parameters*. `nav2_params.yaml` was tuned against
+> sim physics; real wheel slip, lidar noise, and motor response will likely need RPP
+> speed/accel and costmap adjustments. Budget time for this and don't treat a first-run nav
+> failure as a code bug — walk the systematic-debugging path: drivers verified → TF tree
+> clean → localization converged → then look at nav params.
 
 ### Prerequisites
 - Sessions 10–14 complete
@@ -3095,6 +3141,19 @@ ros2 topic echo /robot_001/amcl_pose
 - Real bedroom clear enough to drive the robot safely for SLAM mapping
 
 ### Steps
+
+- [ ] **Bring up the hardware driver layer FIRST (gap identified 2026-07-03)** — nothing
+  earlier in the plan provides `/robot_001/cmd_vel → wheels`, wheel odometry, or
+  `/robot_001/scan` on real hardware; every step below silently assumes they exist. The
+  UGV-PT's motor board is an ESP32 speaking JSON-over-serial to the Jetson.
+  - Evaluate Waveshare's `ugv_ws` ROS2 workspace (github.com/waveshareteam) before writing
+    anything — it may cover base driver + lidar out of the box.
+  - Only if it doesn't fit: write a thin driver node (cmd_vel → serial commands;
+    serial feedback → `/robot_001/odom` + odom TF; lidar driver → `/robot_001/scan`).
+    Remember the TF architecture rules from CLAUDE.md: unprefixed frame names, `/robot_001/`
+    topic namespace.
+  - **Verify before proceeding:** `ros2 topic hz /robot_001/odom` and `/robot_001/scan`
+    both report, and teleop_twist_keyboard physically drives the wheels.
 
 - [ ] **Build a real-room SLAM map** — drive the robot around the room once while
   SLAM Toolbox records the map:
@@ -3244,6 +3303,34 @@ ros2 topic echo /robot_001/amcl_pose
 - Advanced mission types: natural language mission → Claude generates goal sequence →
   robot executes → results fed back to Claude for next iteration
 - Log real-world navigation videos + telemetry for portfolio/demo
+
+### Going untethered — systemd autostart (decision 2026-07-03: deferred out of R1)
+
+r1-complete is achievable entirely over SSH (Session 15's smoke test, nav goal, and
+sim-to-real comparison all run remotely). True autonomy — flip the power switch, robot boots
+into nav with no monitor/keyboard/SSH — is this item:
+
+- systemd units on the Jetson: one for the base+lidar driver bringup (Session 15's driver
+  layer), one for `robot_launch.py` (Nav2). Order them with `After=`/`Requires=` (drivers
+  before Nav2); restart policy `on-failure`.
+- **Non-interactive shell gotcha** (same one as the Session 10 runner service): systemd units
+  don't read `.bashrc` — source ROS2 + workspace overlay explicitly in an `ExecStart` wrapper
+  script.
+- Acceptance test: power-cycle the robot headless; it localizes and accepts a
+  `navigate_to_pose` goal sent from the workstation.
+
+### NVMe SSD migration (decision 2026-07-03: R1 runs on MicroSD)
+
+- Reflash to NVMe via SDK Manager (recovery mode, USB-C OTG), then re-run the Session 14
+  storage baseline: apt/ROS2 install time, `colcon build` time, `docker pull` time, CI job
+  wall time.
+- Publish the SD-vs-NVMe before/after table in BLUEPRINT's decisions log — second
+  "measured, marketed" number after QEMU→native.
+- Trade-off to know going in: an SD card can be re-flashed from any PC with a card reader;
+  wiping NVMe requires recovery mode + SDK Manager. The "golden image" quick-restore
+  convenience goes away.
+- **Becomes mandatory (not optional) if the R2 leader-node role lands** — central telemetry
+  logging plus a fleet DB on the Jetson is sustained-write duty a MicroSD card can't take.
 
 ### Deferred Nav2 capability (from Session 11/12 Isaac debugging)
 
