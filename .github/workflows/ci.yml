@@ -7,6 +7,28 @@ on:
     branches: [main]
 
 jobs:
+  changes:
+    # Detects whether this push touches anything that actually affects the arm64 Docker image
+    # (see Dockerfile — it only ever COPYs Dockerfile itself, requirements-ci.txt, and src/).
+    # A docs-only push (BLUEPRINT.md, Release1Todo.md, CLAUDE.md, etc.) has no reason to pay
+    # stage-2-arm64's ~24-29 min QEMU cost — even running in parallel with stage-3/4, the
+    # overall workflow run doesn't show "complete" until every job finishes, including the
+    # slowest one. Skipping it entirely for docs-only changes gets the whole run back to ~4-5
+    # minutes instead of waiting on an irrelevant arm64 rebuild.
+    runs-on: ubuntu-latest
+    outputs:
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            docker:
+              - 'Dockerfile'
+              - 'requirements-ci.txt'
+              - 'src/**'
+
   stage-0-requirements:
     runs-on: ubuntu-latest
     steps:
@@ -91,7 +113,8 @@ jobs:
 
   stage-2-arm64:
     runs-on: ubuntu-latest
-    needs: stage-1-quality
+    needs: [stage-1-quality, changes]
+    if: needs.changes.outputs.docker == 'true'
     permissions:
       contents: read
       packages: write
