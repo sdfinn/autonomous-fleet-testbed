@@ -79,7 +79,16 @@ docker buildx build --platform linux/arm64 \
 - `requirements.txt` is a full pip freeze of the local ROS2 venv — NOT for CI use. Use `requirements-ci.txt` in CI jobs.
 - DB path env var is `FLEET_DB` (default: `reports/fleet_runs.db`) — used by telemetry_logger, validate_telemetry, ai_test_generator, dashboard
 - `tests/test_ros2_contracts.py` requires a live ROS2 environment — always `--ignore` it in local pytest runs
-- CI stage-0 exits with code 1 intentionally (missing Session 10 tests). `continue-on-error: true` is in place; remove it in Session 10.
+- **CI stage-0's traceability gate has `continue-on-error: true` — this is a live, ongoing gap,
+  not stale.** Session 10 added `test_navigation.py`, but 2 of its 3 test function names never
+  matched `requirements/traceability.yaml`'s placeholder names (fixed in Session 11/12: BR-01/
+  BR-10 → `test_navigation_succeeds`, BR-02 → `test_no_collision`). BR-03 (recovery behavior)
+  has no test at all — recovery is genuinely broken (see "Recovery behaviors" in
+  `Release1Todo.md` Session 16+), so this isn't a naming fix, it's a real missing capability.
+  Remove `continue-on-error` only once BR-03 has an actual test. Until then: this gate silently
+  went from "intentionally red" to "actually blocking every downstream CI stage" once someone
+  removed `continue-on-error` without the underlying gaps being fixed — check `gh run list`
+  occasionally to make sure stage-3/stage-4 are still actually running, not skipped.
 
 ## Nav2 Launch Gotchas (Session 10+)
 - `gz sim` WITHOUT `-s` launches a GUI that crashes on this machine (snap/glibc libpthread conflict)
