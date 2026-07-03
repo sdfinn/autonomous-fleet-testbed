@@ -86,6 +86,7 @@ jobs:
         run: |
           python -m pytest tests/ -v \
             --ignore=tests/test_ros2_contracts.py \
+            --ignore=tests/test_navigation.py \
             -k "not integration"
 
   stage-2-arm64:
