@@ -134,7 +134,13 @@ jobs:
   stage-3-gazebo:
     name: "Stage 3 — Gazebo Simulation Navigation"
     runs-on: [self-hosted, x86, gpu, rtx5080]
-    needs: stage-2-arm64
+    # Was needs: stage-2-arm64 — that forced every push to wait through a ~20+ min emulated
+    # QEMU build before the sim tests even started, even though arm64 and the sim stages are
+    # unrelated (different runners, no shared artifact). stage-2 hasn't caught a genuinely
+    # arm64-specific bug since it was set up (Session 08's two catches were both generic
+    # Docker/CI-config issues, not architecture-specific) — keep it running for that modest,
+    # occasional value, but stop letting it gate iteration speed on everything else.
+    needs: stage-1-quality
     timeout-minutes: 30
     env:
       DISPLAY: ':0'
