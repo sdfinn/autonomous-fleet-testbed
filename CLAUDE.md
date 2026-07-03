@@ -79,6 +79,14 @@ docker buildx build --platform linux/arm64 \
 - `requirements.txt` is a full pip freeze of the local ROS2 venv — NOT for CI use. Use `requirements-ci.txt` in CI jobs.
 - DB path env var is `FLEET_DB` (default: `reports/fleet_runs.db`) — used by telemetry_logger, validate_telemetry, ai_test_generator, dashboard
 - `tests/test_ros2_contracts.py` requires a live ROS2 environment — always `--ignore` it in local pytest runs
+- `tests/test_navigation.py` also requires a live ROS2 environment (`import rclpy` at module
+  level) plus a running Gazebo/Isaac + Nav2 stack — same treatment as `test_ros2_contracts.py`
+  above. It was added in Session 10 but never added to `stage-1-quality`'s `--ignore` list in
+  `ci.yml`, which silently broke that stage on a bare `ubuntu-latest` runner (no ROS2 at all)
+  until Session 11/12 caught it. It's correctly run as an integration test in
+  `stage-3-gazebo`/`stage-4-isaac`, where live ROS2 actually exists. If a new test file imports
+  `rclpy` at module level, it needs the same `--ignore` treatment in `stage-1-quality` — this
+  has now bitten twice.
 - **CI stage-0's traceability gate has `continue-on-error: true` — this is a live, ongoing gap,
   not stale.** Session 10 added `test_navigation.py`, but 2 of its 3 test function names never
   matched `requirements/traceability.yaml`'s placeholder names (fixed in Session 11/12: BR-01/
