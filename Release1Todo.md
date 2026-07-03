@@ -2949,14 +2949,13 @@ ros2 topic echo /robot_001/amcl_pose
 > **Hardware dependency:** This session requires the Jetson Orin Nano Super Developer Kit
 > to be physically on hand. Sessions 10–13 can be completed while waiting for hardware.
 >
-> **JetPack / ROS2 compatibility note (reconciled 2026-07-03):** BLUEPRINT.md's verified
-> compatibility matrix targets **JetPack 7.2** (L4T 39.2 = Ubuntu 24.04 → ROS2 **Jazzy**
-> natively — same distro as the x86 workstation and the stage-2 Docker image). An earlier
-> version of this note assumed JetPack 6.x (Ubuntu 22.04 → Humble); that only applies if
-> the board can't take JetPack 7.x. **Verify on flash day:** `cat /etc/os-release` after
-> first boot. If you do land on 22.04/Humble, the stage-2 Docker image (Jazzy, arm64)
-> becomes the way to keep one distro everywhere — the container-runtime question deferred
-> in the 2026-07-03 BLUEPRINT decision would then tip toward "yes."
+> **JetPack / ROS2 note (2026-07-03):** Plan is **JetPack 7.2** (L4T 39.2 = Ubuntu 24.04 →
+> ROS2 **Jazzy**) — supported on Orin Nano and verified in BLUEPRINT's compatibility matrix.
+> That makes the entire chain one distro: x86 workstation (24.04/Jazzy), stage-2 Docker image
+> (`ros:jazzy-ros-base` = 24.04/Jazzy), Jetson (24.04/Jazzy). **There is no Humble anywhere
+> in the pipeline** — an earlier version of this note assumed JetPack 6.x (22.04/Humble),
+> which predates JetPack 7.x Orin Nano support and is obsolete. Flash-day sanity check:
+> `cat /etc/os-release` should report 24.04; in SDK Manager select JetPack 7.2, not 6.x.
 
 ### Prerequisites
 - Sessions 10–13 complete
@@ -3043,11 +3042,12 @@ ros2 topic echo /robot_001/amcl_pose
   > **Decision (2026-07-03 — bare metal + container hybrid):** bare metal stays the runner/
   > build path for Session 14 (simplest first boot, and it produces the QEMU→native speedup
   > headline). The stage-2 image is NOT retired — it's repurposed as this artifact-parity
-  > check. Whether the robot *drives* from a container is deferred until the JetPack version
-  > is confirmed on flash day: a Humble-native Jetson would strengthen the container-runtime
-  > case (Jazzy everywhere via the image); a Jazzy-native Jetson weakens it (bare metal is
-  > simpler and distro-identical anyway). If the container ever drives hardware it needs
-  > `--network=host` (DDS) plus `--device` passthrough for the serial/lidar ports.
+  > check. Since the Jetson is natively 24.04/Jazzy (JetPack 7.2), identical to the image,
+  > running the robot *from* a container buys environment pinning and rollback — not distro
+  > compatibility. So: **bare metal robot runtime is the R1 default**; container runtime is
+  > an R2+ option (pairs with the RaaS/OTA framing in BLUEPRINT's What's Next). If the
+  > container ever drives hardware it needs `--network=host` (DDS) plus `--device`
+  > passthrough for the serial/lidar ports.
 
 - [ ] **Register Jetson as GHA self-hosted runner**:
   ```bash
