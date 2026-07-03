@@ -300,6 +300,23 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   recovery, accurate footprint planning, multi-robot launch parameterization), and two hard-won
   ROS2/Nav2 launch gotchas are in `Release1Todo.md` Session 16+ and `CLAUDE.md`.
   **Process note:** DDS TRANSIENT_LOCAL caches Isaac's full TF history — must kill Isaac AND Nav2 together between runs. Start Nav2 within ~5s of Isaac ready. See CLAUDE.md "Isaac GUI Nav Test — Terminal Procedure".
+- **2026-07-03 — First fully green, hands-off CI run of the Isaac nav test (Session 11/12).**
+  `stage-4-isaac` rewritten from a sensor-rate smoke test to the real BR-01/02/10 headless
+  navigation test (verified manually twice first — clean pass both times, no headless-specific
+  bugs). Along the way, fixed two unrelated pre-existing CI blockers that had silently been
+  failing every push since ~July 1 (`requirements/traceability.yaml` referencing test names
+  that didn't match Session 10's actual implementation; `test_navigation.py` never added to
+  `stage-1-quality`'s `--ignore` list, so it failed `import rclpy` on the bare hosted runner).
+  Also decoupled `stage-3-gazebo` from `stage-2-arm64` (they don't share a runner or an
+  artifact, so there was no reason for the sim tests to wait ~20+ min on an emulated arm64
+  build that hasn't caught a genuinely architecture-specific bug since Session 08 setup — see
+  `stage-2-arm64`'s job comment in `ci.yml`). Full green run, all timings from the same CI run
+  (`gh run 28630844951`):
+  - **Stage 2 arm64 (QEMU, cold build):** 24m31s — consistent with the Session 08 baseline (~23m43s), now running in parallel instead of gating the sim stages
+  - **Stage 3 Gazebo (headless, cold sim/Nav2 start → all 3 tests passing):** 52s
+  - **Stage 4 Isaac Sim (headless, cold sim/Nav2 start → all 3 tests passing):** 100s — ~2x Gazebo, but manual testing showed the actual navigation portion is comparably fast (~13–28s) once both are already running; the gap is Isaac's own startup overhead (extension loading, URDF import), not slower navigation
+  - Both stage-3/stage-4 timers start after `colcon build`, so they're apples-to-apples with each other (not full job time from checkout)
+  - This is the baseline Session 14/15 will compare real Jetson Orin Nano hardware timing against — not a sim-engine-vs-real-hardware comparison on the same platform, since Isaac Sim itself doesn't run on Jetson's embedded GPU at all (see Release1Todo.md Session 16+)
 - **2026-07-01 — Session 11 complete (Stage 4 — Isaac Sim bare metal, ROS2 bridge + scan working).** Isaac Sim 6.0.1.0 installed via pip (~20 GB). Key findings:
   - **RTX lidar (RTX render product) does not work headless.** `IsaacSensorCreateRtxLidar` creates an `OmniLidar` prim, but no sensor-specific render product is created in headless mode — only the generic `/Render/OmniverseKit/HydraTextures/Replicator` product exists. `ROS2RtxLidarHelper` OmniGraph node can't produce scan data from it.
   - **Solution: `RotatingLidarPhysX`** (PhysX raycasting, `isaacsim.sensors.physx`). Works natively headless, no render product needed. Frame key is `'linear_depth'`. Published via rclpy `sensor_msgs/LaserScan` in the simulation loop.
