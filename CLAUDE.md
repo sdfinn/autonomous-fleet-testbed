@@ -61,7 +61,10 @@ docker buildx build --platform linux/arm64 \
 - `config/`         — drift_config.yaml
 - `robot_profiles/` — Per-robot capability YAML
 - `requirements/`   — Traceability matrix and requirement specs
-- `reports/history/`— CI run JSON reports (drift detection reads from here)
+- `reports/fleet_runs.db` — SQLite telemetry store (`FLEET_DB` env var) — the single source
+  all tools read/write (telemetry_logger, baseline_monitor drift detection, dashboard,
+  generate_test_report, validate_telemetry). `reports/history/` is empty/unused — the
+  JSON-per-run idea was dropped in the 2026-07-03 Session 12 review.
 - `.github/workflows/ci.yml` — 6-stage CI pipeline
 - `GazeboCommands.md` — Gazebo viewer navigation cheat sheet
 
