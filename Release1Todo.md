@@ -2526,89 +2526,98 @@ ros2 topic echo /robot_001/amcl_pose
 - [ReportLab PDF generation](https://docs.reportlab.com/reportlab/userguide/ch1_intro/) — generating PDFs programmatically
 - [Pandera data validation](https://pandera.readthedocs.io/en/stable/) — schema validation for the telemetry JSON
 
+> **Session reviewed against actual code 2026-07-03 — original text was stale.** It described
+> a JSON-file-per-run architecture (`reports/history/<run_id>.json`), but all five migrated
+> tools (`telemetry_logger`, `generate_test_report`, `baseline_monitor`, `validate_telemetry`,
+> `dashboard/app.py`) are already built on **SQLite** — `reports/fleet_runs.db` via the
+> `FLEET_DB` env var — and *nothing* in the repo reads `reports/history/` (it's empty).
+> Decision: SQLite stays the single source of truth (Session 13's `ai_test_generator` also
+> depends on it); the JSON-per-run idea is dropped. The steps below are rewritten to match.
+
 ### Prerequisites
-- Sessions 10 and 11 complete — at least one real run report in `reports/history/`
+- Sessions 10 and 11 complete — nav test passes locally against Gazebo and Isaac.
+  (No run data exists yet: `reports/fleet_runs.db` is created by this session's wiring —
+  `test_navigation.py` currently never calls `telemetry_logger`.)
 - `pip install streamlit reportlab pandera` in fleet-env (already in requirements.txt)
 
 ### Steps
 
-- [ ] **Complete `tools/telemetry_logger.py`** — writes a structured JSON file per CI run to
-  `reports/history/<run_id>.json`. The run_id is `YYYYMMDD_HHMMSS` or the GHA run number.
+- [ ] **Add a `sim_engine` column to `tools/telemetry_logger.py`** — the schema has
+  `runner_type` (`qemu`/`jetson`/`local`) but nothing distinguishing gazebo/isaac/real runs,
+  which the dashboard, drift detection, and Session 15's sim-to-real comparison all need.
+  The logger already has a `_ensure_run_columns()` migration helper — add `sim_engine TEXT`
+  there so existing DBs upgrade in place.
 
-  Key schema fields (match `tests/test_baseline.py` expectations):
-  ```json
-  {
-    "run_id": "20260629_143022",
-    "timestamp": "2026-06-29T14:30:22Z",
-    "robot_id": "robot_001",
-    "nav_success_rate": 1.0,
-    "mean_position_error_m": 0.08,
-    "odom_hz": 50.1,
-    "scan_hz": 10.0,
-    "collision_count": 0,
-    "mission_duration_s": 47.3,
-    "sim_engine": "gazebo"
-  }
-  ```
+- [ ] **Wire the telemetry hook — the actual end-to-end link this session is about.**
+  Call `telemetry_logger.log_run(...)` at the end of each `test_navigation.py` test run
+  (pass/fail alike — failed runs are data too), with `sim_engine` set from an env var
+  (`SIM_ENGINE=gazebo|isaac|real`) so the same test logs correctly from stage-3, stage-4,
+  and later the real robot. Run the nav test once and confirm `reports/fleet_runs.db`
+  appears with one row in `runs`.
 
-  Call `telemetry_logger.log_run(metrics, sim_engine='gazebo')` at the end of
-  `test_navigation.py` to write the file automatically on each test run.
-
-- [ ] **Complete `tools/generate_test_report.py`** — reads all JSON files from
-  `reports/history/`, produces a PDF summary with run table + drift trend chart:
-
-  ```python
-  # Key output: reports/latest_report.pdf
-  # Sections: Run Summary table, Position Error trend (matplotlib), Pass/Fail per run
-  ```
-
-  Test locally:
+- [ ] **Verify `tools/generate_test_report.py` against real data** — it already reads the
+  DB (`load_data()` via `FLEET_DB`) and produces `reports/latest_report.pdf` with pass/fail
+  chart + position scatter. It has never run against real rows — expect column/None
+  surprises from the migrated code (remember: migrated tools are reference material, not
+  gospel). Fix what breaks; add `sim_engine` to the run table so gazebo/isaac rows are
+  distinguishable.
   ```bash
   python tools/generate_test_report.py
-  # Should produce reports/latest_report.pdf — open with a PDF viewer to verify
   evince reports/latest_report.pdf
   ```
 
-- [ ] **Complete `dashboard/app.py`** — Streamlit app with three tabs:
-
-  - **Fleet Overview** — table of all runs, pass/fail, position error trend line chart
-  - **Drift Alerts** — runs where any metric breached `config/drift_config.yaml` thresholds
-  - **Run Detail** — select a run_id and see all metrics for that run
-
-  Test locally:
+- [ ] **Verify `dashboard/app.py` against real data** — it already exists with **five** tabs
+  (not the three originally planned; the extra tabs anticipate Session 13's AI scenarios).
+  Confirm each tab renders with real runs, surface `sim_engine` in the overview, and check
+  the drift-alerts view against `config/drift_config.yaml` thresholds:
   ```bash
   streamlit run dashboard/app.py
-  # Opens browser at localhost:8501 — verify all three tabs render with real data
+  # localhost:8501 — every tab renders real data without tracebacks
   ```
 
-- [ ] **Wire the Reports CI job** — add to `ci.yml` after `isaac-validation`:
+- [ ] **Run `tools/validate_telemetry.py`** — the pandera schema gate over the DB. It's part
+  of the same chain and has also never seen real rows:
+  ```bash
+  python tools/validate_telemetry.py && echo VALID
+  ```
+
+- [ ] **Wire the `stage-5-reports` CI job** (original snippet was stale twice over: it
+  referenced a job name that doesn't exist — it's `stage-4-isaac` now — and it ran on
+  `ubuntu-latest`, where a fresh checkout has **no run data**: the nav tests execute on the
+  self-hosted runner and write telemetry to its local disk; a hosted job would PDF an empty
+  database. Decision 2026-07-03: run stage-5 on the self-hosted runner with `FLEET_DB`
+  pointed at a persistent path *outside* the job workspace, so history accumulates across
+  CI runs — drift detection needs cross-run history, which per-run artifacts can't give):
 
   ```yaml
-  reports-dashboard:
-    runs-on: ubuntu-latest
-    needs: isaac-validation
+  stage-5-reports:
+    runs-on: [self-hosted, x86, gpu, rtx5080]
+    needs: stage-4-isaac
+    env:
+      FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install -r requirements-ci.txt
       - name: Generate report
-        run: python tools/generate_test_report.py
+        run: |
+          mkdir -p /home/mike/fleet-ci-data
+          python tools/generate_test_report.py
+      - name: Validate telemetry schema
+        run: python tools/validate_telemetry.py
       - name: Upload PDF report
         uses: actions/upload-artifact@v4
         with:
           name: test-report-${{ github.run_number }}
           path: reports/latest_report.pdf
-      - name: Upload JSON history
-        uses: actions/upload-artifact@v4
-        with:
-          name: run-history-${{ github.run_number }}
-          path: reports/history/
   ```
 
-- [ ] **Test `baseline_monitor.py`** — generate 5+ run JSON files (run the nav test five
-  times or copy/tweak existing ones), then:
+  Also set `FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db` on the pytest steps in
+  `stage-3-gazebo` and `stage-4-isaac` so their nav-test runs log to the same persistent DB
+  (with `SIM_ENGINE=gazebo` / `SIM_ENGINE=isaac` respectively).
+
+- [ ] **Test `baseline_monitor.py`** — needs 5+ rows in the `runs` table to establish a
+  baseline (run the nav test five times, or insert tweaked copies of a real row via
+  sqlite3), then inject one bad run (e.g. `mean_position_error` 10x normal) and confirm
+  it's flagged:
   ```bash
   python tools/baseline_monitor.py
   # Should print drift summary — any metric outside drift_config.yaml thresholds flagged
@@ -2622,9 +2631,10 @@ ros2 topic echo /robot_001/amcl_pose
   ```
 
 ### Session Complete When
-- `streamlit run dashboard/app.py` shows real run data in all three tabs
-- `reports/latest_report.pdf` generates from real run history
-- `reports-dashboard` CI job green, PDF artifact downloadable from GitHub Actions run
+- `test_navigation.py` logs a row to `reports/fleet_runs.db` on every run, with `sim_engine` set
+- `streamlit run dashboard/app.py` shows real run data in all five tabs
+- `reports/latest_report.pdf` generates from real DB rows
+- `stage-5-reports` CI job green, PDF artifact downloadable from the GitHub Actions run
 - `baseline_monitor.py` detects a simulated drift breach when you inject a bad run
 
 ---
@@ -3215,7 +3225,7 @@ ros2 topic echo /robot_001/amcl_pose
   ```yaml
   real-robot-deploy:
     runs-on: ubuntu-latest
-    needs: reports-dashboard
+    needs: stage-5-reports
     if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
@@ -3258,7 +3268,8 @@ ros2 topic echo /robot_001/amcl_pose
   print(r.send_goal(1.0, 1.0))
   r.destroy_node(); rclpy.shutdown()
   "
-  # telemetry_logger.py writes a real run JSON to reports/history/ with sim_engine='real'
+  # telemetry_logger logs the run to the DB (FLEET_DB) with sim_engine='real'
+  # (SQLite is the single telemetry store — see Session 12's 2026-07-03 review note)
 
   # Compare:
   python tools/sim_vs_real_comparison.py
