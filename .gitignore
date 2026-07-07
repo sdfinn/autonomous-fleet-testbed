@@ -25,6 +25,9 @@ reports/*.html
 # CI-generated traceability report (regenerated each run)
 reports/traceability_latest.json
 
+# Agentic loop output (regenerated each run)
+reports/mission_plan.json
+
 # Generated maps (from SLAM)
 maps/*.pgm
 maps/*.yaml
