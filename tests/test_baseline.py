@@ -1,4 +1,3 @@
-import sqlite3
 import pytest
 
 from tools.baseline_monitor import check_latest_run, check_run
@@ -26,7 +25,7 @@ def _insert(
     odom_hz_mean=50.0,
     camera_hz_mean=20.0,
 ):
-    run_id = log_run(
+    return log_run(
         scenario="baseline_test",
         steps=steps,
         final_x=1.5,
@@ -34,17 +33,12 @@ def _insert(
         result=result,
         step_log=[],
         db_path=db_path,
+        nav_success_rate=nav_success_rate,
+        mean_position_error=mean_position_error,
+        collision_rate=collision_rate,
+        odom_hz_mean=odom_hz_mean,
+        camera_hz_mean=camera_hz_mean,
     )
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE runs SET nav_success_rate=?, mean_position_error=?, collision_rate=?,"
-        " odom_hz_mean=?, camera_hz_mean=? WHERE id=?",
-        (nav_success_rate, mean_position_error, collision_rate, odom_hz_mean,
-         camera_hz_mean, run_id),
-    )
-    conn.commit()
-    conn.close()
-    return run_id
 
 
 def _seed_baseline(db_path):

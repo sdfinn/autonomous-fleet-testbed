@@ -64,9 +64,9 @@ def make_position_scatter(runs) -> io.BytesIO:
             c=_RESULT_COLORS.get(result, "#aaaaaa"),
             label=result, alpha=0.7, s=40,
         )
-    # Goal zone — living room coordinates (x: 0.76–3.05 m, y: 0.56–1.93 m)
+    # Goal zone — bedroom floor centre (0.0, 3.7), +/- Nav2's xy_goal_tolerance (0.15 m)
     rect = plt.Rectangle(
-        (0.76, 0.56), 2.29, 1.37,
+        (-0.15, 3.55), 0.30, 0.30,
         linewidth=2, edgecolor="blue", facecolor="none", linestyle="--",
     )
     ax.add_patch(rect)

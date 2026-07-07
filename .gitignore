@@ -38,6 +38,9 @@ maps/*.yaml
 .vscode/settings.json
 .idea/
 
+# Playwright MCP tool scratch output
+.playwright-mcp/
+
 # OS
 .DS_Store
 Thumbs.db

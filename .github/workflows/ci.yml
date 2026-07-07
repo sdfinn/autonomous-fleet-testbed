@@ -168,6 +168,10 @@ jobs:
     env:
       DISPLAY: ':0'
       RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      # Persistent path outside the job workspace — history accumulates across CI runs,
+      # which drift detection (stage-5-reports) needs.
+      FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
+      SIM_ENGINE: gazebo
     steps:
       - uses: actions/checkout@v4
 
@@ -217,6 +221,8 @@ jobs:
       OMNI_KIT_ACCEPT_EULA: "YES"
       RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
       PYTHONUNBUFFERED: "1"
+      FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
+      SIM_ENGINE: isaac
     steps:
       - uses: actions/checkout@v4
 
@@ -293,3 +299,40 @@ jobs:
           pkill -9 -f "isaac_bedroom_gui.py" 2>/dev/null || true
           rm -f /tmp/isaac_ci_pid /tmp/nav2_ci_pid
           exit 0
+
+  stage-5-reports:
+    name: "Stage 5 — Reports + Dashboard"
+    # Runs on the self-hosted runner, not ubuntu-latest: stage-3/4's nav tests write
+    # telemetry to this runner's local disk (FLEET_DB above), so a hosted job's fresh
+    # checkout would have no run data — it would PDF an empty database.
+    runs-on: [self-hosted, x86, gpu, rtx5080]
+    needs: stage-4-isaac
+    env:
+      FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
+      REPORT_PATH: reports/latest_report.pdf
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure persistent telemetry dir exists
+        run: mkdir -p /home/mike/fleet-ci-data
+
+      - name: Generate report
+        run: |
+          source ~/fleet-env/bin/activate
+          python tools/generate_test_report.py
+
+      - name: Validate telemetry schema
+        run: |
+          source ~/fleet-env/bin/activate
+          python tools/validate_telemetry.py
+
+      - name: Check baseline drift
+        run: |
+          source ~/fleet-env/bin/activate
+          python tools/baseline_monitor.py
+
+      - name: Upload PDF report
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-${{ github.run_number }}
+          path: reports/latest_report.pdf

@@ -2542,82 +2542,75 @@ ros2 topic echo /robot_001/amcl_pose
 
 ### Steps
 
-- [ ] **Add a `sim_engine` column to `tools/telemetry_logger.py`** — the schema has
-  `runner_type` (`qemu`/`jetson`/`local`) but nothing distinguishing gazebo/isaac/real runs,
-  which the dashboard, drift detection, and Session 15's sim-to-real comparison all need.
-  The logger already has a `_ensure_run_columns()` migration helper — add `sim_engine TEXT`
-  there so existing DBs upgrade in place.
+- [x] **Add a `sim_engine` column to `tools/telemetry_logger.py`** — also added `robot_id`
+  (distinct from `robot_type`, which is the robot *model*/profile) — the specific unit
+  instance, e.g. `robot_001`. Not needed for this single-robot project, but keeps the schema
+  open for the next project's multi-robot fleet without a later migration. Both read from
+  `ROBOT_ID`/`SIM_ENGINE` env vars in the test fixture, defaulting to `robot_001`/`gazebo`.
 
-- [ ] **Wire the telemetry hook — the actual end-to-end link this session is about.**
-  Call `telemetry_logger.log_run(...)` at the end of each `test_navigation.py` test run
-  (pass/fail alike — failed runs are data too), with `sim_engine` set from an env var
-  (`SIM_ENGINE=gazebo|isaac|real`) so the same test logs correctly from stage-3, stage-4,
-  and later the real robot. Run the nav test once and confirm `reports/fleet_runs.db`
-  appears with one row in `runs`.
+- [x] **Wire the telemetry hook.** `log_run()`'s signature only took
+  `scenario/steps/final_x/final_y/result/step_log` — none of the "rate" metrics
+  (`nav_success_rate`, `mean_position_error`, etc.) despite those columns existing in the
+  schema; `test_baseline.py` worked around this with a manual post-insert `UPDATE`. Extended
+  `log_run()` with optional kwargs for all of them (backward compatible), and simplified
+  `test_baseline.py` to use the real API instead of the workaround.
+  `NavRunner`/`MetricsCollector` had no way to produce most of this data either — added an
+  `/robot_001/amcl_pose` subscription + wall-clock duration + step counter to `NavRunner`
+  (for position error / time-to-goal / steps), and a camera subscription to
+  `MetricsCollector` (for `camera_hz`, alongside existing odom/scan Hz). Wired one
+  `log_run()` call per pytest session in `test_navigation.py` (session-scoped fixture
+  teardown), combining all of it into a single row.
+  **Also found:** `log_run()` never called `init_db()` — it assumed the table already
+  existed, so pointing it at a fresh DB path threw `no such table: runs`. Fixed by having
+  `log_run()` call `init_db()` itself.
 
-- [ ] **Verify `tools/generate_test_report.py` against real data** — it already reads the
-  DB (`load_data()` via `FLEET_DB`) and produces `reports/latest_report.pdf` with pass/fail
-  chart + position scatter. It has never run against real rows — expect column/None
-  surprises from the migrated code (remember: migrated tools are reference material, not
-  gospel). Fix what breaks; add `sim_engine` to the run table so gazebo/isaac rows are
-  distinguishable.
+- [x] **Verify `tools/generate_test_report.py` against real data** — ran clean, but the
+  "Goal Zone" scatter rectangle was stale `isaac_project` living-room coordinates
+  (x: 0.76–3.05, y: 0.56–1.93) that don't match this project's bedroom goal at all — fixed
+  to the actual goal (0.0, 3.7) ± Nav2's `xy_goal_tolerance` (0.15 m). Also: the real output
+  filename is `reports/test_report.pdf` (the `REPORT_PATH` default), not
+  `reports/latest_report.pdf` as this doc and the CI snippet below assumed — set
+  `REPORT_PATH` explicitly in CI rather than change the tool's default.
   ```bash
   python tools/generate_test_report.py
   evince reports/latest_report.pdf
   ```
 
-- [ ] **Verify `dashboard/app.py` against real data** — it already exists with **five** tabs
-  (not the three originally planned; the extra tabs anticipate Session 13's AI scenarios).
-  Confirm each tab renders with real runs, surface `sim_engine` in the overview, and check
-  the drift-alerts view against `config/drift_config.yaml` thresholds:
+- [x] **Verify `dashboard/app.py` against real data** — five tabs confirmed via Playwright
+  against the real DB row. Added a `sim_engine` sidebar filter + Run Log column (matching
+  the existing `robot_type`/`runner_type` filters). Found two real bugs, both fixed:
+  the same stale-coordinates issue in the Telemetry tab's goal-zone rectangle (was
+  x0=1.0,x1=4.0,y0=-11.0,y1=-5.0 — nowhere near the bedroom), and a hard traceback in
+  Sensor Health from `num_frames`/`detections_per_frame_avg`/`class_distribution` —
+  leftover `isaac_project` YOLO object-detection columns that were never added to this
+  project's schema (unlike `lidar_min_range` etc., which are real). Wrapped both that query
+  and the `ai_scenarios` query (table doesn't exist until Session 13) in try/except,
+  matching the existing `load_ai_scenarios()` pattern, so they degrade to "no data yet"
+  instead of crashing the tab.
   ```bash
   streamlit run dashboard/app.py
   # localhost:8501 — every tab renders real data without tracebacks
   ```
 
-- [ ] **Run `tools/validate_telemetry.py`** — the pandera schema gate over the DB. It's part
-  of the same chain and has also never seen real rows:
+- [x] **Run `tools/validate_telemetry.py`** — caught the new `sim_engine`/`robot_id`
+  columns as schema drift (correctly — it hadn't been told about them yet). Added both to
+  `RunsModel` and `KNOWN_RUNS_COLS`. Clean exit 0 after.
   ```bash
   python tools/validate_telemetry.py && echo VALID
   ```
 
-- [ ] **Wire the `stage-5-reports` CI job** (original snippet was stale twice over: it
-  referenced a job name that doesn't exist — it's `stage-4-isaac` now — and it ran on
-  `ubuntu-latest`, where a fresh checkout has **no run data**: the nav tests execute on the
-  self-hosted runner and write telemetry to its local disk; a hosted job would PDF an empty
-  database. Decision 2026-07-03: run stage-5 on the self-hosted runner with `FLEET_DB`
-  pointed at a persistent path *outside* the job workspace, so history accumulates across
-  CI runs — drift detection needs cross-run history, which per-run artifacts can't give):
+- [x] **Wire the `stage-5-reports` CI job** on the self-hosted runner, `needs: stage-4-isaac`,
+  `FLEET_DB` + `REPORT_PATH` set at job level; added a `mkdir -p /home/mike/fleet-ci-data`
+  step since that directory doesn't exist yet on `mikeubuntu`. Also added `python
+  tools/baseline_monitor.py` as a step (checks the just-generated run against history — the
+  session's actual purpose, not just report/schema checks). Set `FLEET_DB` +
+  `SIM_ENGINE: gazebo`/`isaac` at the job-env level on `stage-3-gazebo`/`stage-4-isaac` so
+  their nav-test runs log to the same persistent DB.
 
-  ```yaml
-  stage-5-reports:
-    runs-on: [self-hosted, x86, gpu, rtx5080]
-    needs: stage-4-isaac
-    env:
-      FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
-    steps:
-      - uses: actions/checkout@v4
-      - name: Generate report
-        run: |
-          mkdir -p /home/mike/fleet-ci-data
-          python tools/generate_test_report.py
-      - name: Validate telemetry schema
-        run: python tools/validate_telemetry.py
-      - name: Upload PDF report
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-report-${{ github.run_number }}
-          path: reports/latest_report.pdf
-  ```
-
-  Also set `FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db` on the pytest steps in
-  `stage-3-gazebo` and `stage-4-isaac` so their nav-test runs log to the same persistent DB
-  (with `SIM_ENGINE=gazebo` / `SIM_ENGINE=isaac` respectively).
-
-- [ ] **Test `baseline_monitor.py`** — needs 5+ rows in the `runs` table to establish a
-  baseline (run the nav test five times, or insert tweaked copies of a real row via
-  sqlite3), then inject one bad run (e.g. `mean_position_error` 10x normal) and confirm
-  it's flagged:
+- [x] **Test `baseline_monitor.py`** — seeded 9 runs with realistic small variance around a
+  real captured row (in a scratch copy of the DB, not the real `reports/fleet_runs.db`),
+  injected one bad run (`mean_position_error` 10x normal). Correctly flagged: `sigma=122.0`
+  on `mean_position_error`, all other metrics OK.
   ```bash
   python tools/baseline_monitor.py
   # Should print drift summary — any metric outside drift_config.yaml thresholds flagged
@@ -2631,11 +2624,12 @@ ros2 topic echo /robot_001/amcl_pose
   ```
 
 ### Session Complete When
-- `test_navigation.py` logs a row to `reports/fleet_runs.db` on every run, with `sim_engine` set
-- `streamlit run dashboard/app.py` shows real run data in all five tabs
-- `reports/latest_report.pdf` generates from real DB rows
-- `stage-5-reports` CI job green, PDF artifact downloadable from the GitHub Actions run
-- `baseline_monitor.py` detects a simulated drift breach when you inject a bad run
+- [x] `test_navigation.py` logs a row to `reports/fleet_runs.db` on every run, with `sim_engine` set
+- [x] `streamlit run dashboard/app.py` shows real run data in all five tabs
+- [x] `reports/test_report.pdf` generates from real DB rows (see filename note above)
+- [ ] `stage-5-reports` CI job green, PDF artifact downloadable from the GitHub Actions run
+      — wired but not yet observed on a real CI push
+- [x] `baseline_monitor.py` detects a simulated drift breach when you inject a bad run
 
 ---
 
