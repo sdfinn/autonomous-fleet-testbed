@@ -3005,9 +3005,13 @@ ros2 topic echo /robot_001/amcl_pose
 
 ### Recommended Reading
 - [NVIDIA SDK Manager](https://developer.nvidia.com/sdk-manager) — the flashing tool; install on Ubuntu host
-- [JetPack 6.x release notes](https://developer.nvidia.com/embedded/jetpack-sdk-62) — check ROS2 Jazzy compatibility; JetPack 6.x = Ubuntu 22.04 base on Jetson, may need ROS2 Humble instead
+- [JetPack 7.x release notes](https://developer.nvidia.com/embedded/jetpack) — confirm Orin Nano Super support for the JetPack 7.2 release specifically before flash day (linked page covers the JetPack family generally, not a version-specific archive URL)
 - [Self-hosted runners: adding from org](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners) — same flow as Session 10 but on the Jetson
 
+> **Session reviewed against actual code 2026-07-06** — the flash step and CI job snippet
+> below were stale (see corrections inline). Not yet re-verified against real hardware or
+> current NVIDIA downloads — see "Double-check before starting" below.
+>
 > **Hardware dependency:** This session requires the Jetson Orin Nano Super Developer Kit
 > to be physically on hand. Sessions 10–13 can be completed while waiting for hardware.
 >
@@ -3015,9 +3019,14 @@ ros2 topic echo /robot_001/amcl_pose
 > ROS2 **Jazzy**) — supported on Orin Nano and verified in BLUEPRINT's compatibility matrix.
 > That makes the entire chain one distro: x86 workstation (24.04/Jazzy), stage-2 Docker image
 > (`ros:jazzy-ros-base` = 24.04/Jazzy), Jetson (24.04/Jazzy). **There is no Humble anywhere
-> in the pipeline** — an earlier version of this note assumed JetPack 6.x (22.04/Humble),
-> which predates JetPack 7.x Orin Nano support and is obsolete. Flash-day sanity check:
-> `cat /etc/os-release` should report 24.04; in SDK Manager select JetPack 7.2, not 6.x.
+> in the pipeline.** Flash-day sanity check: `cat /etc/os-release` should report 24.04; in
+> SDK Manager select JetPack 7.2, not 6.x (the flash step below said 6.x until this review —
+> that directly contradicted this same note and would have flashed the wrong OS/ROS2 distro
+> entirely if followed as originally written).
+>
+> **Double-check before starting:** confirm JetPack 7.2 is still SDK Manager's selectable
+> option for Orin Nano *Super* specifically (vs. the plain Orin Nano) — this plan has not
+> been re-verified against NVIDIA's current downloads since the 2026-07-03 decision.
 
 ### Prerequisites
 - Sessions 10–13 complete
@@ -3037,10 +3046,11 @@ ros2 topic echo /robot_001/amcl_pose
 
 - [ ] **Flash JetPack via SDK Manager**:
   - Connect Jetson in recovery mode (hold RECOVERY button, press POWER)
-  - SDK Manager → select Jetson Orin Nano → latest JetPack (6.x)
+  - SDK Manager → select Jetson Orin Nano → **JetPack 7.2** (not 6.x — see decision note above)
   - Select: Jetson Linux (BSP) + ROS-related components if offered
   - Flash — takes 20–40 min
   - On completion: Jetson boots to Ubuntu desktop
+  - Verify: `cat /etc/os-release` reports 24.04
 
 - [ ] **Storage: flash to MicroSD and record a baseline (decision 2026-07-03):**
   R1 boots from MicroSD (the dev kit default). NVMe SSD migration is a Session 16+ item —
@@ -3060,7 +3070,8 @@ ros2 topic echo /robot_001/amcl_pose
   ssh mike@<jetson-ip>
   sudo apt update && sudo apt upgrade -y
 
-  # Install ROS2 (Humble on Ubuntu 22.04 / Jazzy on Ubuntu 24.04 — match your JetPack):
+  # Install ROS2 Jazzy — JetPack 7.2 = Ubuntu 24.04, same distro as the workstation and
+  # the stage-2 Docker image, no Humble anywhere in this pipeline (2026-07-03 decision):
   sudo apt install software-properties-common curl -y
   sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
     -o /usr/share/keyrings/ros-archive-keyring.gpg
@@ -3068,11 +3079,11 @@ ros2 topic echo /robot_001/amcl_pose
     http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
     | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
   sudo apt update
-  sudo apt install ros-<DISTRO>-desktop ros-<DISTRO>-navigation2 ros-<DISTRO>-nav2-bringup \
-    ros-<DISTRO>-rmw-cyclonedds-cpp python3-colcon-common-extensions -y
+  sudo apt install ros-jazzy-desktop ros-jazzy-navigation2 ros-jazzy-nav2-bringup \
+    ros-jazzy-rmw-cyclonedds-cpp python3-colcon-common-extensions -y
 
   # Add to .bashrc:
-  echo "source /opt/ros/<DISTRO>/setup.bash" >> ~/.bashrc
+  echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
   echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
   source ~/.bashrc
   ```
@@ -3128,19 +3139,31 @@ ros2 topic echo /robot_001/amcl_pose
   sudo ./svc.sh install && sudo ./svc.sh start
   ```
 
-- [ ] **Update the `arm64-build` CI job** in `ci.yml` to use the Jetson runner**:
+- [ ] **Update the real `stage-2-arm64` job** in `ci.yml` to run on the Jetson runner —
+  this was a from-scratch bespoke job in the original draft (wrong name `arm64-build`,
+  wrong `needs: code-quality`, and a plain `colcon build` that doesn't match what
+  `stage-2-arm64` actually does today: build+push a Docker image via `docker buildx`,
+  not a native workspace build). The actual change needed is two edits to the existing
+  job, not a new one — the QEMU setup step becomes unnecessary once the runner itself
+  is native arm64 hardware, since `docker buildx` can then build `linux/arm64` directly:
   ```yaml
-  arm64-build:
+  stage-2-arm64:
     runs-on: [self-hosted, arm64, jetson]   # was: ubuntu-latest
-    needs: code-quality
+    needs: [stage-1-quality, changes]        # unchanged — keep the docs-only-push skip
+    if: needs.changes.outputs.docker == 'true'
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
-      - name: Native arm64 build
-        run: |
-          source /opt/ros/<DISTRO>/setup.bash
-          colcon build --symlink-install
-      - name: Record build time
-        run: echo "arm64 native build at $(date)" >> reports/session14_timings.txt
+
+      # "Set up QEMU" step REMOVED — only needed to emulate arm64 on an x86 runner;
+      # the Jetson runner already is arm64.
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      # ...rest of the job (GHCR login, build-and-push, timing) stays as-is; just
+      # relabel the "Record build time" log line "native" instead of "QEMU".
   ```
 
   > **Gotcha (amended 2026-07-03):** The Jetson native runner replaces QEMU for the *build*
@@ -3154,7 +3177,7 @@ ros2 topic echo /robot_001/amcl_pose
   git add .
   git commit -m "feat(session-14): Jetson arm64 native CI runner replaces QEMU"
   git push
-  gh run watch   # watch the arm64 build run on jetson-runner
+  gh run watch   # watch stage-2-arm64 run on jetson-runner
   # Compare time vs QEMU baseline recorded in BLUEPRINT.md (Session 08)
   ```
 
@@ -3168,7 +3191,7 @@ ros2 topic echo /robot_001/amcl_pose
 ### Session Complete When
 - Jetson boots, SSH accessible, ROS2 installed
 - `colcon build` succeeds on Jetson (native arm64)
-- `arm64-build` CI job runs green on `jetson-runner`
+- `stage-2-arm64` CI job runs green on `jetson-runner`
 - Speedup vs QEMU recorded in BLUEPRINT.md
 
 ---
@@ -3180,6 +3203,17 @@ ros2 topic echo /robot_001/amcl_pose
 - [Nav2 map server](https://docs.nav2.org/configuration/packages/configuring-map-server.html) — serving the saved SLAM map
 - [teleop_twist_keyboard](https://index.ros.org/p/teleop_twist_keyboard/) — driving the robot during SLAM mapping
 
+> **Session reviewed against actual code 2026-07-06** — see corrections inline: the
+> sim-to-real comparison step didn't actually log telemetry (called `NavRunner.send_goal()`
+> directly instead of the pytest fixture Session 12 wired it into) and sent a goal that
+> doesn't match this project's real BR-01 goal; the CI smoke test used a `ros2 topic hz`
+> flag that doesn't exist; and a dangling reference to a BLUEPRINT.md section that was
+> never written. **Not resolved — needs your decision, not silently fixed:**
+> `sim_vs_real_comparison.py` expects two separate DB files (`FLEET_SIM_DB`/`FLEET_REAL_DB`)
+> but Session 12 built `sim_engine` specifically so one DB could hold gazebo/isaac/real rows
+> together — these two pieces disagree on the architecture and someone needs to pick one
+> before this step can run for real.
+>
 > **Hardware dependency:** Requires Jetson module transferred to the UGV-PT carrier board
 > (or a second Jetson module purchased). The Jetson from Session 14 can be transferred;
 > buy a second module if you want to keep the Dev Kit as the CI runner.
@@ -3222,7 +3256,7 @@ ros2 topic echo /robot_001/amcl_pose
 
   ```bash
   # Terminal 1 — on the Jetson (SSH):
-  source /opt/ros/<DISTRO>/setup.bash
+  source /opt/ros/jazzy/setup.bash
   ros2 launch slam_toolbox online_async_launch.py use_sim_time:=false
 
   # Terminal 2 — on workstation (teleop):
@@ -3290,14 +3324,16 @@ ros2 topic echo /robot_001/amcl_pose
           script: |
             cd ~/autonomous-fleet-testbed
             git pull origin main
-            source /opt/ros/<DISTRO>/setup.bash
+            source /opt/ros/jazzy/setup.bash
             colcon build --symlink-install
             source install/setup.bash
             # Smoke test: launch Nav2 and check topics
             ros2 launch nav_fleet robot_launch.py &
             sleep 15
-            ros2 topic hz /robot_001/odom --once | grep -q "Hz" || exit 1
-            ros2 topic hz /robot_001/scan --once | grep -q "Hz" || exit 1
+            # `ros2 topic hz` has no --once flag — it runs until killed, printing
+            # "average rate: X" periodically. Bound it with timeout instead.
+            timeout 3 ros2 topic hz /robot_001/odom | grep -q "average rate" || exit 1
+            timeout 3 ros2 topic hz /robot_001/scan | grep -q "average rate" || exit 1
             echo "Smoke test passed"
   ```
 
@@ -3306,36 +3342,44 @@ ros2 topic echo /robot_001/amcl_pose
   > `ssh-keygen -t ed25519 -f ~/.ssh/robot_deploy_key` on the workstation, then
   > `ssh-copy-id -i ~/.ssh/robot_deploy_key mike@<robot-ip>`.
 
-- [ ] **Run sim-to-real comparison**:
+- [ ] **Run sim-to-real comparison** — reuse `tests/test_navigation.py` rather than
+  calling `NavRunner` directly: `NavRunner.send_goal()` alone doesn't write to the DB —
+  Session 12 wired `log_run()` into the pytest session fixture, not into `NavRunner`
+  itself — and the test file's hardcoded goal (0.0, 3.7) is the actual, real BR-01 goal
+  used everywhere else in this project (an ad-hoc script sending an arbitrary different
+  point wouldn't be comparing the same mission at all). Reusing the same file is also
+  exactly the pattern `stage-3-gazebo`/`stage-4-isaac` already use — same test, different
+  backend — so this is the third leg of that same design, not a new mechanism:
   ```bash
-  # Run the same nav goal on the real robot that you ran in Gazebo (1.0, 1.0):
   # On robot (SSH): ros2 launch nav_fleet robot_launch.py
   # On workstation:
-  python -c "
-  import rclpy
-  import sys; sys.path.insert(0, 'src/nav_fleet/nav_fleet')
-  from nav_runner import NavRunner
-  rclpy.init()
-  r = NavRunner()
-  print(r.send_goal(1.0, 1.0))
-  r.destroy_node(); rclpy.shutdown()
-  "
-  # telemetry_logger logs the run to the DB (FLEET_DB) with sim_engine='real'
-  # (SQLite is the single telemetry store — see Session 12's 2026-07-03 review note)
+  FLEET_DB=reports/fleet_runs.db SIM_ENGINE=real python -m pytest tests/test_navigation.py -v --timeout=120
+  # Logs one row with sim_engine='real' to the same FLEET_DB gazebo/isaac rows live in
+  # (single SQLite store — see Session 12's 2026-07-03 review note) — ASSUMING the
+  # sim_vs_real_comparison.py architecture question above has been resolved first.
 
   # Compare:
   python tools/sim_vs_real_comparison.py
   # Reports: correlation between sim and real nav_success_rate, mean_position_error
   # Target: correlation >= 70%
   ```
+  > **Double-check before starting:** the SLAM map's coordinate frame is whatever
+  > `bedroom_real.yaml` ends up being zeroed to when mapping starts — it has no reason to
+  > line up with the Gazebo/Isaac world's coordinate origin. Sending literally `(0.0, 3.7)`
+  > may not land anywhere near the real bedroom's floor centre. After building the real
+  > map, confirm (or update) the goal `test_navigation_succeeds` sends actually corresponds
+  > to the same physical location in the real world — may need a per-`sim_engine` goal
+  > override rather than one hardcoded literal.
 
 - [ ] **Tag r1-complete** if sim-to-real correlation >= 70%:
   ```bash
   git tag r1-complete
   git push origin r1-complete
   ```
-  If correlation < 70%: check BLUEPRINT.md Kill Criteria section and decide next steps
-  (usually: tune nav2_params, fix URDF dimensions, or accept the gap with documentation).
+  If correlation < 70%: tune `nav2_params.yaml`, fix URDF dimensions, or accept the gap
+  with documentation. (The plan previously pointed here to a BLUEPRINT.md "Kill Criteria"
+  section — checked, it doesn't exist. Removed the dangling reference; these three options
+  are the actual guidance.)
 
 - [ ] **Commit**:
   ```bash
@@ -3347,7 +3391,8 @@ ros2 topic echo /robot_001/amcl_pose
 ### Session Complete When
 - `bedroom_real.pgm` + `bedroom_real.yaml` saved and committed
 - `robot_launch.py` launches Nav2 on the real robot successfully
-- Real robot navigates to (1.0, 1.0) without collision
+- Real robot navigates to the confirmed real-world equivalent of the bedroom goal (see
+  "Double-check before starting" above — may not be the literal `(0.0, 3.7)`) without collision
 - `sim_vs_real_comparison.py` reports correlation >= 70%
 - `git tag r1-complete` pushed
 
