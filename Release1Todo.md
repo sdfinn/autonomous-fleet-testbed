@@ -21,8 +21,8 @@
 | 09 | URDF + Nav2 in Gazebo | ✅ |
 | 10 | First Passing Nav Test + Self-Hosted CI Runner | ✅ |
 | 11 | Isaac Sim: Install + First Nav Test | ✅ |
-| 12 | Reports + Dashboard: True End-to-End | ⬜ |
-| 13 | Agentic Test Loop in Sim | ⬜ |
+| 12 | Reports + Dashboard: True End-to-End | ✅ |
+| 13 | Agentic Test Loop in Sim | ✅ |
 | 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | ⬜ |
 | 15 | Real Robot: Deploy + Sim-to-Real Comparison | ⬜ |
 | 16+ | Agentic Loop on Real Hardware + Advanced Missions | ⬜ |
