@@ -3027,6 +3027,16 @@ ros2 topic echo /robot_001/amcl_pose
 > **Double-check before starting:** confirm JetPack 7.2 is still SDK Manager's selectable
 > option for Orin Nano *Super* specifically (vs. the plain Orin Nano) — this plan has not
 > been re-verified against NVIDIA's current downloads since the 2026-07-03 decision.
+>
+> **How this session is actually expected to go (2026-07-06):** core session — unpack, plug
+> in, connect, flash, do a smoke test. The "retire QEMU" outcome isn't a separate future task —
+> it's already the natural result of the step order below: native `colcon build` first (a
+> quick compile test), and *if* that goes cleanly, the `stage-2-arm64` runner swap later in
+> this same session follows from it. If the native build has problems, stop there and debug
+> before touching the CI job — don't force the runner swap on a build that isn't solid yet.
+> Beyond that core flow, there's one **optional** stretch goal (Jetson-in-the-loop with sim)
+> captured near the end of this session, below — not required for session completion, and
+> explicitly not something to force if the core flow above takes the full session.
 
 ### Prerequisites
 - Sessions 10–13 complete
@@ -3202,6 +3212,40 @@ ros2 topic echo /robot_001/amcl_pose
   arm64 build — Jetson native (Session 14): ~X min
   Speedup: ~Xx reduction
   ```
+
+### Optional stretch goal — Jetson-in-the-loop with sim (2026-07-06, not required)
+
+Not required for session completion, r1-complete, or Session 15 — only attempt this if the
+core flow above (unpack → flash → storage baseline → native build → CI runner swap) goes
+smoothly with session time left over. This is the "run ROS2 code on the Jetson as part of
+sim" idea, refined through discussion:
+
+- **Goal:** validate robustness/speed/reproducibility of running Nav2 on Jetson-class ARM
+  hardware before Session 15's real robot arrives — mainly, does Nav2 (AMCL, costmaps,
+  planners) actually fit the Orin Nano's CPU/RAM budget, or does it need retuning first.
+- **Use Gazebo, not Isaac Sim, as the sim side.** Isaac's ROS2 integration is already the
+  most fragile part of this project (manual `/clock` wiring, TF replay requiring
+  synchronized restarts — see the CLAUDE.md gotcha). Adding a second machine and a live
+  network link on top of that is asking for a new multi-day debugging saga for a benefit
+  that doesn't need Isaac's fidelity at all. Gazebo's `ros_gz_bridge` is a standard,
+  well-behaved bridge with none of that baggage, and it's already this project's cheaper
+  "throughput tier" — the natural fit.
+- **Connect the Jetson directly, not over WiFi.** Either the Jetson's USB-C device-mode
+  networking (comes up as a point-to-point virtual Ethernet link, default IP
+  `192.168.55.1` — the same feature NVIDIA's headless dev-kit setup uses) or a plain
+  Ethernet cable / unmanaged switch. Either removes WiFi's contention/jitter, which
+  matters for anything clock-sensitive. Verify with `ping` and a cross-machine
+  `ros2 topic list` (or the Session 02 talker/listener smoke test) before touching
+  Nav2 at all.
+- **Same `ROS_DOMAIN_ID` on both machines.** If DDS discovery doesn't work over the USB
+  gadget link (multicast sometimes doesn't traverse it cleanly), CycloneDDS supports an
+  explicit unicast peers list in `CYCLONEDDS_URI` (`<Peers><Peer address="..."/></Peers>`)
+  as a documented fallback — a known fix, not a research project.
+- **Sensors stay on the Gazebo/workstation side; Nav2 runs entirely on the Jetson** — the
+  workstation's job is only to stream sensor topics and listen for `cmd_vel`, matching
+  Session 15's actual target architecture where sensors and Nav2 will both live on the
+  Jetson (this exercise doesn't test that exact network topology, since nothing streams
+  over a network in the real robot — but it does validate Nav2-on-Jetson resource usage).
 
 ### Session Complete When
 - Jetson boots, SSH accessible, ROS2 installed
@@ -3455,6 +3499,16 @@ all at once with no working baseline underneath). **Result: BR-01 passes green**
 `bt_navigator` (minimal one-shot `navigate_simple.xml`, no periodic replanning, no recovery
 dependency), and two lifecycle managers — nothing else. This deliberately defers capability the
 fleet needs before Session 16 is for real — captured here so it doesn't quietly get forgotten:
+
+> **Methodology for re-adding these (2026-07-06 review):** the root cause of the ~20-iteration
+> debugging saga wasn't fundamental Isaac Sim fragility — it was re-enabling AMCL,
+> `SmacPlannerHybrid`, `collision_monitor`, and recovery all at once with no working baseline
+> underneath, which made a real bug indistinguishable from a tuning problem indistinguishable
+> from a false positive. Don't repeat that: (1) prototype each capability in **Gazebo first** —
+> cheaper iteration, none of Isaac's manual clock/TF wiring baggage — get it solid there, *then*
+> port the working config to Isaac; (2) add back **one piece at a time**, with a green baseline
+> after each one (AMCL alone, confirmed holding under rotation-near-furniture, *then* recovery,
+> *then* `SmacPlannerHybrid`/replanning) — never all at once again.
 
 - **AMCL / real localization.** Replaced with a hardcoded static `map→odom` TF, because the
   spawn pose is known in advance. This isn't just "a real robot can't assume a known start pose"

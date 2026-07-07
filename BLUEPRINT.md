@@ -223,6 +223,19 @@ Pull forward only when a specific role, customer, or demo demands it.
 - **RaaS framing doc** — document the framework as a Robotics-as-a-Service offering: hardware lease + software subscription, OTA updates included
 - **Safety certification framing** — annotate the dual-layer architecture against SIL2 / UL 60730-1 requirements (not certification, just the mapping)
 - **Dynamic SLAM** — handle moving obstacles (people, forklifts) using a costmap layer that ages out dynamic detections
+- **CI stage ordering — considered, not decided (2026-07-06).** `stage-2-arm64` and
+  `stage-3-gazebo` currently run in parallel (both just `needs: stage-1-quality`) — fast
+  signal on the sim stages, but it burns the full QEMU build (24–37 min) even when
+  Gazebo/Isaac are already known-red. Discussed making Stage 2 sequential, gated behind
+  Stage 3/4 passing, to stop wasting that compute on already-failing runs. Tradeoff: costs
+  ~150s on the success path (no more free overlap) to save the full QEMU build on failure.
+  Mostly stops mattering once Session 14 makes Stage 2 native (~3–5 min projected) — revisit
+  then, or sooner if QEMU minutes/cost become a real pain point before that.
+- **Structural CI-stage-timing telemetry** — `stage_timings_sec` already exists as a column
+  in the `runs` schema (`tools/telemetry_logger.py`) but nothing populates it. CI stage
+  durations (QEMU vs. native arm64 build, per-stage wall time) are currently hand-copied into
+  this decisions log as prose instead. Wiring real stage timings into that column would let
+  the dashboard show the trend over time rather than one-off notes.
 
 **AI / intelligence:**
 - **Full VLA models** — replace LLM mission planning with Vision-Language-Action models for visually grounded semantic navigation ("go to the area with the green box")
