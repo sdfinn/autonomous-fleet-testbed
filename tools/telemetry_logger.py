@@ -51,6 +51,8 @@ def _ensure_run_columns(conn):
     expected_columns = {
         "runner_type": "TEXT",
         "robot_type": "TEXT",
+        "robot_id": "TEXT",
+        "sim_engine": "TEXT",
         "nav_success_rate": "REAL",
         "mean_position_error": "REAL",
         "mean_time_to_goal": "REAL",
@@ -71,13 +73,42 @@ def _ensure_run_columns(conn):
 
 
 def log_run(scenario: str, steps: int, final_x: float, final_y: float,
-            result: str, step_log: list, db_path: str = DB_PATH):
+            result: str, step_log: list, db_path: str = DB_PATH,
+            robot_id: str = None, robot_type: str = None, runner_type: str = None,
+            sim_engine: str = None, nav_success_rate: float = None,
+            mean_position_error: float = None, mean_time_to_goal: float = None,
+            collision_rate: float = None, odom_hz_mean: float = None,
+            lidar_hz_mean: float = None, camera_hz_mean: float = None):
+    """Insert one row into `runs`. Only `scenario`/`steps`/`final_x`/`final_y`/`result`
+    are required — every other field is optional telemetry attached to the same run,
+    left NULL when not supplied by the caller.
+    """
+    optional_fields = {
+        "robot_id": robot_id,
+        "robot_type": robot_type,
+        "runner_type": runner_type,
+        "sim_engine": sim_engine,
+        "nav_success_rate": nav_success_rate,
+        "mean_position_error": mean_position_error,
+        "mean_time_to_goal": mean_time_to_goal,
+        "collision_rate": collision_rate,
+        "odom_hz_mean": odom_hz_mean,
+        "lidar_hz_mean": lidar_hz_mean,
+        "camera_hz_mean": camera_hz_mean,
+    }
+    optional_fields = {k: v for k, v in optional_fields.items() if v is not None}
+
+    init_db(db_path)
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
+    columns = ["scenario", "timestamp", "steps", "final_x", "final_y", "result"]
+    values = [scenario, time.strftime("%Y-%m-%dT%H:%M:%S"), steps, final_x, final_y, result]
+    columns.extend(optional_fields.keys())
+    values.extend(optional_fields.values())
+    placeholders = ",".join("?" * len(columns))
     cur.execute(
-        "INSERT INTO runs (scenario, timestamp, steps, final_x, final_y, result)"
-        " VALUES (?,?,?,?,?,?)",
-        (scenario, time.strftime("%Y-%m-%dT%H:%M:%S"), steps, final_x, final_y, result)
+        f"INSERT INTO runs ({','.join(columns)}) VALUES ({placeholders})",
+        values,
     )
     run_id = cur.lastrowid
     cur.executemany(

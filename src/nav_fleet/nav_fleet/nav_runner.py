@@ -13,13 +13,14 @@
 # limitations under the License.
 """Nav2 goal-sending test runner."""
 
+import math
 import time
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.time import Time
 from nav2_msgs.action import NavigateToPose
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 
 
 class NavRunner(Node):
@@ -29,11 +30,35 @@ class NavRunner(Node):
         self._action_client = ActionClient(
             self, NavigateToPose, '/robot_001/navigate_to_pose'
         )
+        # Telemetry from the most recent send_goal() call — read by the test session's
+        # telemetry fixture after all tests complete.
+        self.last_result = None
+        self.last_duration_s = None
+        self.last_steps = None
+        self.last_final_x = None
+        self.last_final_y = None
+        self.last_position_error = None
+
+        self._latest_pose = None
+        self.create_subscription(
+            PoseWithCovarianceStamped, '/robot_001/amcl_pose', self._pose_cb, 10
+        )
+
+    def _pose_cb(self, msg):
+        self._latest_pose = msg.pose.pose
 
     def send_goal(self, x, y, timeout=90.0):
+        start_time = time.time()
+        steps = 0
+
+        def spin():
+            nonlocal steps
+            rclpy.spin_once(self, timeout_sec=0.1)
+            steps += 1
+
         if not self._action_client.wait_for_server(timeout_sec=15.0):
             self.get_logger().error('Nav2 action server unavailable')
-            return False
+            return self._finish(False, x, y, start_time, steps)
 
         goal = NavigateToPose.Goal()
         goal.pose = PoseStamped()
@@ -55,11 +80,11 @@ class NavRunner(Node):
             while time.time() < deadline:
                 if send_goal_future.done():
                     break
-                rclpy.spin_once(self, timeout_sec=0.1)
+                spin()
 
             if not send_goal_future.done():
                 self.get_logger().warning('Goal send timed out')
-                return False
+                return self._finish(False, x, y, start_time, steps)
 
             goal_handle = send_goal_future.result()
             if goal_handle.accepted:
@@ -71,7 +96,7 @@ class NavRunner(Node):
             time.sleep(1.0)
         else:
             self.get_logger().error('Goal rejected after all retries')
-            return False
+            return self._finish(False, x, y, start_time, steps)
 
         result_future = goal_handle.get_result_async()
 
@@ -79,13 +104,26 @@ class NavRunner(Node):
         while time.time() < deadline:
             if result_future.done():
                 break
-            rclpy.spin_once(self, timeout_sec=0.1)
+            spin()
 
         if not result_future.done():
             self.get_logger().warning('Goal wait timed out')
-            return False
+            return self._finish(False, x, y, start_time, steps)
 
-        return result_future.result().status == 4
+        succeeded = result_future.result().status == 4
+        return self._finish(succeeded, x, y, start_time, steps)
+
+    def _finish(self, succeeded, goal_x, goal_y, start_time, steps):
+        self.last_result = succeeded
+        self.last_duration_s = time.time() - start_time
+        self.last_steps = steps
+        if self._latest_pose is not None:
+            self.last_final_x = self._latest_pose.position.x
+            self.last_final_y = self._latest_pose.position.y
+            self.last_position_error = math.hypot(
+                self.last_final_x - goal_x, self.last_final_y - goal_y
+            )
+        return succeeded
 
 
 def main():

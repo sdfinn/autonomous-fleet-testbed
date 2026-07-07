@@ -13,11 +13,14 @@
 # limitations under the License.
 """Integration tests for Nav2 navigation. Requires live Gazebo + Nav2."""
 
+import os
+
 import pytest
 import rclpy
 
 from nav_fleet.nav_runner import NavRunner
 from nav_fleet.metrics_collector import MetricsCollector
+from tools.telemetry_logger import log_run
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -39,6 +42,38 @@ def metrics(ros_context):
     node = MetricsCollector()
     yield node
     node.destroy_node()
+
+
+@pytest.fixture(scope='session', autouse=True)
+def telemetry_run(nav_runner, metrics):
+    """Logs one `runs` row for this pytest session — combines the nav result,
+    position error, and duration from NavRunner with the collision/Hz metrics
+    from MetricsCollector. Runs after all tests in the session (pass or fail).
+
+    SIM_ENGINE / ROBOT_ID let the same test log correctly from stage-3-gazebo,
+    stage-4-isaac, and (Session 15+) a real robot / additional fleet members.
+    """
+    yield
+    m = metrics.last_metrics or {}
+    log_run(
+        scenario='bedroom_nav',
+        steps=max(nav_runner.last_steps or 0, 1),
+        final_x=nav_runner.last_final_x if nav_runner.last_final_x is not None else 0.0,
+        final_y=nav_runner.last_final_y if nav_runner.last_final_y is not None else 0.0,
+        result='PASS' if nav_runner.last_result else 'FAIL',
+        step_log=[],
+        robot_id=os.environ.get('ROBOT_ID', 'robot_001'),
+        robot_type='jetson_ugv_pt',
+        runner_type='local',
+        sim_engine=os.environ.get('SIM_ENGINE', 'gazebo'),
+        nav_success_rate=1.0 if nav_runner.last_result else 0.0,
+        mean_position_error=nav_runner.last_position_error,
+        mean_time_to_goal=nav_runner.last_duration_s,
+        collision_rate=1.0 if m.get('collision_detected') else 0.0,
+        odom_hz_mean=m.get('odom_hz'),
+        lidar_hz_mean=m.get('scan_hz'),
+        camera_hz_mean=m.get('camera_hz'),
+    )
 
 
 def test_navigation_succeeds(nav_runner):

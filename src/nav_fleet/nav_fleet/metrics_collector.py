@@ -19,7 +19,7 @@ import time
 import rclpy
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Image, LaserScan
 
 
 class MetricsCollector(Node):
@@ -27,7 +27,9 @@ class MetricsCollector(Node):
         super().__init__('metrics_collector')
         self._odom_times = []
         self._scan_times = []
+        self._camera_times = []
         self._min_range = float('inf')
+        self.last_metrics = None
 
         self.subscription_odom = self.create_subscription(
             Odometry,
@@ -43,6 +45,13 @@ class MetricsCollector(Node):
             10
         )
 
+        self.subscription_camera = self.create_subscription(
+            Image,
+            '/robot_001/camera/image_raw',
+            self._camera_cb,
+            10
+        )
+
     def _odom_cb(self, msg):
         self._odom_times.append(time.time())
 
@@ -51,6 +60,9 @@ class MetricsCollector(Node):
         valid = [r for r in msg.ranges if msg.range_min < r < msg.range_max]
         if valid:
             self._min_range = min(self._min_range, min(valid))
+
+    def _camera_cb(self, msg):
+        self._camera_times.append(time.time())
 
     def collect(self, duration=5.0):
         time_start = time.time()
@@ -63,12 +75,14 @@ class MetricsCollector(Node):
                 return 0.0
             return (len(times) - 1) / (times[-1] - times[0])
 
-        return {
+        self.last_metrics = {
             'odom_hz': round(hz(self._odom_times), 1),
             'scan_hz': round(hz(self._scan_times), 1),
+            'camera_hz': round(hz(self._camera_times), 1),
             'min_scan_range_m': round(self._min_range, 3),
             'collision_detected': self._min_range < 0.12
         }
+        return self.last_metrics
 
 
 def main():

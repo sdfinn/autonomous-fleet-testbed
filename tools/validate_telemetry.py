@@ -23,6 +23,8 @@ class RunsModel(DataFrameModel):
     result: Series[str] = pa.Field(isin=["PASS", "FAIL", "STOPPED", "TIMEOUT"])
     runner_type: Series[str] = pa.Field(isin=["qemu", "jetson", "local"], nullable=True)
     robot_type: Series[str] = pa.Field(nullable=True)
+    robot_id: Series[str] = pa.Field(nullable=True)
+    sim_engine: Series[str] = pa.Field(isin=["gazebo", "isaac", "real"], nullable=True)
     nav_success_rate: Series[float] = pa.Field(ge=0, le=1, nullable=True)
     mean_position_error: Series[float] = pa.Field(ge=0, nullable=True)
     mean_time_to_goal: Series[float] = pa.Field(ge=0, nullable=True)
@@ -49,7 +51,7 @@ STEPS_SCHEMA = DataFrameSchema({
 
 KNOWN_RUNS_COLS = {
     "id", "scenario", "timestamp", "steps", "final_x", "final_y", "result",
-    "runner_type", "robot_type",
+    "runner_type", "robot_type", "robot_id", "sim_engine",
     "nav_success_rate", "mean_position_error", "mean_time_to_goal", "collision_rate",
     "odom_hz_mean", "lidar_hz_mean", "camera_hz_mean", "firmware_test_pass_rate",
     "stage_timings_sec",

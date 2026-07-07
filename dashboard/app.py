@@ -44,6 +44,7 @@ st.title('Autonomous Navigation Test Dashboard')
 
 robot_type_filter = st.sidebar.selectbox("Robot Type", ["All", "jetson_ugv_pt"])
 runner_type_filter = st.sidebar.selectbox("Runner", ["All", "qemu", "jetson", "local"])
+sim_engine_filter = st.sidebar.selectbox("Sim Engine", ["All", "gazebo", "isaac", "real"])
 
 runs, steps = load_runs()
 ai_df = load_ai_scenarios()
@@ -53,6 +54,8 @@ if robot_type_filter != "All" and "robot_type" in filtered_runs.columns:
     filtered_runs = filtered_runs[filtered_runs["robot_type"] == robot_type_filter]
 if runner_type_filter != "All" and "runner_type" in filtered_runs.columns:
     filtered_runs = filtered_runs[filtered_runs["runner_type"] == runner_type_filter]
+if sim_engine_filter != "All" and "sim_engine" in filtered_runs.columns:
+    filtered_runs = filtered_runs[filtered_runs["sim_engine"] == sim_engine_filter]
 
 runs = filtered_runs
 
@@ -131,8 +134,10 @@ with tab2:
         )
     st.divider()
     st.subheader('Run Log')
+    log_cols = ['id', 'scenario', 'timestamp', 'steps', 'final_x', 'final_y', 'result']
+    log_cols += [c for c in ('robot_id', 'sim_engine') if c in runs.columns]
     st.dataframe(
-        runs[['id', 'scenario', 'timestamp', 'steps', 'final_x', 'final_y', 'result']],
+        runs[log_cols],
         use_container_width=True,
     )
 
@@ -149,9 +154,10 @@ with tab3:
         title='Final Robot Position per Run (navigation tests only)',
         labels={'final_x': 'X (m)', 'final_y': 'Y (m)'},
     )
+    # Goal zone — bedroom floor centre (0.0, 3.7), +/- Nav2's xy_goal_tolerance (0.15 m)
     fig_scatter.add_shape(
         type='rect',
-        x0=1.0, x1=4.0, y0=-11.0, y1=-5.0,
+        x0=-0.15, x1=0.15, y0=3.55, y1=3.85,
         line=dict(color='blue', width=2, dash='dash'),
         name='Goal Zone',
     )
@@ -253,14 +259,18 @@ with tab5:
         lc2.metric('Avg Obstacles Detected', f"{df_lidar['num_obstacles_detected'].mean():.1f}")
         st.dataframe(df_lidar, use_container_width=True)
 
-    # Camera / YOLO metrics
+    # Camera / YOLO metrics — not part of this project's schema yet (no object-detection
+    # pipeline built); query degrades gracefully if num_frames etc. don't exist.
     st.write('#### Camera & Object Detection')
-    df_camera = pd.read_sql("""
-        SELECT scenario, num_frames, detections_per_frame_avg, class_distribution
-        FROM runs
-        WHERE num_frames IS NOT NULL
-        ORDER BY id DESC LIMIT 20
-    """, conn)
+    try:
+        df_camera = pd.read_sql("""
+            SELECT scenario, num_frames, detections_per_frame_avg, class_distribution
+            FROM runs
+            WHERE num_frames IS NOT NULL
+            ORDER BY id DESC LIMIT 20
+        """, conn)
+    except Exception:
+        df_camera = pd.DataFrame()
 
     if df_camera.empty:
         st.info('No camera detection data yet.')
@@ -273,14 +283,17 @@ with tab5:
             use_container_width=True,
         )
 
-    # AI scenario quality scores
+    # AI scenario quality scores — ai_scenarios table doesn't exist until Session 13.
     st.write('#### AI Scenario Quality')
-    df_quality = pd.read_sql("""
-        SELECT scenario_name, test_quality, test_status, generated_on
-        FROM ai_scenarios
-        WHERE test_quality IS NOT NULL
-        ORDER BY test_quality DESC LIMIT 10
-    """, conn)
+    try:
+        df_quality = pd.read_sql("""
+            SELECT scenario_name, test_quality, test_status, generated_on
+            FROM ai_scenarios
+            WHERE test_quality IS NOT NULL
+            ORDER BY test_quality DESC LIMIT 10
+        """, conn)
+    except Exception:
+        df_quality = pd.DataFrame()
 
     if df_quality.empty:
         st.info('No AI quality scores yet — run `python src/ai_test_generator.py`.')
