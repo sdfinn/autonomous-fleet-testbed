@@ -347,3 +347,33 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   - **OGRE2 materials**: `<diffuse>` required alongside `<ambient>` in SDF for visible colours — ambient-only renders black under directional light.
   - **Launch path resolution**: `pathlib.Path(__file__).parent.parent` instead of `get_package_share_directory()` because `colcon-ament-python` is not installed on this system (AMENT_PREFIX_PATH not populated for Python packages).
   - **Robot fidelity gaps carried to Session 10**: IMU (200 Hz, required for Nav2 EKF), OAK-D Lite depth camera (`/robot_001/camera/depth/points`), actual physical dimensions from Waveshare spec sheet, `base_footprint` root link for KDL warning.
+- **2026-07-06 — Session 12 complete: telemetry wired end-to-end.** `test_navigation.py`
+  now logs one real `runs` row per pytest session (nav result, position error,
+  time-to-goal, steps, collision, odom/lidar/camera Hz), verified against live Gazebo.
+  `log_run()` extended with optional kwargs for all rate metrics (it only took
+  scenario/steps/final_x/final_y/result/step_log before) plus a new `robot_id` column —
+  distinct from `robot_type` (the model/profile) — added ahead of the next project's
+  multi-robot fleet tracking ask, so the schema doesn't need a later migration; nothing
+  built on top of it yet. `generate_test_report.py`, `dashboard/app.py` (5 tabs, checked
+  via Playwright), `validate_telemetry.py`, and `baseline_monitor.py` all verified against
+  real data for the first time. Found and fixed three more instances of stale
+  `isaac_project` cruft surfacing only once real data flowed through: two separate
+  "goal zone" plot rectangles using the old living-room coordinates instead of this
+  project's bedroom goal; a hard dashboard traceback from `num_frames`/
+  `detections_per_frame_avg`/`class_distribution` — YOLO object-detection columns never
+  part of this project's schema; and a missing `plotly` dependency (imported by the
+  dashboard, never installed or pinned). `stage-5-reports` wired on the self-hosted
+  runner and pushed; CI run in progress at time of writing.
+- **2026-07-06 — Session 13 pre-flight review: same JSON-vs-SQLite staleness as
+  Session 12, plus a stale semantic map.** `load_latest_run()` still assumed the dropped
+  `reports/history/*.json` architecture, and the diagnosis prompt hardcoded absolute
+  drift thresholds that duplicate what `baseline_monitor.py` (Session 12) now does for
+  real with a rolling baseline + sigma comparison. Rewritten to query `FLEET_DB` directly
+  and to feed Claude `baseline_monitor.check_run()`'s actual flagged/sigma output instead.
+  Also found `SEMANTIC_MAP` (added 2026-06-29, before `bedroom_simple.sdf` existed) was a
+  generic 4-direction placeholder (`north_corridor`, `east_zone`, ...) that doesn't match
+  this project's real topology — one hallway into a single bedroom, not a symmetric grid.
+  Replaced with named locations tied to actual model poses in the SDF (`home_base`,
+  `bedroom_goal`, `dresser`, `desk`, `pc_tower`, `bed`). Model string updated
+  `claude-sonnet-4-6` → `claude-sonnet-5` (`tools/ai_test_generator.py` has the same stale
+  string; not touched here since Session 13 doesn't modify that file).

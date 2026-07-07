@@ -2645,20 +2645,41 @@ ros2 topic echo /robot_001/amcl_pose
 - [Nav2 BT Navigator](https://docs.nav2.org/configuration/packages/bt-navigator.html) — understand what a Behavior Tree failure means in the telemetry
 - [Gazebo SDF reference](https://gazebosim.org/api/sim/8/sdf_worlds.html) — needed for generative world creation
 
+> **Session reviewed against actual code 2026-07-06 — original text was stale in the same
+> way Session 12's was.** `load_latest_run()` assumed the dropped `reports/history/*.json`
+> per-run-file architecture; Session 12 confirmed (again) that SQLite (`reports/fleet_runs.db`,
+> `FLEET_DB` env var) is the single source of truth. The prompt's hardcoded drift thresholds
+> (`nav_success_rate >= 0.95`, etc.) also duplicated logic that `tools/baseline_monitor.py`
+> now does for real, with a proper rolling baseline + sigma comparison instead of fixed
+> absolute values — verified working in Session 12 (flagged an injected 10x
+> `mean_position_error` at sigma=122). `SEMANTIC_MAP` was a generic 4-direction placeholder
+> (`north_corridor`, `east_zone`, ...) drafted before `bedroom_simple.sdf` existed; the real
+> world is one hallway leading into a single bedroom, not a symmetric grid — rewritten below
+> against the actual model poses in that file. The model string (`claude-sonnet-4-6`) is also
+> stale — updated to `claude-sonnet-5`. `tools/ai_test_generator.py` has the same stale model
+> string; out of scope here since Session 13 doesn't touch that file, but worth fixing next
+> time it's touched. Steps below are rewritten to match.
+
 ### Prerequisites
-- Session 12 complete — `reports/history/` has real run JSON files
+- Session 12 complete — `reports/fleet_runs.db` has at least one real run row (Session 12
+  wired `test_navigation.py` to log one every run)
 - `pip install anthropic` in fleet-env (already in requirements.txt)
 - `ANTHROPIC_API_KEY` set in environment (add to `.env` or export in shell):
   ```bash
   echo 'export ANTHROPIC_API_KEY=sk-ant-...' >> ~/.bashrc
   source ~/.bashrc
   ```
+- Note: `baseline_monitor.check_run()` needs 3+ prior PASS runs before it can flag
+  anything — with only a run or two logged so far, the "inject a failure" step below
+  seeds a scratch copy of the DB with more history first (same pattern used to verify
+  `baseline_monitor.py` itself in Session 12).
 
 ### Steps
 
 - [ ] **Create `tools/agentic_loop.py`** — the main orchestrator. Reads the latest run
-  report, calls Claude with telemetry context, gets a structured diagnosis + proposed
-  action, presents it to the human for approval, then applies the approved action:
+  row from `FLEET_DB`, calls Claude with telemetry + drift context, gets a structured
+  diagnosis + proposed action, presents it to the human for approval, then applies the
+  approved action:
 
   ```python
   # Copyright 2026 Mike. Licensed under Apache 2.0.
@@ -2666,23 +2687,27 @@ ros2 topic echo /robot_001/amcl_pose
   import anthropic
   import json
   import os
-  import glob
-  import subprocess
+  import sqlite3
   from pathlib import Path
+
+  from tools.baseline_monitor import check_run
 
   client = anthropic.Anthropic()
 
-  # Named locations matching the bedroom world geometry.
-  # Claude uses these names in mission plans instead of raw (x, y) coordinates.
+  FLEET_DB = os.environ.get("FLEET_DB", "reports/fleet_runs.db")
+
+  # Named locations matching the real bedroom_simple.sdf model poses — one hallway
+  # leading into a single bedroom, not a symmetric grid. Claude uses these names in
+  # mission plans instead of raw (x, y) coordinates.
   SEMANTIC_MAP = {
-      'home_base':       (-1.276, 1.09),   # robot spawn point
-      'center':          (0.0,   0.0),
-      'north_corridor':  (0.0,   2.5),
-      'south_corridor':  (0.0,  -2.5),
-      'east_zone':       (2.5,   0.0),
-      'west_zone':       (-2.5,  0.0),
-      'obstacle_zone_1': (1.0,   1.0),     # furniture obstacle 1 in SDF
-      'obstacle_zone_2': (-1.0,  0.5),     # furniture obstacle 2 in SDF
+      'home_base':     (-1.276, 1.2),      # robot spawn — outer hallway arch
+      'hallway_west':  (-2.6435, 1.6740),
+      'hallway_east':  (1.2805, 1.6930),
+      'bedroom_goal':  (0.0, 3.7),         # BR-01 goal — bedroom floor centre
+      'dresser':       (0.0074, 2.7583),   # just inside the bedroom doorway
+      'desk':          (-0.9590, 5.3240),
+      'pc_tower':      (-1.0360, 4.2050),  # obstacle near the desk
+      'bed':           (0.8130, 5.4360),
   }
 
   TOOLS = [
@@ -2759,13 +2784,15 @@ ros2 topic echo /robot_001/amcl_pose
   ]
 
 
-  def load_latest_run():
-      """Load the most recent run JSON from reports/history/."""
-      files = sorted(glob.glob('reports/history/*.json'))
-      if not files:
-          raise FileNotFoundError('No run reports found in reports/history/')
-      with open(files[-1]) as f:
-          return json.load(f)
+  def load_latest_run(db_path=FLEET_DB):
+      """Load the most recent row from the `runs` table."""
+      conn = sqlite3.connect(db_path)
+      conn.row_factory = sqlite3.Row
+      row = conn.execute('SELECT * FROM runs ORDER BY id DESC LIMIT 1').fetchone()
+      conn.close()
+      if row is None:
+          raise FileNotFoundError(f'No runs found in {db_path}')
+      return dict(row)
 
 
   def resolve_goals(goals):
@@ -2781,32 +2808,42 @@ ros2 topic echo /robot_001/amcl_pose
       return resolved
 
 
-  def diagnose(run_data):
-      """Call Claude with telemetry; get structured diagnosis and proposed action."""
+  def diagnose(run_data, db_path=FLEET_DB):
+      """Call Claude with telemetry + drift context; get structured diagnosis and proposed action."""
       locations_str = '\n'.join(f'  {k}: {v}' for k, v in SEMANTIC_MAP.items())
+
+      # Reuse the real drift detector (Session 12) instead of re-deriving pass/fail from
+      # hardcoded thresholds — it compares against a rolling baseline of past PASS runs.
+      drift_reports = check_run(run_data['id'], db_path=db_path)
+      if drift_reports:
+          drift_str = '\n'.join(
+              f'  {r.metric}: current={r.current:.2f} baseline_mean={r.mean:.2f} '
+              f'sigma={r.sigma:.1f} {"FLAGGED" if r.flagged else "ok"}'
+              for r in drift_reports
+          )
+      else:
+          drift_str = '  Not enough baseline history yet (need 3+ prior PASS runs).'
+
       prompt = f"""You are an autonomous robotics test engineer.
 
-  The latest nav test run produced these results:
+  The latest nav test run (id={run_data['id']}, scenario={run_data['scenario']},
+  result={run_data['result']}, sim_engine={run_data.get('sim_engine')}):
   {json.dumps(run_data, indent=2)}
 
-  Drift thresholds (from config/drift_config.yaml):
-  - nav_success_rate: >= 0.95
-  - mean_position_error_m: <= 0.15
-  - odom_hz: >= 45
-  - scan_hz: >= 9
-  - collision_count: 0
+  Drift report against the rolling baseline (config/drift_config.yaml sigma thresholds):
+{drift_str}
 
   Available named locations in this environment (use these in mission plans):
 {locations_str}
 
-  Analyse the results. If any metric is outside threshold, diagnose the likely cause
-  and use ONE tool to propose a concrete action. If all metrics are healthy, use
-  propose_mission_plan with semantic location names to create a more challenging
-  multi-waypoint mission (e.g. "patrol north and south corridors, return to home_base")
-  or use generate_world_variant to propose a harder obstacle layout."""
+  Analyse the results. If any metric is FLAGGED, diagnose the likely cause and use ONE
+  tool to propose a concrete action. If nothing is flagged, use propose_mission_plan
+  with semantic location names to create a more challenging multi-waypoint mission
+  (e.g. "visit the bedroom goal, then the desk, then return to home_base") or use
+  generate_world_variant to propose a harder obstacle layout."""
 
       response = client.messages.create(
-          model='claude-sonnet-4-6',
+          model='claude-sonnet-5',
           max_tokens=2048,
           tools=TOOLS,
           messages=[{'role': 'user', 'content': prompt}],
@@ -2855,7 +2892,8 @@ ros2 topic echo /robot_001/amcl_pose
 
   def run_loop():
       run_data = load_latest_run()
-      print(f'[agentic] Loaded run: {run_data["run_id"]}')
+      print(f"[agentic] Loaded run {run_data['id']}: "
+            f"{run_data['scenario']} ({run_data['result']})")
 
       response = diagnose(run_data)
 
@@ -2899,25 +2937,45 @@ ros2 topic echo /robot_001/amcl_pose
 
 - [ ] **Test the loop end-to-end on bare metal**:
   ```bash
-  # Make sure a run report exists:
-  ls reports/history/
+  # Confirm at least one run exists (no `sqlite3` CLI on this machine — use python):
+  python -c "
+  import sqlite3
+  print(sqlite3.connect('reports/fleet_runs.db').execute('SELECT COUNT(*) FROM runs').fetchone())
+  "
 
   # Run the agentic loop:
   python tools/agentic_loop.py
-  # Claude analyses the run, proposes an action
+  # Claude analyses the run + drift report, proposes an action
   # You see the proposal and approve/reject
   # If approved: world variant created OR nav param change shown OR mission plan saved
   ```
 
-- [ ] **Inject a failure and verify diagnosis** — manually edit a copy of a run report,
-  set `nav_success_rate` to 0.7 and `mean_position_error_m` to 0.22, save it as a new
-  file in `reports/history/`, then run `agentic_loop.py` and check that Claude correctly
-  identifies the failure and proposes a nav param change:
+- [ ] **Inject a failure and verify diagnosis** — work on a scratch copy of the DB, not
+  the real `reports/fleet_runs.db` (same pattern used to verify `baseline_monitor.py` in
+  Session 12): seed a few extra PASS rows so `check_run()` has a baseline, then insert one
+  bad row and confirm Claude sees it FLAGGED and proposes a nav param change.
   ```bash
-  cp reports/history/<latest>.json reports/history/injected_failure.json
-  # Edit injected_failure.json: nav_success_rate=0.7, mean_position_error_m=0.22
-  python tools/agentic_loop.py
-  # Claude should propose: propose_nav_param_change (e.g. increase inflation_radius or reduce speed)
+  cp reports/fleet_runs.db /tmp/agentic_test.db
+  python -c "
+  import random
+  from tools.telemetry_logger import log_run
+  db = '/tmp/agentic_test.db'
+  random.seed(42)
+  # Needs real variance across seed rows — 3+ identical values give stddev=0.0, which
+  # check_run() treats as 'no meaningful baseline' and skips (found the hard way
+  # verifying baseline_monitor.py itself in Session 12).
+  for _ in range(9):
+      log_run(scenario='bedroom_nav', steps=73, final_x=0.0, final_y=3.7, result='PASS',
+              step_log=[], db_path=db, nav_success_rate=1.0,
+              mean_position_error=0.15 + random.uniform(-0.03, 0.03),
+              collision_rate=0.0, odom_hz_mean=50.0, lidar_hz_mean=10.5, camera_hz_mean=10.5)
+  log_run(scenario='bedroom_nav', steps=73, final_x=1.5, final_y=2.8, result='FAIL',
+          step_log=[], db_path=db, nav_success_rate=0.0, mean_position_error=1.5,
+          collision_rate=0.0, odom_hz_mean=50.0, lidar_hz_mean=10.5, camera_hz_mean=10.5)
+  "
+  FLEET_DB=/tmp/agentic_test.db python tools/agentic_loop.py
+  # Claude should see mean_position_error FLAGGED and propose: propose_nav_param_change
+  # (e.g. increase inflation_radius or reduce speed)
   ```
 
 - [ ] **Test generative world variant** — when all metrics are healthy, Claude should call
@@ -2936,8 +2994,8 @@ ros2 topic echo /robot_001/amcl_pose
   ```
 
 ### Session Complete When
-- `python tools/agentic_loop.py` runs end-to-end: loads report, Claude diagnoses, proposes action, human approves, action applied
-- Injected failure triggers a `propose_nav_param_change` response
+- `python tools/agentic_loop.py` runs end-to-end: loads the latest run row from `FLEET_DB`, Claude diagnoses against the real drift report, proposes action, human approves, action applied
+- Injected failure (scratch DB) triggers a `propose_nav_param_change` response
 - Healthy run triggers a `generate_world_variant` response
 - New SDF world variant passes `gz sdf -k` validation
 
