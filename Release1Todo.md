@@ -3052,18 +3052,33 @@ ros2 topic echo /robot_001/amcl_pose
   - On completion: Jetson boots to Ubuntu desktop
   - Verify: `cat /etc/os-release` reports 24.04
 
-- [ ] **Storage: flash to MicroSD and record a baseline (decision 2026-07-03):**
-  R1 boots from MicroSD (the dev kit default). NVMe SSD migration is a Session 16+ item —
-  swapping later is a reflash, not a redesign (nothing in the repo cares about the storage
-  medium; all paths are relative to `~`). Measuring the same numbers on SD now and NVMe later
-  produces a published before/after table — the same "measured, marketed" pattern as the
-  QEMU→native build number. Record during this session:
+- [ ] **Storage: flash to MicroSD and record a baseline:**
+  R1 ships on MicroSD (the dev kit default). Record during this session:
   - apt/ROS2 install wall time
   - `time colcon build --symlink-install` (native arm64 on SD)
   - first `docker pull` time of the stage-2 image (see container step below)
-  > **SD hygiene until the NVMe migration:** don't record rosbags or heavy logs to the SD
-  > card — storage write speed only bites when *recording*, and sustained writes are what
+  > **SD hygiene:** don't record rosbags or heavy logs to the SD card while it's still in
+  > use — storage write speed only bites when *recording*, and sustained writes are what
   > wear SD cards out. DDS traffic itself is RAM-to-RAM and doesn't touch storage.
+
+- [ ] **Swap to NVMe SSD and re-record the same numbers (moved up from Session 16+,
+  2026-07-06)** — do this now, while the module is still a bare dev kit on the desk, not
+  after Session 15 transfers it into the robot chassis. Swapping storage is strictly easier
+  before it's wired into anything:
+  ```bash
+  # Reflash to NVMe via SDK Manager — same recovery-mode/USB-C process as the
+  # original flash step above, just targeting the NVMe device this time.
+  ```
+  Re-run the exact same three measurements (apt/ROS2 install, `colcon build`, `docker
+  pull`) on NVMe and publish the SD-vs-NVMe before/after table in BLUEPRINT.md's decisions
+  log — the second "measured, marketed" number after QEMU→native.
+  > **Trade-off to know going in:** an SD card can be re-flashed from any PC with a card
+  > reader — quick, no special mode needed. Wiping/reflashing NVMe requires recovery mode
+  > + SDK Manager every time. The SD card's "golden image, quick-restore" convenience goes
+  > away once you're on NVMe — worth it for write endurance, but it's a real cost, not a
+  > pure upgrade. **This becomes mandatory, not optional, if the R2 leader-node role ever
+  > lands** — central telemetry logging + an on-robot fleet DB is sustained-write duty a
+  > MicroSD card can't take.
 
 - [ ] **Initial Jetson setup** (SSH from workstation — find Jetson IP via router or `arp -a`):
   ```bash
@@ -3193,6 +3208,8 @@ ros2 topic echo /robot_001/amcl_pose
 - `colcon build` succeeds on Jetson (native arm64)
 - `stage-2-arm64` CI job runs green on `jetson-runner`
 - Speedup vs QEMU recorded in BLUEPRINT.md
+- SD-vs-NVMe before/after table (apt/ROS2 install, `colcon build`, `docker pull`) published
+  in BLUEPRINT.md's decisions log
 
 ---
 
@@ -3426,19 +3443,6 @@ into nav with no monitor/keyboard/SSH — is this item:
   script.
 - Acceptance test: power-cycle the robot headless; it localizes and accepts a
   `navigate_to_pose` goal sent from the workstation.
-
-### NVMe SSD migration (decision 2026-07-03: R1 runs on MicroSD)
-
-- Reflash to NVMe via SDK Manager (recovery mode, USB-C OTG), then re-run the Session 14
-  storage baseline: apt/ROS2 install time, `colcon build` time, `docker pull` time, CI job
-  wall time.
-- Publish the SD-vs-NVMe before/after table in BLUEPRINT's decisions log — second
-  "measured, marketed" number after QEMU→native.
-- Trade-off to know going in: an SD card can be re-flashed from any PC with a card reader;
-  wiping NVMe requires recovery mode + SDK Manager. The "golden image" quick-restore
-  convenience goes away.
-- **Becomes mandatory (not optional) if the R2 leader-node role lands** — central telemetry
-  logging plus a fleet DB on the Jetson is sustained-write duty a MicroSD card can't take.
 
 ### Deferred Nav2 capability (from Session 11/12 Isaac debugging)
 
