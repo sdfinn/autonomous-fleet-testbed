@@ -3000,7 +3000,12 @@ ros2 topic echo /robot_001/amcl_pose
   planning/costmap issue rather than collision or sensor (zero collisions, healthy Hz
   metrics) since the robot moved but stopped short of goal, and proposed reducing
   `local_costmap.inflation_layer.inflation_radius` from 0.55 to 0.30 — exactly the
-  `propose_nav_param_change` response expected.
+  `propose_nav_param_change` response expected. **Caught a real limitation checking
+  this:** the claimed `current_value` (0.55) is wrong — the actual value in
+  `nav2_params.yaml` is 0.25 (confirmed directly). `diagnose()`'s prompt never includes
+  the real params file, so Claude infers a plausible `current_value` rather than reading
+  ground truth. Trust `proposed_value` + rationale, not `current_value`, until the real
+  file gets fed into the prompt — not done this session, worth a follow-up.
 
 - [x] **Test generative world variant** — when all metrics are healthy, Claude should call
   `generate_world_variant`. Approve it, then verify the new SDF file is valid:
@@ -3496,6 +3501,12 @@ sim" idea, refined through discussion:
 > loop feeds live results back into both sim improvement and nav parameter tuning.
 
 **Direction for Session 16:**
+- **Feed the real `nav2_params.yaml` into `diagnose()`'s prompt (gap found 2026-07-06).**
+  Right now Claude infers a plausible-sounding `current_value` for
+  `propose_nav_param_change` instead of reading the actual file — verified wrong once
+  already (claimed 0.55 for `inflation_radius`, the real value is 0.25). Only
+  `proposed_value` + rationale are trustworthy today; fixing this before the loop runs
+  against real hardware, where a wrong assumed baseline matters more.
 - Run `tools/agentic_loop.py` against real run reports (`sim_engine: 'real'`)
 - Claude compares real vs sim metrics, identifies sim fidelity gaps, proposes sim
   parameter updates to close the gap

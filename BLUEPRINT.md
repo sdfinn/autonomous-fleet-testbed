@@ -400,3 +400,29 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   existing x86 self-hosted runner model), occasional deliberate re-flash to catch drift —
   not a re-flash-per-CI-run policy, which isn't practical anyway (SDK Manager flashing is
   a manual, tethered, recovery-mode process, not something a webhook can trigger).
+- **2026-07-06 — Session 13 complete: agentic test/heal loop working end-to-end against
+  the live Claude API.** `tools/agentic_loop.py` reads the latest run + real drift report
+  (`baseline_monitor.check_run()`, not hardcoded thresholds) and proposes one of three
+  actions via tool use, human approval required. Verified live, not just reviewed: a
+  healthy run correctly reported insufficient baseline history and proposed a real
+  multi-waypoint mission using actual `SEMANTIC_MAP` locations; an injected failure
+  (scratch DB) flagged `mean_position_error` at sigma=76.6 and correctly proposed reducing
+  `inflation_radius` after ruling out collision/sensor causes first. `generate_world_variant`
+  was verified directly (`gz sdf -k` confirmed valid output) rather than via repeated LLM
+  re-rolls, since Claude consistently and reasonably preferred the mission-plan tool given
+  how little run history exists so far. Found and fixed two bugs in the reviewed plan's own
+  code: a broken separator string in `human_approval()`, and `python tools/agentic_loop.py`
+  failing outright (`ModuleNotFoundError`) since the plain-script form doesn't put the repo
+  root on `sys.path` — must use `python -m tools.agentic_loop`. Also discovered and worked
+  around: Ubuntu's default `.bashrc` skips the whole file for non-interactive shells, so an
+  `ANTHROPIC_API_KEY` export added there never reached this tool's non-interactive Bash
+  sessions even after `source ~/.bashrc` — see CLAUDE.md gotcha.
+  **Known limitation found post-verification:** the injected-failure test's proposal
+  claimed `"current_value": "0.55"` for `local_costmap.inflation_layer.inflation_radius` —
+  the real value in `nav2_params.yaml` is 0.25 (confirmed directly). `diagnose()`'s prompt
+  never includes the actual params file, so Claude infers a plausible-sounding
+  `current_value` from general Nav2 knowledge rather than reading ground truth. Only
+  `proposed_value` + rationale should inform a human's decision; `current_value` in any
+  proposal isn't trustworthy as-is. Feeding the real `nav2_params.yaml` into the prompt
+  would fix this — not done in Session 13, worth a follow-up before this tool is trusted
+  for anything beyond a human-reviewed suggestion.
