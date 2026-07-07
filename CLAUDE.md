@@ -57,14 +57,21 @@ docker buildx build --platform linux/arm64 \
   - `maps/`                — pre-built Nav2 occupancy grid from BC project (0.05 m/px)
   - `config/nav2_params.yaml` — Nav2 params tuned for this room and robot
 - `tools/`          — Python utilities (baseline monitor, telemetry logger, etc.)
+  - `agentic_loop.py` — Session 13: reads the latest run + drift report, has Claude
+    propose a nav2 param change / harder SDF world / mission plan, human approves.
+    Requires `ANTHROPIC_API_KEY`. **Must run as `python -m tools.agentic_loop`, not
+    `python tools/agentic_loop.py`** — the plain-script form fails with
+    `ModuleNotFoundError` (see Gotchas).
 - `tests/`          — pytest test suite
 - `config/`         — drift_config.yaml
 - `robot_profiles/` — Per-robot capability YAML
 - `requirements/`   — Traceability matrix and requirement specs
+- `docs/`           — architecture review notes, simulation-environments writeup, project
+  overview slide deck (`autonomous-fleet-testbed-overview.pptx`, python-pptx generated)
 - `reports/fleet_runs.db` — SQLite telemetry store (`FLEET_DB` env var) — the single source
   all tools read/write (telemetry_logger, baseline_monitor drift detection, dashboard,
-  generate_test_report, validate_telemetry). `reports/history/` is empty/unused — the
-  JSON-per-run idea was dropped in the 2026-07-03 Session 12 review.
+  generate_test_report, validate_telemetry, agentic_loop). `reports/history/` is
+  empty/unused — the JSON-per-run idea was dropped in the 2026-07-03 Session 12 review.
 - `.github/workflows/ci.yml` — 6-stage CI pipeline
 - `GazeboCommands.md` — Gazebo viewer navigation cheat sheet
 
@@ -80,7 +87,16 @@ docker buildx build --platform linux/arm64 \
   Ambient-only = black surfaces. Both the SDF world and URDF gazebo blocks use `<diffuse>`.
 - Isaac Sim session (Session 11): requires NVIDIA driver 570+. Driver 595.71.05 already installed.
 - `requirements.txt` is a full pip freeze of the local ROS2 venv — NOT for CI use. Use `requirements-ci.txt` in CI jobs.
-- DB path env var is `FLEET_DB` (default: `reports/fleet_runs.db`) — used by telemetry_logger, validate_telemetry, ai_test_generator, dashboard
+- DB path env var is `FLEET_DB` (default: `reports/fleet_runs.db`) — used by telemetry_logger,
+  validate_telemetry, ai_test_generator, dashboard, baseline_monitor, generate_test_report, agentic_loop
+- **`ANTHROPIC_API_KEY` in `.bashrc` doesn't reach non-interactive shells/tools.** Ubuntu's
+  default `.bashrc` has an early guard (`case $- in *i*) ;; *) return;; esac`) that skips
+  the entire rest of the file when the shell isn't interactive — which includes Claude
+  Code's own Bash tool. `source ~/.bashrc` there silently does nothing past that guard, so
+  any export added below it (e.g. `ANTHROPIC_API_KEY` for `tools/agentic_loop.py`) never
+  takes effect. Workaround for a non-interactive shell: `eval "$(grep '^export
+  ANTHROPIC_API_KEY' ~/.bashrc)"` — targeted, doesn't print the key. Real terminals
+  (interactive) are unaffected and work fine as-is.
 - `tests/test_ros2_contracts.py` requires a live ROS2 environment — always `--ignore` it in local pytest runs
 - `tests/test_navigation.py` also requires a live ROS2 environment (`import rclpy` at module
   level) plus a running Gazebo/Isaac + Nav2 stack — same treatment as `test_ros2_contracts.py`
