@@ -175,6 +175,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Ensure persistent telemetry dir exists
+        # FLEET_DB above points outside the job workspace so history accumulates across
+        # runs — sqlite3.connect() doesn't create missing parent dirs, so the first-ever
+        # run needs this before any test can log a row.
+        run: mkdir -p /home/mike/fleet-ci-data
+
       - name: Build workspace
         run: |
           source /opt/ros/jazzy/setup.bash
@@ -225,6 +231,9 @@ jobs:
       SIM_ENGINE: isaac
     steps:
       - uses: actions/checkout@v4
+
+      - name: Ensure persistent telemetry dir exists
+        run: mkdir -p /home/mike/fleet-ci-data
 
       - name: Build workspace
         run: |
