@@ -237,6 +237,12 @@ docker buildx build --platform linux/arm64 \
   Nav2 subscriber (even if Isaac kept running) gets the entire history replayed, causing thousands
   of "jump back in time" warnings and goal rejection. Rule: kill BOTH Isaac and Nav2 between runs.
   Start Nav2 within ~5s of Isaac's "Simulation running" message so the replayed history is small.
+  **Worth investigating (2026-07-06), not yet done:** `scripts/isaac_bedroom_gui.py`'s
+  `ROS2PublishRawTransformTree` OmniGraph node has no explicit QoS override — TRANSIENT_LOCAL
+  is just whatever it defaults to, not a setting anyone chose deliberately. Standard ROS2
+  convention is `/tf` on VOLATILE QoS (only `/tf_static` should be TRANSIENT_LOCAL). If that
+  node exposes a `qosProfile` input, overriding it to VOLATILE could remove this restart
+  requirement at the source instead of managing around it forever — hasn't been tried yet.
 - **Global costmap obstacle_layer causes "Start occupied" on replan — only with periodic
   replanning.** During navigation, live lidar scans of furniture (e.g. PC tower) accumulate in
   the global costmap's obstacle layer. If the BT triggers a *periodic* replan from a position
