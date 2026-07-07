@@ -44,3 +44,6 @@ maps/*.yaml
 # OS
 .DS_Store
 Thumbs.db
+
+# LibreOffice lock files
+.~lock.*#
