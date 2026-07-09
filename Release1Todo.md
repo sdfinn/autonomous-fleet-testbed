@@ -3082,6 +3082,17 @@ ros2 topic echo /robot_001/amcl_pose
 
 ### Steps
 
+> **➡️ Detailed do-it-yourself runbook: [`JetsonInstallSession14.md`](JetsonInstallSession14.md).**
+> That doc is the step-by-step version of everything below (unpack → flash → headless SSH →
+> smoke tests → ROS2 → baseline → CI runner → NVMe). The checkboxes here are the summary.
+
+> **⚠️ Correction (2026-07-08): JetPack 7.2 removed the microSD card image.** The old
+> "burn an SD image with Etcher and boot it" workflow — and the "R1 ships on MicroSD, the dev
+> kit default (a pre-imaged card)" framing below — no longer exist. JetPack 7.2 installs only
+> via (a) **SDK Manager** over USB-C in recovery mode, or (b) a unified **Jetson ISO** written
+> to a *USB stick* that installs onto microSD/NVMe. We use SDK Manager (host = the x86 box).
+> "MicroSD first" still works: you just select microSD as the *flash target* in SDK Manager.
+
 - [ ] **Install NVIDIA SDK Manager on workstation**:
   ```bash
   # Download .deb from https://developer.nvidia.com/sdk-manager
@@ -3089,16 +3100,20 @@ ros2 topic echo /robot_001/amcl_pose
   sdkmanager  # launches GUI
   ```
 
-- [ ] **Flash JetPack via SDK Manager**:
-  - Connect Jetson in recovery mode (hold RECOVERY button, press POWER)
-  - SDK Manager → select Jetson Orin Nano → **JetPack 7.2** (not 6.x — see decision note above)
-  - Select: Jetson Linux (BSP) + ROS-related components if offered
-  - Flash — takes 20–40 min
-  - On completion: Jetson boots to Ubuntu desktop
-  - Verify: `cat /etc/os-release` reports 24.04
+- [ ] **Flash JetPack 7.2 via SDK Manager** (full steps in `JetsonInstallSession14.md` Part 3):
+  - Jetson into recovery mode: **short `FC REC`↔`GND` on J14 while applying power** (confirm
+    pin numbers against the printed quick-start card), USB-C to the host; verify with
+    `lsusb | grep -i nvidia` → `0955:7523 APX`.
+  - SDK Manager → Jetson Orin Nano (module **P3767-0005** / carrier **P3768-0000**) →
+    **JetPack 7.2** (not 6.x — see decision note above).
+  - **Pre-config the OS account** (username/password/hostname) so first boot is headless — no
+    OEM wizard, SSH-ready.
+  - **Storage target = microSD** for this first flash (OS image only; add SDK components after).
+  - Flash — takes 20–40 min. Verify after first boot: `cat /etc/os-release` reports 24.04.
 
 - [ ] **Storage: flash to MicroSD and record a baseline:**
-  R1 ships on MicroSD (the dev kit default). Record during this session:
+  R1's baseline is captured on MicroSD (selected as the SDK Manager flash target — there is no
+  pre-imaged card in JetPack 7.2). Record during this session:
   - apt/ROS2 install wall time
   - `time colcon build --symlink-install` (native arm64 on SD)
   - first `docker pull` time of the stage-2 image (see container step below)
