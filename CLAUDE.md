@@ -324,3 +324,43 @@ ros2 topic echo /robot_001/amcl_pose
 
 **Between runs:** `pkill -9 -f "isaac_bedroom|component_container_isolated|robot_state_publisher"`
 then wait 5s for DDS to clear before restarting.
+
+## Jetson Orin Nano Gotchas (Session 14+)
+
+Full step-by-step runbook: `JetsonInstallSession14.md`. **In progress as of 2026-07-08** —
+hardware flashed/networked/smoke-tested, paused before ROS2 install (resume at that doc's
+Part 6). Confirmed-for-this-board state, not guesses: username `Mike` (capital M — set during
+SDK Manager pre-config), IP `10.42.0.217` (DHCP lease from the shared Ethernet connection, may
+change across reboots — re-check with `ip neigh show dev enp6s0`), hostname still
+`localhost.localdomain` (pre-config screen only asked for username/password this run, not
+hostname).
+- **JetPack 7.2 removed the microSD card image.** The old "flash an SD image with Etcher and
+  boot it" workflow no longer exists. Flash via **SDK Manager** over USB-C in recovery mode
+  (what we used), or the Jetson-ISO-on-USB installer as a fallback (needs a monitor+keyboard).
+- **NVIDIA SDK Manager's "Download for Ubuntu" button is a login-gated browser redirect with
+  no stable URL** — not curl/wget-able directly. Use the apt network-install method instead:
+  ```bash
+  wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+  sudo dpkg -i cuda-keyring_1.1-1_all.deb
+  sudo apt-get update && sudo apt-get -y install sdkmanager
+  ```
+- **Recovery mode:** short `FC REC`↔`GND` on the J14 header while applying DC power, hold ~2–3s
+  after power comes on, then release. Verify from the host with `lsusb | grep -i nvidia` →
+  expect `0955:7523 NVIDIA Corp. APX`. A charge-only USB-C cable (no data lines) is the #1
+  cause of recovery mode not being detected.
+- **SDK Manager's OEM pre-config screen isn't guaranteed to ask for all three fields.** It
+  prompted for username/password but silently skipped hostname on this flash — don't assume
+  "it asked for some fields" means "it asked for all of them"; check `hostname` after first
+  boot before relying on `<hostname>.local` mDNS (it won't resolve if hostname wasn't set).
+- **`ssh-copy-id` requires an existing local SSH keypair** — `ssh-keygen -t ed25519` first if
+  `~/.ssh/*.pub` doesn't exist, or it fails with `ERROR: No identities found`.
+- **`ping` failing after the shared-Ethernet setup doesn't necessarily mean NAT is broken.**
+  Confirmed on this network: `ping nvidia.com` gets 100% packet loss even with `ip_forward=1`,
+  `ufw` inactive, and a correct `MASQUERADE` rule with live, incrementing packet counters
+  (`sudo iptables -t nat -L POSTROUTING -n -v`). The network silently drops outbound ICMP;
+  `curl -I http://nvidia.com` or `curl -s ifconfig.me` from the Jetson is the real test.
+- **Target Components (CUDA/cuDNN/TensorRT) are worth skipping on the first flash.** Uncheck
+  them in SDK Manager for a clean OS-only flash, confirm boot, then add later with
+  `sudo apt install nvidia-jetpack` if on-device GPU inference is ever needed (L4T apt sources
+  are already present post-flash — no re-flash required). `nvcc: command not found` and empty
+  `dpkg-query --show nvidia-jetpack` are expected in this state, not a problem.
