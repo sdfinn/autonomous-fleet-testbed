@@ -426,3 +426,21 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   proposal isn't trustworthy as-is. Feeding the real `nav2_params.yaml` into the prompt
   would fix this — not done in Session 13, worth a follow-up before this tool is trusted
   for anything beyond a human-reviewed suggestion.
+- **2026-07-08 — Session 14 in progress: hardware flash + network verified, paused before
+  ROS2 install.** Real Jetson Orin Nano Super hardware (not simulated) flashed with JetPack
+  7.2 via SDK Manager over USB-C recovery mode — `lsusb` confirmed `0955:7523 APX` before
+  flashing, `/etc/nv_tegra_release` confirmed `R39 REVISION: 2.0` (= L4T r39.2 = JetPack 7.2)
+  after. Direct-Ethernet + NetworkManager-shared networking (Part 4) came up clean: SSH
+  reachable at `10.42.0.217`, internet confirmed via `curl`/HTTP (plain ICMP `ping nvidia.com`
+  was a false negative — that network silently drops outbound ICMP; NAT/MASQUERADE itself was
+  verified healthy via `iptables -t nat -L POSTROUTING -v` packet counters). Full Part 5 smoke
+  test passed: rootfs correctly on `mmcblk0p1` (microSD, as planned), 97G free, power mode set
+  to max (`nvpmodel -m 0`), thermals nominal. Two flash-time choices to revisit later, not
+  blockers: SDK Manager's pre-config screen only asked for username/password this run (not
+  hostname, still `localhost.localdomain` — fix with `hostnamectl set-hostname` whenever
+  convenient), and Target Components (CUDA/cuDNN/TensorRT) were intentionally skipped for a
+  clean OS-only first flash (add later with `sudo apt install nvidia-jetpack` once on-device
+  inference for navigation is actually needed — L4T apt sources are already present, no
+  re-flash required). **Session paused here — resume at `JetsonInstallSession14.md` Part 6**
+  (ROS2 Jazzy install); Parts 7–10 (native build baseline, CI runner, NVMe migration, closeout)
+  not yet attempted.

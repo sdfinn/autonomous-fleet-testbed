@@ -23,7 +23,7 @@
 | 11 | Isaac Sim: Install + First Nav Test | ✅ |
 | 12 | Reports + Dashboard: True End-to-End | ✅ |
 | 13 | Agentic Test Loop in Sim | ✅ |
-| 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | ⬜ |
+| 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | 🔄 (Parts 1–5 done, resume at Part 6 — see `JetsonInstallSession14.md`) |
 | 15 | Real Robot: Deploy + Sim-to-Real Comparison | ⬜ |
 | 16+ | Agentic Loop on Real Hardware + Advanced Missions | ⬜ |
 
@@ -3037,6 +3037,12 @@ ros2 topic echo /robot_001/amcl_pose
 ---
 
 ## Session 14 — Jetson Orin Nano: Flash + ROS2 + CI Runner (~3 hrs)
+
+> **🔄 In progress (2026-07-08).** Hardware flashed, networked, and smoke-tested successfully —
+> **resume at `JetsonInstallSession14.md` Part 6 (Install ROS2 Jazzy)**. State to know before
+> resuming: username `Mike` (capital M), IP `10.42.0.217` (DHCP, may shift), hostname still
+> `localhost.localdomain` (not fixed yet), CUDA/TensorRT intentionally not installed. Full
+> detail and a power-up checklist are in that doc's Part 5 end-of-session note and Part 6 intro.
 
 ### Recommended Reading
 - [NVIDIA SDK Manager](https://developer.nvidia.com/sdk-manager) — the flashing tool; install on Ubuntu host

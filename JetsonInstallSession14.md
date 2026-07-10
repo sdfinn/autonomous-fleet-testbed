@@ -63,12 +63,12 @@
   (not on your microSD/NVMe). SDK Manager updates this as part of flashing.
 
 ### Bill of materials — check you have all of this
-- [ ] Jetson Orin Nano Super Developer Kit (module + carrier board)
-- [ ] Included DC power supply (**use the real supply, not a random USB-C charger** — sustained
+- [x] Jetson Orin Nano Super Developer Kit (module + carrier board)
+- [x] Included DC power supply (**use the real supply, not a random USB-C charger** — sustained
       loads want the full wattage)
-- [ ] **USB-C cable that carries data** (many cables are charge-only — a charge-only cable is
+- [x] **USB-C cable that carries data** (many cables are charge-only — a charge-only cable is
       the #1 cause of "recovery mode not detected"). Connects Jetson ⇄ workstation.
-- [ ] microSD card, **64 GB or larger**, decent brand (Session 7 baseline lives here)
+- [x] microSD card, **64 GB or larger**, decent brand (Session 7 baseline lives here)
 - [ ] NVMe M.2 2280 SSD (for Part 9 — the Super kit usually ships with the M.2 slot empty)
 - [ ] Ethernet cable (Jetson → workstation directly)
 - [ ] Jumper wire / female-female jumper OR a paperclip (to short the recovery header)
@@ -88,9 +88,9 @@ revisions and shorting the *wrong* pins is the one genuinely risky step in this 
 **Why first:** you want to physically locate five things before any cable goes in, so that
 every later "plug X into Y" step is muscle memory, not a hunt.
 
-- [ ] Unpack the kit. Set the carrier board on something non-conductive (the antistatic bag or
+- [x] Unpack the kit. Set the carrier board on something non-conductive (the antistatic bag or
       the cardboard tray — **not** bare metal or carpet).
-- [ ] Locate and mentally label, using the printed card:
+- [x ] Locate and mentally label, using the printed card:
   1. **DC barrel jack** — power in.
   2. **USB-C port** — this is the port used for recovery-mode flashing to the host.
      (On the carrier this is the dedicated device-mode USB-C. Confirm on the card which
@@ -102,7 +102,7 @@ every later "plug X into Y" step is muscle memory, not a hunt.
      carrier there is a small header near the DC jack. **On the printed card, find the pin
      labeled `FC REC` (force recovery) and the adjacent `GND`.** These are the two you'll short
      in Part 3. Write down their pin numbers now.
-- [ ] Optional visual firmware clue: a brand-new **Super** kit ships with recent firmware, so
+- [x] Optional visual firmware clue: a brand-new **Super** kit ships with recent firmware, so
       the SDK-Manager path should work directly. We'll verify the firmware is new enough
       implicitly — if SDK Manager flashes JetPack 7.2 without complaint, the firmware was fine.
       (If it refuses, see Part 3's firmware note.)
@@ -118,17 +118,20 @@ every later "plug X into Y" step is muscle memory, not a hunt.
 **Why:** SDK Manager is host software. Everything in this part happens on your desktop, before
 the Jetson is even powered.
 
-- [ ] Confirm the host OS is 24.04 (it is — this is your dev box):
+- [x] Confirm the host OS is 24.04 (it is — this is your dev box):
   ```bash
   cat /etc/os-release   # expect: VERSION="24.04..."
   ```
-- [ ] Download **SDK Manager** (`.deb`) from <https://developer.nvidia.com/sdk-manager> and
-      install it:
+- [ ] Install **SDK Manager** via NVIDIA's apt repo (the page's "Download for Ubuntu" button is
+      a login-gated browser redirect with no stable URL — this network-install method is the
+      copy-paste-able alternative and needs no login):
   ```bash
-  cd ~/Downloads
-  sudo apt install ./sdkmanager_*_amd64.deb
+  wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+  sudo dpkg -i cuda-keyring_1.1-1_all.deb
+  sudo apt-get update
+  sudo apt-get -y install sdkmanager
   ```
-- [ ] Launch it once to confirm it opens and log in with your NVIDIA Developer account:
+- [x] Launch it once to confirm it opens and log in with your NVIDIA Developer account:
   ```bash
   sdkmanager
   ```
@@ -142,6 +145,8 @@ the Jetson is even powered.
   Note the Ethernet device name (e.g. `enp5s0`). Your Wi-Fi (e.g. `wlp...`) stays as-is and
   keeps the workstation online; we only touch the Ethernet port.
 
+  IT IS enp6s0  
+
 ---
 
 ## Part 3 — Flash JetPack 7.2 to microSD (SDK Manager)
@@ -150,18 +155,18 @@ the Jetson is even powered.
 > confirm pin numbers against the printed card.**
 
 ### 3.1 Put the Jetson into recovery mode
-- [ ] Make sure the Jetson is **fully powered off and unplugged** from DC. Wait ~10 s for
+- [x] Make sure the Jetson is **fully powered off and unplugged** from DC. Wait ~10 s for
       capacitors to discharge.
-- [ ] Insert the **microSD** into the module slot (if not already in from Part 1).
-- [ ] Connect the **USB-C cable** from the Jetson's device-mode USB-C port to a USB port on the
+- [x] Insert the **microSD** into the module slot (if not already in from Part 1).
+- [x] Connect the **USB-C cable** from the Jetson's device-mode USB-C port to a USB port on the
       workstation.
-- [ ] **Short the recovery pins:** using a jumper/paperclip, bridge **`FC REC` to `GND`** on the
+- [x] **Short the recovery pins:** using a jumper/paperclip, bridge **`FC REC` to `GND`** on the
       J14 header (the two pins you noted in Part 1). Hold the short.
-- [ ] **While holding the short**, plug the **DC power** back in. Keep the short for ~2–3 s
+- [x] **While holding the short**, plug the **DC power** back in. Keep the short for ~2–3 s
       after power comes on, then remove the jumper.
   > Some Super carriers have a labeled **FC REC push-button** instead — if so, the sequence is:
   > hold FC REC, apply power, keep holding 2–3 s, release. Same idea, no jumper.
-- [ ] Verify from the **workstation** that the board enumerated in recovery mode:
+- [x] Verify from the **workstation** that the board enumerated in recovery mode:
   ```bash
   lsusb | grep -i nvidia
   # expect a line like: ID 0955:7523 NVIDIA Corp. APX
@@ -170,7 +175,7 @@ the Jetson is even powered.
   USB-C cable (try a known-good data cable), and retry the short-then-power sequence.
 
 ### 3.2 Flash with SDK Manager
-- [ ] In SDK Manager (already logged in):
+- [x] In SDK Manager (already logged in):
   - **Step 1 — Product category / Target:** it should auto-detect the connected board. Select
     **Jetson Orin Nano [8GB Developer Kit]**. Confirm module **P3767-0005** / carrier
     **P3768-0000** if it asks.
@@ -182,14 +187,14 @@ the Jetson is even powered.
     components (CUDA/TensorRT/etc). Flash the OS, confirm it boots, *then* add components.
     This keeps the first flash fast and isolates "did the OS flash work?" from "did the SDK
     packages install?"
-- [ ] **Storage device** (critical): select **microSD** as the target runtime device — **not**
+- [x] **Storage device** (critical): select **microSD** as the target runtime device — **not**
       NVMe, not eMMC, for this first pass. (You migrate to NVMe in Part 9.)
   > **If microSD is *not* offered as a target device** in your SDK Manager build: SDK Manager
   > on some releases only targets NVMe/USB. In that case, either (a) use the **Jetson ISO on
   > USB** fallback below to install to microSD, or (b) accept flashing straight to **NVMe now**
   > and treat NVMe as your baseline (you were going there anyway — you'd just lose the
   > microSD-vs-NVMe comparison). Decide based on how much you care about the SD baseline number.
-- [ ] **Pre-configure the OS account (this is what makes first boot headless):** SDK Manager
+- [x] **Pre-configure the OS account (this is what makes first boot headless):** SDK Manager
       will offer a **"Pre-Config" / manual OEM setup** option before flashing. Fill in:
   - Username (e.g. `mike`)
   - Password
@@ -198,15 +203,15 @@ the Jetson is even powered.
   > Skipping this leaves the board waiting at the interactive **OEM setup wizard** on first
   > boot, which needs a monitor+keyboard. Filling it in = the board boots straight to a
   > login-ready, SSH-able system.
-- [ ] Start the flash. **OS-only flash to microSD ≈ 20–30 min.** Do not disturb the USB-C
+- [x] Start the flash. **OS-only flash to microSD ≈ 20–30 min.** Do not disturb the USB-C
       cable or power during this.
-- [ ] When SDK Manager reports success: **disconnect the USB-C cable.**
+- [x] When SDK Manager reports success: **disconnect the USB-C cable.**
 
 ### 3.3 First boot
-- [ ] Power-cycle the Jetson **without** the recovery short: unplug DC, wait 10 s, plug DC back
+- [x] Power-cycle the Jetson **without** the recovery short: unplug DC, wait 10 s, plug DC back
       in. (No jumper this time.)
-- [ ] Give it ~60 s to boot. Proceed to Part 4 to reach it over the network.
-- [ ] *(Fallback)* If anything looks wrong, attach the monitor (DisplayPort) + USB keyboard now
+- [x] Give it ~60 s to boot. Proceed to Part 4 to reach it over the network.
+- [x] *(Fallback)* If anything looks wrong, attach the monitor (DisplayPort) + USB keyboard now
       to watch the boot and log in locally.
 
 > **Firmware note (only if the flash *refuses* or the board won't boot 7.2):** the JetPack 7.2
@@ -238,39 +243,43 @@ Wi-Fi as the uplink.
 port into a tiny DHCP server + NAT router. The Jetson gets an address in `10.42.0.0/24`
 (NetworkManager's default shared subnet), and its internet is NAT'd out through your Wi-Fi.
 
-- [ ] Cable the Jetson's Ethernet port directly to the workstation's Ethernet port.
-- [ ] On the **workstation**, create a shared connection on the Ethernet interface (replace
-      `enp5s0` with the name you found in Part 2):
+- [x] Cable the Jetson's Ethernet port directly to the workstation's Ethernet port.
+- [x] On the **workstation**, create a shared connection on the Ethernet interface (confirmed
+      `enp6s0` in Part 2):
   ```bash
-  nmcli connection add type ethernet ifname enp5s0 con-name jetson-share ipv4.method shared
+  nmcli connection add type ethernet ifname enp6s0 con-name jetson-share ipv4.method shared
   nmcli connection up jetson-share
   ```
   This assigns the workstation `10.42.0.1` and starts handing out DHCP + NAT on that port.
   Your Wi-Fi connection is untouched and remains the internet source.
-- [ ] Find the Jetson's IP (it will be something like `10.42.0.x`):
+- [x] Find the Jetson's IP (it will be something like `10.42.0.x`):
   ```bash
   # Option A — mDNS by the hostname you set in SDK Manager:
   ping jetson-orin.local
 
   # Option B — scan the shared subnet:
-  ip neigh show dev enp5s0            # shows learned neighbors
+  ip neigh show dev enp6s0            # shows learned neighbors
   # or, if nmap is installed:
   nmap -sn 10.42.0.0/24
   ```
-- [ ] SSH in (use `.local` if mDNS works, otherwise the numeric IP):
+  > `10.42.0.217` is a DHCP lease from the shared connection, not a static assignment — it'll
+  > likely persist across reboots (same MAC → same lease) but re-check with `ip neigh` /
+  > `nmap` if SSH ever stops connecting.
+- [x] SSH in. **Confirmed for this board:** username is `Mike` (capital M — set during SDK
+      Manager's OEM pre-config), IP is `10.42.0.217`. Hostname pre-config was skipped, so the
+      Jetson is still `localhost.localdomain` — `.local` mDNS will **not** resolve; use the IP:
   ```bash
-  ssh mike@jetson-orin.local
-  # or: ssh mike@10.42.0.<n>
+  ssh Mike@10.42.0.217
   ```
-- [ ] Once in, confirm the Jetson has **internet through the shared link**:
+- [x] Once in, confirm the Jetson has **internet through the shared link**:
   ```bash
   ping -c 3 nvidia.com
   ```
   If ping fails but SSH worked, the NAT/DNS side of sharing isn't up — see troubleshooting.
-- [ ] **(Recommended) set up passwordless SSH** so later steps and the CI runner are smooth:
+- [x] **(Recommended) set up passwordless SSH** so later steps and the CI runner are smooth:
   ```bash
   # on the workstation:
-  ssh-copy-id mike@jetson-orin.local
+  ssh-copy-id Mike@10.42.0.217
   ```
 
 <details>
@@ -299,56 +308,88 @@ port into a tiny DHCP server + NAT router. The Jetson gets an address in `10.42.
 **Why:** confirm the OS, GPU stack, thermals, and storage are healthy *before* piling ROS2 and
 CI on top. Cheap now, expensive to untangle later. Run all of these over SSH on the Jetson.
 
-- [ ] **OS is what we expect:**
+- [x] **OS is what we expect:**
   ```bash
   cat /etc/os-release          # VERSION="24.04..."; UBUNTU_CODENAME=noble
   uname -a                     # aarch64
   ```
-- [ ] **JetPack / L4T version:**
+- [x] **JetPack / L4T version:**
   ```bash
   cat /etc/nv_tegra_release    # expect R39 (revision 2...) == L4T r39.2 == JetPack 7.2
   # If installed: dpkg-query --show nvidia-jetpack
   ```
-- [ ] **GPU / SoC live stats (Jetson's equivalent of nvidia-smi):**
+- [x] **GPU / SoC live stats (Jetson's equivalent of nvidia-smi):**
   ```bash
   sudo tegrastats            # live CPU/GPU/EMC/thermal; Ctrl-C to stop
   # nicer TUI if you install it:
   sudo pip3 install jetson-stats && sudo reboot   # then run: jtop
   ```
-- [ ] **Power mode / clocks** (Super kit supports a higher "MAXN SUPER" mode):
+- [x] **Power mode / clocks** (Super kit supports a higher "MAXN SUPER" mode):
   ```bash
   sudo nvpmodel -q            # show current power model
   sudo nvpmodel -m 0          # max performance (confirm mode number via -q list)
   sudo jetson_clocks          # pin clocks to max (optional, for benchmarking Part 7)
   ```
-- [ ] **CUDA present (only if you added SDK components):**
+- [x] **CUDA present (only if you added SDK components):**
   ```bash
   nvcc --version              # or: ls /usr/local/cuda*/bin
   ```
-- [ ] **Thermals sane at idle:** in `tegrastats`/`jtop`, confirm temps are reasonable (tens of
+  > Expected to say `command not found` on this board — Target Components (CUDA/cuDNN/TensorRT)
+  > were intentionally skipped in Part 3.2 for a clean OS-only first flash. Not needed for
+  > Parts 6–9. Revisit when GPU-accelerated inference is needed — see Part 10 follow-ups.
+- [x **Thermals sane at idle:** in `tegrastats`/`jtop`, confirm temps are reasonable (tens of
       °C idle, not thermal-throttling).
-- [ ] **Storage — confirm you're actually on the microSD** and note free space:
+- [x] **Storage — confirm you're actually on the microSD** and note free space:
   ```bash
   lsblk                       # rootfs should be on mmcblk* (microSD), not nvme*
   df -h /                     # note total/free
   ```
-- [ ] **Networking basics:** `hostname`, `ip -br addr`, `ping -c3 8.8.8.8`.
+- [x] **Networking basics:** `hostname`, `ip -br addr`, `ping -c3 8.8.8.8`.
 
 Record anything odd here before continuing.
+
+### Logging off / de-powering safely (end of session)
+- [x] On the **Jetson** (over SSH), shut the OS down cleanly — don't just pull power:
+  ```bash
+  sudo shutdown now
+  ```
+- [x] Wait for the SSH session to drop and give it ~15–20s past that for the filesystem to
+      finish unmounting (microSD is more corruption-prone than NVMe on a hard power cut).
+- [x] Unplug the **DC power** from the Jetson. Leave the microSD and USB-C cable connected/
+      inserted — nothing needs to come apart between sessions.
+- [x] On the **workstation**, the `jetson-share` connection can be left as-is (it'll just sit
+      idle with no link partner) or torn down if you want the Ethernet port back:
+      `nmcli connection down jetson-share`. Not required — recreating it next time is one
+      command (Part 4) if you do tear it down.
+- [x] Nothing else to clean up — you stopped at the end of Part 5, before Part 6 touched
+      anything, so there's no partial ROS2 install or build state to worry about.
 
 ---
 
 ## Part 6 — Install ROS2 Jazzy
 
+> **Resuming here after a break?** Power back up in this order:
+> 1. Plug the Jetson's **DC power** back in (no recovery-mode short this time — just a normal
+>    boot). Give it ~60s.
+> 2. On the **workstation**, bring the shared Ethernet connection back up (skip if you never
+>    tore it down): `nmcli connection up jetson-share`.
+> 3. Re-cable Jetson Ethernet → workstation Ethernet if it got disconnected.
+> 4. Confirm you can still reach it: `ping -c3 10.42.0.217` (DHCP lease from Part 4 — re-check
+>    with `ip neigh show dev enp6s0` if that IP doesn't answer after some elapsed time/reboots).
+> 5. SSH in: `ssh Mike@10.42.0.217` (capital `M` — see Part 4). Passwordless if `ssh-copy-id`
+>    was completed; password prompt otherwise.
+> 6. You're back where Part 5 left off — hostname is still `localhost.localdomain`, CUDA is
+>    still intentionally not installed (see Part 5 note and Part 10 follow-ups). Proceed below.
+
 **Why Jazzy:** matches the workstation and the stage-2 Docker image exactly — one distro across
 sim, CI, and hardware. Run on the Jetson over SSH.
 
-- [ ] Enable the `universe` repo and prerequisites:
+- [x] Enable the `universe` repo and prerequisites:
   ```bash
   sudo apt update && sudo apt install -y software-properties-common curl
   sudo add-apt-repository universe -y
   ```
-- [ ] Add the ROS2 apt source (current `ros-apt-source` package method):
+- [x] Add the ROS2 apt source (current `ros-apt-source` package method):
   ```bash
   export ROS_APT_SOURCE_VERSION=$(curl -s https://api.github.com/repos/ros-infrastructure/ros-apt-source/releases/latest \
     | grep -F "tag_name" | awk -F\" '{print $4}')
@@ -357,19 +398,19 @@ sim, CI, and hardware. Run on the Jetson over SSH.
   sudo apt install -y /tmp/ros2-apt-source.deb
   sudo apt update
   ```
-- [ ] Install ROS2 Jazzy base + dev tools + CycloneDDS (matching this project's RMW):
+- [x] Install ROS2 Jazzy base + dev tools + CycloneDDS (matching this project's RMW):
   ```bash
   sudo apt install -y ros-jazzy-ros-base ros-dev-tools ros-jazzy-rmw-cyclonedds-cpp
   ```
   > `ros-base` (not `desktop`) — the Jetson is headless; we don't want RViz/Gazebo GUI stacks
   > on it. It's a runtime/build target and a CI runner, not a visualization host.
-- [ ] Wire the environment to match the workstation's `.bashrc` conventions:
+- [x] Wire the environment to match the workstation's `.bashrc` conventions:
   ```bash
   echo 'source /opt/ros/jazzy/setup.bash' >> ~/.bashrc
   echo 'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp' >> ~/.bashrc
   source ~/.bashrc
   ```
-- [ ] Sanity check:
+- [x] Sanity check:
   ```bash
   ros2 --help
   printenv ROS_DISTRO            # jazzy
@@ -387,15 +428,32 @@ hardware, and capturing the "microSD" numbers that BLUEPRINT compares against QE
 Part 9, against NVMe). **If this build is not clean, stop and debug here — do not move on to
 the CI runner swap (Part 8) on a shaky build.**
 
+- [ ] **Authenticate git for this private repo.** Plain `git clone` over HTTPS will prompt for a
+      username/password and **fail** — GitHub dropped password auth for git operations in 2021,
+      and this repo is private so an anonymous/unauthenticated clone isn't an option either. Use
+      the GitHub CLI's device-code flow instead (same tool used for `gh auth login` on the
+      workstation in Session 03) — no browser needed *on the Jetson*, just any other device:
+  ```bash
+  sudo apt install -y gh
+  gh auth login
+  # Choose: GitHub.com -> HTTPS -> Yes (authenticate Git) -> "Login with a web browser"
+  # It prints a one-time code + a URL (github.com/login/device). Open that URL on your
+  # workstation or phone, log in, paste the code. The Jetson terminal reports success once
+  # that's done — it just sets up a git credential helper, nothing runs a browser locally.
+  ```
 - [ ] Get the repo onto the Jetson and install build deps:
   ```bash
-  sudo apt install -y git python3-colcon-common-extensions python3-pip
-  git clone https://github.com/sdfinn/autonomous-fleet-testbed.git ~/autonomous-fleet-testbed
+  sudo apt install -y python3-colcon-common-extensions python3-pip
+  gh repo clone sdfinn/autonomous-fleet-testbed ~/autonomous-fleet-testbed
   cd ~/autonomous-fleet-testbed
   # If the package has rosdep-managed deps:
   sudo apt install -y python3-rosdep && sudo rosdep init 2>/dev/null; rosdep update
   rosdep install --from-paths src --ignore-src -r -y || true
   ```
+  > If `rosdep install` errors with `XML or text declaration not at start of entity` on
+  > `package.xml`: that was a real bug in the repo (leading whitespace before `<?xml ...?>`
+  > from a Session 04 heredoc), fixed 2026-07-10 — `git pull` to pick up the fix if you cloned
+  > before then.
 - [ ] **Timed native colcon build** (this is a recorded number):
   ```bash
   cd ~/autonomous-fleet-testbed
@@ -529,6 +587,18 @@ CI runner's builds quicker.
   git add Release1Todo.md BLUEPRINT.md JetsonInstallSession14.md
   git commit -m "docs(session-14): Jetson Orin Nano install runbook + baseline; correct JetPack 7.2 flash method"
   ```
+
+### Follow-ups for a later session (not blocking Session 14)
+- **Hostname:** still `localhost.localdomain` — the SDK Manager pre-config screen only asked
+  for username/password this run, hostname got skipped. Fix with `sudo hostnamectl
+  set-hostname jetson-orin` (plus updating `/etc/hosts`) whenever it's convenient; not urgent
+  since SSH works fine via the DHCP IP (`10.42.0.217`) in the meantime.
+- **GPU access for on-device inference:** this flash intentionally skipped CUDA/cuDNN/TensorRT
+  (Part 3.2 Target Components, confirmed skipped in Part 5's `nvcc` check above). Fine for
+  Parts 6–9 (ROS2 Jazzy, native build, CI runner — none need the GPU compute stack). Once
+  autonomous-navigation work needs on-device inference (e.g. a perception model informing
+  Nav2), install it with `sudo apt install nvidia-jetpack` (L4T apt sources are already present
+  on the board) rather than re-flashing from scratch.
 
 ---
 
