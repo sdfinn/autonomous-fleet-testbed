@@ -625,10 +625,13 @@ CI runner's builds quicker.
       hardware-in-the-loop, a bigger version of this idea) — see `Release1Todo.md` Session 15.
       This block stays here as the historical record of the original idea.
 - [x] **CI pipeline rewiring done tonight (2026-07-10), outside this runbook's original
-      scope:** `stage-2-arm64` now requires `stage-3-gazebo` to pass first (fail-fast — don't
+      scope:** `stage-3-arm64` (renumbered — was `stage-2-arm64`) now requires
+      `stage-2-gazebo` (renumbered — was `stage-3-gazebo`) to pass first (fail-fast — don't
       spend ~10 real minutes on a native arm64 build if the cheap Gazebo check already
-      failed), and drift/report recording split into independent `stage-5-reports-sim` /
-      `stage-5-reports-hw` paths. Full rationale and the exact `ci.yml` diff are in
+      failed); `stage-4-isaac` now runs after `stage-3-arm64` (matches the original diagram's
+      arm64→Isaac edge); and drift/report recording split into independent
+      `stage-5-reports-sim` / `stage-5-reports-hw` paths. Full rationale and the exact
+      `ci.yml` diff are in
       BLUEPRINT.md's decision log.
 - [ ] Commit the doc updates:
   ```bash

@@ -140,7 +140,7 @@ Two tiers, complementary — not competitors:
 | 4 — full HIL | Real rover + Jetson (Phase C) | SSH deploy | full loop | Final validation |
 
 > Tier 2/3's `colcon build` column really means "build-stage wall time" — for Tier 2/3 that's
-> the whole Docker image build+push (`stage-2-arm64`), not the bare `colcon build` command,
+> the whole Docker image build+push (`stage-3-arm64`), not the bare `colcon build` command,
 > which is a separate, much faster number on native hardware (Tier 3: 4.76s, in line with
 > Tier 1). Both Tier 3 numbers measured 2026-07-10 on the real Jetson Orin Nano Super,
 > microSD, JetPack 7.2 — see `JetsonInstallSession14.md` Part 7/8 for the full runs.
@@ -525,3 +525,22 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
     research/design pass on this, including whether industry practice actually favors Isaac
     for this kind of work before assuming it does, and whether to prototype HIL bare-metal
     (both Gazebo and Isaac) before ever touching the arm64/CI path.
+- **2026-07-10 (later same night) — Two things from the entry above corrected after review
+  against the actual `ci.yml` graph and the original hand-drawn diagram:**
+  1. **Job keys renumbered to match execution order**, reversing the "intentionally not
+     renumbered" call above — `stage-2-arm64` → `stage-3-arm64`, `stage-3-gazebo` →
+     `stage-2-gazebo` (Gazebo now runs first, gating both arm64 and Isaac). `stage-4-isaac`
+     and `stage-5-reports-*` keep their numbers.
+  2. **`stage-4-isaac`'s `needs` changed from `stage-2-gazebo` to `stage-3-arm64`** — the
+     literal arm64→Isaac edge the diagram always showed, deliberately *not* wired above with
+     the reasoning "nothing in Stage 4 consumes the arm64 artifact today." On review, wanted
+     regardless, ahead of Piece 2 actually using the artifact. **Real, deliberately accepted
+     consequence:** `stage-3-arm64` is skipped outright on docs-only pushes (the `changes`
+     job's `if:`), and GitHub Actions propagates a skipped `needs` by default — so
+     `stage-4-isaac` and `stage-5-reports-hw`'s drift recording now also skip on docs-only
+     pushes, not just code changes. This incidentally resolves the "should stage-3/4/5 skip
+     on docs-only pushes" question raised earlier tonight (previously left open) in the "skip
+     it" direction, as a side effect of this choice rather than its own decision.
+     `stage-5-reports-sim` is unaffected and still records drift on every push regardless.
+  Verified live: pushing this change showed `stage-3-arm64` and `stage-4-isaac` running in
+  the corrected sequence, all 8 jobs green.

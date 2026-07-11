@@ -3052,10 +3052,12 @@ ros2 topic echo /robot_001/amcl_pose
 > yet), CUDA/TensorRT intentionally not installed.
 >
 > **CI pipeline rewiring done in parallel tonight (2026-07-10), not part of this session's
-> original scope:** `stage-2-arm64` now fails fast behind `stage-3-gazebo` passing, and
-> drift/report recording was split into independent sim and hardware paths. Full rationale in
-> BLUEPRINT.md's decision log. This surfaced a bigger idea — Isaac Sim + the real Jetson
-> talking to each other as genuine hardware-in-the-loop CI — that's promoted out of this
+> original scope:** `stage-3-arm64` now fails fast behind `stage-2-gazebo` passing, and
+> `stage-4-isaac` now runs after `stage-3-arm64` (job keys renumbered to match execution
+> order); drift/report recording was split into independent sim and hardware paths. Full
+> rationale in BLUEPRINT.md's decision log. This surfaced a bigger idea — Isaac Sim + the
+> real Jetson talking to each other as genuine hardware-in-the-loop CI — that's promoted out
+> of this
 > session's stretch goal below into its own **Session 15**.
 
 ### Recommended Reading
@@ -3352,12 +3354,16 @@ sim" idea, refined through discussion:
 ### Where this came from
 
 A CI pipeline-restructuring discussion (2026-07-10, captured from a hand-drawn diagram —
-`IMG_5291.jpg`) proposed splitting the pipeline into two verification paths after Stage 3
+`IMG_5291.jpg`) proposed splitting the pipeline into two verification paths after Stage 2
 (Gazebo): a fast sim path straight to its own drift/report job, and a slower hardware path
-(`stage-2-arm64` → `stage-4-isaac` → its own drift/report job). That rewiring (Piece 1) is
-done — see BLUEPRINT.md's 2026-07-10 decision log entry for the full `ci.yml` changes. The
-diagram's arm64→Isaac arrow implied Stage 4 should eventually consume the arm64-built image
-and actually exercise the real Jetson — that's Piece 2, this session.
+(`stage-3-arm64` → `stage-4-isaac` → its own drift/report job). That rewiring, including
+renumbering the job keys and wiring the literal arm64→Isaac ordering edge to match the
+diagram exactly, is done — see BLUEPRINT.md's 2026-07-10 decision log entries for the full
+`ci.yml` changes and the mid-course correction once the graph was checked against the
+drawing. What's still missing, and is Piece 2 (this session): `stage-4-isaac` runs *after*
+`stage-3-arm64` now, but doesn't yet *consume* anything from it — Isaac Sim still doesn't
+touch the real Jetson at all. Actually deploying/exercising the arm64-built image on the
+Jetson as part of Stage 4 is the real work this session designs.
 
 ### Open questions to resolve (in order, before implementation)
 
@@ -3394,10 +3400,11 @@ and actually exercise the real Jetson — that's Piece 2, this session.
      discovery doesn't traverse the link — still the right starting point, re-verify once
      bare-metal prototyping (point 2) is underway.
 4. **Only after 1–3 are answered:** design the actual CI stage — whether it replaces Stage 4
-   outright, becomes a new Stage 4b, or something else; whether `stage-4` should then depend
-   on `stage-2-arm64`'s artifact (the diagram's implied edge, deliberately not wired into
-   `ci.yml` yet — see BLUEPRINT.md decision log); job key renumbering (deferred from Piece 1
-   specifically so it happens once, after this shape is settled).
+   outright, becomes a new Stage 4b, or something else. The job *ordering* already matches
+   the diagram (`stage-4-isaac` runs after `stage-3-arm64`, renumbered 2026-07-10 — see
+   BLUEPRINT.md decision log) but Stage 4 doesn't yet *consume* anything from arm64's build —
+   this session designs the actual mechanism for Isaac (or whichever engine) to deploy/pull
+   that image onto the real Jetson and exercise it as hardware-in-the-loop.
 
 ### Session Complete When
 - Isaac-vs-Gazebo (or other) decision made and recorded in BLUEPRINT.md's decisions log, with
