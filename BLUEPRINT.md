@@ -135,9 +135,15 @@ Two tiers, complementary — not competitors:
 | Tier | Platform | `colcon build` | Full cycle (build → sim → nav test) | Purpose |
 |---|---|---|---|---|
 | **1 — primary dev loop** | x86 bare metal + Gazebo local | **~1s** | ~3–10 min | Flush common bugs fast |
-| 2 — arm64 compat check | GHA ubuntu-latest QEMU | 23m43s | +sim stub | Validate arm64 cross-compile |
-| 3 — target platform | Jetson native arm64 (Phase B) | ~3–5 min (est.) | +real hw | Validate actual deploy target |
+| 2 — arm64 compat check | GHA ubuntu-latest QEMU | 23m43s (Docker build+push, cold) | +sim stub | Validate arm64 cross-compile |
+| 3 — target platform | Jetson native arm64 (Phase B) | 4.76s (bare `colcon build`) / 9m45s (Docker build+push, non-cached) | +real hw | Validate actual deploy target |
 | 4 — full HIL | Real rover + Jetson (Phase C) | SSH deploy | full loop | Final validation |
+
+> Tier 2/3's `colcon build` column really means "build-stage wall time" — for Tier 2/3 that's
+> the whole Docker image build+push (`stage-2-arm64`), not the bare `colcon build` command,
+> which is a separate, much faster number on native hardware (Tier 3: 4.76s, in line with
+> Tier 1). Both Tier 3 numbers measured 2026-07-10 on the real Jetson Orin Nano Super,
+> microSD, JetPack 7.2 — see `JetsonInstallSession14.md` Part 7/8 for the full runs.
 
 **Tier 1 full cycle** (once Gazebo is wired in Session 09):
 ```
@@ -287,7 +293,24 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   - **x86 bare metal `colcon build` (nav_fleet Python package):** ~1s — the Tier 1 dev loop baseline
   - **GHA ubuntu-latest (QEMU, cold build):** 23m43s — authoritative Phase B comparison baseline
   - **Local RTX 5080 workstation (QEMU, pip+colcon only — apt layers cached from failed first attempt):** 37m23s — full uncached local ~60+ min
-  - **Phase B Jetson native arm64 runner:** TBD — Session 15 (expect 3–5 min; delta vs GHA baseline = the headline speedup number)
+  - **Phase B Jetson native arm64 runner:** measured 2026-07-10, Session 14 (originally
+    projected 3–5 min, actual came in higher — see below). Two numbers, not one, because they
+    measure different things: bare `colcon build` on the Jetson's own OS is **4.76s** (in line
+    with Tier 1's ~1s, just slower hardware — this is the number that matters for local
+    dev-loop iteration on the robot). The actual CI comparison — `stage-2-arm64`'s Docker
+    build+push, now running natively on the Jetson as a self-hosted runner instead of QEMU —
+    is **9m45s (585s) non-cached** (a first measurement hit GHA's build cache and read a
+    misleadingly fast 15s; re-measured after deliberately invalidating the cache via
+    `requirements-ci.txt` to get a real number). vs. the 23m43s–24m31s QEMU baseline, that's
+    **~2.4x faster** — a real, credible win, just far short of the original 3–5 min guess.
+    Two likely reasons the estimate undershot: (1) still on microSD (Part 9's NVMe migration
+    hasn't happened — sustained small-file I/O during `pip install`/layer extraction is
+    exactly where microSD is weakest); (2) the 3–5 min guess implicitly assumed eliminating
+    QEMU's emulation tax alone would get most of the way there, but a meaningful chunk of the
+    23-minute baseline is genuinely CPU/IO-bound work (pip installs of pandas/numpy/scipy/etc.,
+    `colcon build`) that doesn't disappear just because emulation does. Full run details:
+    `JetsonInstallSession14.md` Part 8.2 (PR #1, then a follow-up direct push to `main` for
+    the non-cached remeasurement).
   - Decision: develop and debug on Tier 1 (x86 bare metal Gazebo, ~1s build, ~3–10 min full cycle) before committing to CI. x86 is not the target OS but finds 90% of bugs at 23× less wait time per iteration.
 - **2026-06-29 — Showcase strategy locked.** Video-first portfolio (sim + real robot, one per release). Code stays private; README + YouTube videos public; code on request only. Primary audience: AMR companies (Brain Corp-adjacent). Brain Corp architectural vocabulary added to BLUEPRINT.md. Session plan (10–16) fully expanded with code snippets. SEMANTIC_MAP added to Session 13 agentic loop for named-location mission planning. "What's Next (R3+)" section added to capture deferred ideas.
 - **2026-07-02 — Isaac nav debugging: BR-01 passing green (Session 11/12).** Goal:

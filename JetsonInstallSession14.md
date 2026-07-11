@@ -568,10 +568,17 @@ the CI runner swap (Part 8) on a shaky build.**
   running on `runner_name: jetson-orin`.** Job step echoed `Stage 2 arm64 build time (native
   Jetson): 15s` — but that's a warm-cache number (`cache-from/cache-to: type=gha` reused
   layers from the prior `cb1f14c` build since the Dockerfile/deps hadn't changed), not a cold
-  build comparable to the ~24–29 min QEMU baseline. Total job wall time (checkout → buildx →
-  GHCR login → build/push) was 89s regardless of caching — that end-to-end native pipeline
-  timing is the real win here. A genuine cold-build number needs a future run that actually
-  changes `Dockerfile`/`requirements-ci.txt`.
+  build comparable to the ~24–29 min QEMU baseline.
+
+  **Re-measured non-cached (2026-07-10, direct push to `main`, run 29135219100):** added a
+  comment line to `requirements-ci.txt` — it's `COPY`ed into the image ahead of `pip install`
+  and `colcon build`, so any change to it invalidates both of those layers and forces a real
+  rebuild (only the base `ros:jazzy-ros-base` OS layer stayed cached, same as any real build
+  would reuse). Result: **585s (9m45s) build+push**, ~10m22s total job wall time. vs. the
+  23m43s–24m31s QEMU baseline, that's **~2.4x faster** — real and credible, but nowhere near
+  the originally-projected 3–5 min (see BLUEPRINT.md's decision log for why the estimate
+  undershot: still on microSD, and QEMU's cost isn't *only* emulation tax). Logged in
+  BLUEPRINT.md's Tiered development loop table and Session 08 decision entry.
 
 ---
 
