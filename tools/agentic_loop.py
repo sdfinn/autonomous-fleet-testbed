@@ -8,24 +8,13 @@ from pathlib import Path
 import anthropic
 
 from tools.baseline_monitor import check_run
+# Canonical map lives in the nav_fleet package (Session 15) — the workspace overlay
+# (auto-sourced by .bashrc) makes it importable here.
+from nav_fleet.semantic_map import SEMANTIC_MAP
 
 client = anthropic.Anthropic()
 
 FLEET_DB = os.environ.get("FLEET_DB", "reports/fleet_runs.db")
-
-# Named locations matching the real bedroom_simple.sdf model poses — one hallway
-# leading into a single bedroom, not a symmetric grid. Claude uses these names in
-# mission plans instead of raw (x, y) coordinates.
-SEMANTIC_MAP = {
-    'home_base':     (-1.276, 1.2),      # robot spawn — outer hallway arch
-    'hallway_west':  (-2.6435, 1.6740),
-    'hallway_east':  (1.2805, 1.6930),
-    'bedroom_goal':  (0.0, 3.7),         # BR-01 goal — bedroom floor centre
-    'dresser':       (0.0074, 2.7583),   # just inside the bedroom doorway
-    'desk':          (-0.9590, 5.3240),
-    'pc_tower':      (-1.0360, 4.2050),  # obstacle near the desk
-    'bed':           (0.8130, 5.4360),
-}
 
 TOOLS = [
     {
