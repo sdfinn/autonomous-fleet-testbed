@@ -16,6 +16,8 @@ jobs:
     # slowest one. Skipping it entirely for docs-only changes gets the whole run back to ~4-5
     # minutes instead of waiting on an irrelevant arm64 rebuild.
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
     outputs:
       docker: ${{ steps.filter.outputs.docker }}
     steps:
