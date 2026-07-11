@@ -11,10 +11,10 @@ jobs:
     # Detects whether this push touches anything that actually affects the arm64 Docker image
     # (see Dockerfile — it only ever COPYs Dockerfile itself, requirements-ci.txt, and src/).
     # A docs-only push (BLUEPRINT.md, Release1Todo.md, CLAUDE.md, etc.) has no reason to pay
-    # stage-2-arm64's ~24-29 min QEMU cost — even running in parallel with stage-3/4, the
-    # overall workflow run doesn't show "complete" until every job finishes, including the
-    # slowest one. Skipping it entirely for docs-only changes gets the whole run back to ~4-5
-    # minutes instead of waiting on an irrelevant arm64 rebuild.
+    # stage-3-arm64's build cost at all (it's skipped outright via the `if:` below) — or the
+    # ~15 min stage-4-isaac now inherits by needing stage-3-arm64 (2026-07-10 renumber).
+    # Skipping the whole arm64+Isaac chain for docs-only changes gets the run back to just
+    # stage-0/1/2's ~4-5 minutes instead of waiting on work that couldn't have changed.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -115,12 +115,15 @@ jobs:
             --ignore=tests/test_navigation.py \
             -k "not integration"
 
-  stage-2-arm64:
-    # needs stage-3-gazebo (not just stage-1-quality) as of 2026-07-10 — fail-fast: don't
+  stage-3-arm64:
+    # needs stage-2-gazebo (not just stage-1-quality) as of 2026-07-10 — fail-fast: don't
     # spend ~10 min on a native arm64 build if the cheap, fast Gazebo nav check already
     # failed. See BLUEPRINT.md's decision log for the full pipeline-restructure rationale.
+    # Job renumbered 2026-07-10 (was stage-2-arm64) so keys match execution order — Gazebo
+    # runs first now, arm64 second.
+    name: "Stage 3 — arm64 Native Build"
     runs-on: [self-hosted, arm64, jetson]
-    needs: [stage-3-gazebo, changes]
+    needs: [stage-2-gazebo, changes]
     if: needs.changes.outputs.docker == 'true'
     permissions:
       contents: read
@@ -157,20 +160,22 @@ jobs:
         run: |
           END=$(date +%s)
           BUILD_S=$((END - BUILD_START))
-          echo "Stage 2 arm64 build time (native Jetson): ${BUILD_S}s"
-          echo "### Stage 2 arm64 (native Jetson) build time: ${BUILD_S}s" >> $GITHUB_STEP_SUMMARY
+          echo "Stage 3 arm64 build time (native Jetson): ${BUILD_S}s"
+          echo "### Stage 3 arm64 (native Jetson) build time: ${BUILD_S}s" >> $GITHUB_STEP_SUMMARY
 
-  stage-3-gazebo:
-    name: "Stage 3 — Gazebo Simulation Navigation"
-    runs-on: [self-hosted, x86, gpu, rtx5080]
-    # Was needs: stage-2-arm64 — that forced every push to wait through a ~20+ min emulated
-    # QEMU build before the sim tests even started. Un-gated from stage-2 back when arm64
-    # moved to native Jetson hardware (Session 14) and stage-2 flipped the other direction —
-    # it now needs stage-3 to pass first (fail-fast), not the reverse. stage-2 still hasn't
+  stage-2-gazebo:
+    name: "Stage 2 — Gazebo Simulation Navigation"
+    # Job renumbered 2026-07-10 (was stage-3-gazebo) — Gazebo runs right after stage-1 and
+    # gates both arm64 and Isaac now, so it earned the lower number. Was needs:
+    # (old)stage-2-arm64 originally — that forced every push to wait through a ~20+ min
+    # emulated QEMU build before the sim tests even started. Un-gated back when arm64 moved
+    # to native Jetson hardware (Session 14) and the dependency flipped the other direction —
+    # arm64 now needs Gazebo to pass first (fail-fast), not the reverse. arm64 still hasn't
     # caught a genuinely arm64-specific bug (Session 08's two catches were both generic
     # Docker/CI-config issues) — the point of gating it behind Gazebo isn't distrust of
     # arm64, it's not spending ~10 real minutes building an image when the nav logic it
     # would carry is already known-broken.
+    runs-on: [self-hosted, x86, gpu, rtx5080]
     needs: stage-1-quality
     timeout-minutes: 30
     env:
@@ -219,8 +224,8 @@ jobs:
         run: |
           END=$(date +%s)
           GAZEBO_S=$((END - GAZEBO_START))
-          echo "Stage 3 Gazebo (headless, cold start through 3 tests): ${GAZEBO_S}s"
-          echo "### Stage 3 Gazebo wall time: ${GAZEBO_S}s" >> $GITHUB_STEP_SUMMARY
+          echo "Stage 2 Gazebo (headless, cold start through 3 tests): ${GAZEBO_S}s"
+          echo "### Stage 2 Gazebo wall time: ${GAZEBO_S}s" >> $GITHUB_STEP_SUMMARY
 
       - name: Shutdown Gazebo
         if: always()
@@ -228,8 +233,15 @@ jobs:
 
   stage-4-isaac:
     name: "Stage 4 — Isaac Sim Navigation (BR-01/02/10, headless)"
+    # needs stage-3-arm64 (not stage-2-gazebo directly) as of 2026-07-10 — matches the
+    # hand-drawn pipeline diagram's arm64->Isaac edge. Real consequence, accepted
+    # deliberately: since stage-3-arm64 is skipped outright on docs-only pushes (see the
+    # `changes` job), a skipped `needs` propagates by default in GitHub Actions, so Isaac
+    # (and stage-5-reports-hw's drift recording) now also skips on docs-only pushes — not
+    # just code changes. stage-5-reports-sim is unaffected and still records drift on every
+    # push regardless. See BLUEPRINT.md's decision log for the full discussion.
     runs-on: [self-hosted, x86, gpu, rtx5080]
-    needs: stage-3-gazebo
+    needs: stage-3-arm64
     timeout-minutes: 15
     env:
       OMNI_KIT_ACCEPT_EULA: "YES"
@@ -280,7 +292,7 @@ jobs:
         run: |
           source /opt/ros/jazzy/setup.bash
           source install/setup.bash
-          source ~/fleet-env/bin/activate   # pinned pytest 8.3.2 — see stage-3 comment above
+          source ~/fleet-env/bin/activate   # pinned pytest 8.3.2 — see stage-2 comment above
           python -m pytest tests/test_navigation.py -v --timeout=120
 
       - name: Record Isaac timing
@@ -321,16 +333,16 @@ jobs:
   # the slower arm64+Isaac path — was one job needing stage-4-isaac only, so a sim-only
   # result never got reported if the hardware path was skipped, slow, or failed. Both call
   # the same report/drift scripts against the same FLEET_DB; they just fire independently.
-  # Note: both still run on the single self-hosted x86 GPU runner alongside stage-3/4, so
+  # Note: both still run on the single self-hosted x86 GPU runner alongside stage-2/4, so
   # they're logically independent but not truly wall-clock-parallel with each other or with
-  # stage-4 — only stage-2-arm64 (a separate Jetson runner) gets real hardware parallelism.
+  # stage-4 — only stage-3-arm64 (a separate Jetson runner) gets real hardware parallelism.
   stage-5-reports-sim:
     name: "Stage 5 — Reports + Dashboard (sim path)"
-    # Runs on the self-hosted runner, not ubuntu-latest: stage-3's nav tests write
+    # Runs on the self-hosted runner, not ubuntu-latest: stage-2's nav tests write
     # telemetry to this runner's local disk (FLEET_DB above), so a hosted job's fresh
     # checkout would have no run data — it would PDF an empty database.
     runs-on: [self-hosted, x86, gpu, rtx5080]
-    needs: stage-3-gazebo
+    needs: stage-2-gazebo
     env:
       FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
       REPORT_PATH: reports/latest_report.pdf

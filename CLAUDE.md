@@ -103,7 +103,7 @@ docker buildx build --platform linux/arm64 \
   above. It was added in Session 10 but never added to `stage-1-quality`'s `--ignore` list in
   `ci.yml`, which silently broke that stage on a bare `ubuntu-latest` runner (no ROS2 at all)
   until Session 11/12 caught it. It's correctly run as an integration test in
-  `stage-3-gazebo`/`stage-4-isaac`, where live ROS2 actually exists. If a new test file imports
+  `stage-2-gazebo`/`stage-4-isaac`, where live ROS2 actually exists. If a new test file imports
   `rclpy` at module level, it needs the same `--ignore` treatment in `stage-1-quality` — this
   has now bitten twice.
 - **CI stage-0's traceability gate has `continue-on-error: true` — this is a live, ongoing gap,
