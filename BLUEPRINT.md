@@ -444,3 +444,21 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   re-flash required). **Session paused here — resume at `JetsonInstallSession14.md` Part 6**
   (ROS2 Jazzy install); Parts 7–10 (native build baseline, CI runner, NVMe migration, closeout)
   not yet attempted.
+- **2026-07-10 — Docker on the Jetson scoped to Stage 2 only; everything else native.**
+  Decision: the Jetson runs Docker exclusively for CI's `stage-2-arm64` reproducibility gate
+  (build + push the arm64 image to GHCR, replacing the QEMU-emulated build once Part 8 makes
+  it a self-hosted runner). Every other Jetson-side activity — dev-loop iteration, the
+  optional "Jetson-in-the-loop-with-sim" stretch goal (native ROS2 nodes on the Jetson talking
+  to Gazebo/Nav2 on the workstation, camera + colored-blob detection triggering sim events) —
+  runs native, no container. Rationale: Stage 2's Docker image is a reproducibility checkpoint
+  ("does a clean build from source still work"), not a runtime; forcing perception/HIL
+  experimentation through a container adds rebuild friction and device-passthrough complexity
+  (USB camera access, no CUDA runtime needed anyway since Target Components were skipped) for
+  no benefit while the code is still being iterated on. The risk of native iteration drifting
+  from what Stage 2 actually verifies is accepted for now — re-run the Stage 2 gate before
+  trusting anything built that way. Storage/memory headroom checked and judged sufficient for
+  this dual-mode setup on the *current* microSD flash (97G free per the Part 5 smoke test,
+  8GB module RAM) — Docker images/layers plus native ROS2 + Nav2 packages together are a few
+  GB, well under that. The Session 15 tradeoff (transfer this Jetson into the UGV-PT chassis
+  vs. buy a second module to keep this one as a dedicated CI runner) is still open and
+  unaffected by this decision either way.
