@@ -1,5 +1,13 @@
 """Pytest fixtures for fleet testbed tests."""
+import pathlib
+import sys
+
 import pytest
+
+# Make `nav_fleet` importable without a colcon build/overlay — stage-1-quality runs on a
+# bare ubuntu-latest runner with no ROS2 workspace. Harmless when the overlay IS sourced:
+# --symlink-install points the installed package at these same source files.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / 'src' / 'nav_fleet'))
 
 
 @pytest.fixture
