@@ -1,6 +1,9 @@
 # CI-only requirements — PyPI packages needed for tools/ and tests/
 # Do NOT add ROS2 packages here (rclpy, geometry-msgs, etc.) — they are not on PyPI
 # requirements.txt is the full pip freeze of the local ROS2 venv (dev reference only)
+# Editing this file invalidates the Dockerfile's pip-install and colcon-build layers (it's
+# COPYed in ahead of both) — the cheapest way to force a genuinely non-cached stage-2-arm64
+# timing when you need one for comparison.
 pyyaml>=6.0
 pandera>=0.32
 pandas>=2.0
