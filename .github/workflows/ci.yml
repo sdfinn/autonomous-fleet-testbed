@@ -16,6 +16,9 @@ jobs:
     # slowest one. Skipping it entirely for docs-only changes gets the whole run back to ~4-5
     # minutes instead of waiting on an irrelevant arm64 rebuild.
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       docker: ${{ steps.filter.outputs.docker }}
     steps:
@@ -113,7 +116,7 @@ jobs:
             -k "not integration"
 
   stage-2-arm64:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, arm64, jetson]
     needs: [stage-1-quality, changes]
     if: needs.changes.outputs.docker == 'true'
     permissions:
@@ -121,9 +124,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -154,8 +154,8 @@ jobs:
         run: |
           END=$(date +%s)
           BUILD_S=$((END - BUILD_START))
-          echo "Stage 2 arm64 build time (QEMU): ${BUILD_S}s"
-          echo "### Stage 2 arm64 (QEMU) build time: ${BUILD_S}s" >> $GITHUB_STEP_SUMMARY
+          echo "Stage 2 arm64 build time (native Jetson): ${BUILD_S}s"
+          echo "### Stage 2 arm64 (native Jetson) build time: ${BUILD_S}s" >> $GITHUB_STEP_SUMMARY
 
   stage-3-gazebo:
     name: "Stage 3 — Gazebo Simulation Navigation"
