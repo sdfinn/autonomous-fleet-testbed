@@ -24,6 +24,7 @@ import argparse
 import os
 import pathlib
 import time
+import traceback
 
 import rclpy
 from rclpy.node import Node
@@ -120,8 +121,12 @@ def main():
 
     rclpy.init()
     runner = MissionRunner()
+    ok = False
     try:
         ok = runner.run_mission(args.mission)
+    except Exception as exc:  # still log a FAIL row on crash — docstring contract
+        traceback.print_exc()
+        runner.get_logger().error(f'mission {args.mission} crashed: {exc!r}')
     finally:
         rclpy.try_shutdown()
     _log_mission(args.mission, ok, runner)
