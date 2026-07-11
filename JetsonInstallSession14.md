@@ -428,7 +428,7 @@ hardware, and capturing the "microSD" numbers that BLUEPRINT compares against QE
 Part 9, against NVMe). **If this build is not clean, stop and debug here — do not move on to
 the CI runner swap (Part 8) on a shaky build.**
 
-- [ ] **Authenticate git for this private repo.** Plain `git clone` over HTTPS will prompt for a
+- [x] **Authenticate git for this private repo.** Plain `git clone` over HTTPS will prompt for a
       username/password and **fail** — GitHub dropped password auth for git operations in 2021,
       and this repo is private so an anonymous/unauthenticated clone isn't an option either. Use
       the GitHub CLI's device-code flow instead (same tool used for `gh auth login` on the
@@ -441,7 +441,7 @@ the CI runner swap (Part 8) on a shaky build.**
   # workstation or phone, log in, paste the code. The Jetson terminal reports success once
   # that's done — it just sets up a git credential helper, nothing runs a browser locally.
   ```
-- [ ] Get the repo onto the Jetson and install build deps:
+- [x] Get the repo onto the Jetson and install build deps:
   ```bash
   sudo apt install -y python3-colcon-common-extensions python3-pip
   gh repo clone sdfinn/autonomous-fleet-testbed ~/autonomous-fleet-testbed
@@ -454,7 +454,7 @@ the CI runner swap (Part 8) on a shaky build.**
   > `package.xml`: that was a real bug in the repo (leading whitespace before `<?xml ...?>`
   > from a Session 04 heredoc), fixed 2026-07-10 — `git pull` to pick up the fix if you cloned
   > before then.
-- [ ] **Timed native colcon build** (this is a recorded number):
+- [x] **Timed native colcon build** (this is a recorded number):
   ```bash
   cd ~/autonomous-fleet-testbed
   time colcon build --symlink-install
@@ -462,13 +462,21 @@ the CI runner swap (Part 8) on a shaky build.**
   ```
   Record the `real` time. This is the number that retires QEMU: compare it to the
   "Stage 2 arm64 build time (QEMU)" line CI currently prints (~24–29 min emulated).
-- [ ] **Timed first `docker pull` of the stage-2 arm64 image** (proves the Jetson can pull and
+  **Result (2026-07-10, microSD): `real 0m4.759s`** — vs. ~24–29 min QEMU. This is the
+  headline speedup number.
+- [x] **Timed first `docker pull` of the stage-2 arm64 image** (proves the Jetson can pull and
       run the CI image natively):
   ```bash
   sudo apt install -y docker.io && sudo usermod -aG docker $USER   # then re-login (SSH out/in)
   time docker pull ghcr.io/sdfinn/autonomous-fleet-testbed:latest
   ```
-- [ ] Run the Python unit tests natively (same command the x86 loop uses):
+  > At the time this was first run, `stage-2-arm64` only tagged images by commit SHA — no
+  > `:latest` existed yet (fixed 2026-07-10, `ci.yml` now also pushes `:latest`; see
+  > BLUEPRINT.md decision log). The measurement below used the explicit SHA tag
+  > (`ghcr.io/sdfinn/autonomous-fleet-testbed:cee03807079e47e41f65b29d4a3552eea0deb5a8`) as a
+  > workaround — re-run against `:latest` next time to confirm it still matches.
+  **Result (2026-07-10, microSD): `real 4m15.202s`.**
+- [x] Run the Python unit tests natively (same command the x86 loop uses):
   ```bash
   python3 -m pytest tests/ -v \
     --ignore=tests/test_ros2_contracts.py --ignore=tests/test_navigation.py
@@ -480,9 +488,9 @@ the CI runner swap (Part 8) on a shaky build.**
 
   | Metric | microSD (Part 7) | NVMe (Part 9) |
   |---|---|---|
-  | `apt install ros-jazzy-ros-base` wall time | | |
-  | `colcon build --symlink-install` (`real`) | | |
-  | first `docker pull` of stage-2 image | | |
+  | `apt install ros-jazzy-ros-base` wall time | (not recorded) | |
+  | `colcon build --symlink-install` (`real`) | 4.759s | |
+  | first `docker pull` of stage-2 image | 4m15.202s | |
   | `df -h /` free space | | |
 
 ---
@@ -497,10 +505,10 @@ the CI runner swap (Part 8) on a shaky build.**
 ~24–29 min emulated build we're retiring.
 
 ### 8.1 Register the runner (on the Jetson)
-- [ ] In a browser: repo → **Settings → Actions → Runners → New self-hosted runner** → pick
+- [x] In a browser: repo → **Settings → Actions → Runners → New self-hosted runner** → pick
       **Linux / ARM64**. GitHub shows a download + `config.sh` snippet with a **registration
       token** (tokens expire — generate it right before you use it).
-- [ ] On the Jetson, follow that snippet, but set **labels** so CI can target it precisely:
+- [x] On the Jetson, follow that snippet, but set **labels** so CI can target it precisely:
   ```bash
   mkdir -p ~/actions-runner && cd ~/actions-runner
   # curl the runner tarball URL from the GitHub page, then:
@@ -510,16 +518,20 @@ the CI runner swap (Part 8) on a shaky build.**
     --labels self-hosted,arm64,jetson,orin-nano \
     --name jetson-orin
   ```
-- [ ] Install it as a service so it survives reboots (mirrors the x86 runner setup):
+  > Runner group prompt: accepted the `Default` group (org/enterprise-level access control,
+  > not relevant for a single personal repo).
+- [x] Install it as a service so it survives reboots (mirrors the x86 runner setup):
   ```bash
   sudo ./svc.sh install
   sudo ./svc.sh start
   sudo ./svc.sh status
   ```
-- [ ] Confirm it shows **Idle** under Settings → Actions → Runners.
+  **Result (2026-07-10): service `actions.runner.sdfinn-autonomous-fleet-testbed.jetson-orin`
+  active (running)** via systemd, runs as user `Mike`.
+- [x] Confirm it shows **Idle** under Settings → Actions → Runners. **Confirmed 2026-07-10.**
 
 ### 8.2 Point `stage-2-arm64` at the Jetson (native, no QEMU)
-- [ ] Edit `.github/workflows/ci.yml`, `stage-2-arm64` job:
+- [x] Edit `.github/workflows/ci.yml`, `stage-2-arm64` job:
   - Change `runs-on: ubuntu-latest` → `runs-on: [self-hosted, arm64, jetson]`
   - **Remove the QEMU step** (native arm64 doesn't need emulation):
     ```yaml
@@ -529,7 +541,7 @@ the CI runner swap (Part 8) on a shaky build.**
     ```
   - Keep buildx, GHCR login, and the build-push step. `platforms: linux/arm64` is now native.
   - Update the timing echo text from "(QEMU)" to "(native Jetson)" so the summary reads true.
-- [ ] Commit on a branch and push; watch the run:
+- [x] Commit on a branch and push; watch the run:
   ```bash
   git checkout -b session-14-jetson-runner
   git add .github/workflows/ci.yml
@@ -537,9 +549,29 @@ the CI runner swap (Part 8) on a shaky build.**
   git push -u origin session-14-jetson-runner
   gh run watch
   ```
-- [ ] Confirm `stage-2-arm64` ran **on the Jetson** and the native build time roughly matches
+  > Opened as PR #1 instead of pushing straight to `main`, since `ci.yml` only triggers on
+  > `push`/`pull_request` targeting `main` — a bare feature-branch push doesn't run CI at all.
+  > Two real bugs surfaced and were fixed along the way (both now on this branch):
+  > 1. `changes` job (`dorny/paths-filter@v3`) failed with `Resource not accessible by
+  >    integration` on the `pull_request` trigger — needed an explicit `permissions:
+  >    pull-requests: read`, since `pull_request`-triggered PR-file-listing needs a scope a
+  >    plain push never required.
+  > 2. That fix alone then broke `actions/checkout` ("repository not found") — adding a
+  >    job-level `permissions:` block replaces ALL default scopes, not just the one added, so
+  >    `pull-requests: read` alone implicitly zeroed `contents` too. Same class of bug as the
+  >    Session 08 `packages: write` incident already in CLAUDE.md's Gotchas. Fixed by listing
+  >    both `contents: read` and `pull-requests: read` explicitly.
+- [x] Confirm `stage-2-arm64` ran **on the Jetson** and the native build time roughly matches
       your Part 7 `colcon`/`docker` numbers (and beats the old QEMU time). If it's flaky, revert
       the `runs-on` change and keep QEMU until the hardware path is solid — don't leave CI red.
+  **Result (2026-07-10, PR #1, run 29134826190): all 7 jobs green, `stage-2-arm64` confirmed
+  running on `runner_name: jetson-orin`.** Job step echoed `Stage 2 arm64 build time (native
+  Jetson): 15s` — but that's a warm-cache number (`cache-from/cache-to: type=gha` reused
+  layers from the prior `cb1f14c` build since the Dockerfile/deps hadn't changed), not a cold
+  build comparable to the ~24–29 min QEMU baseline. Total job wall time (checkout → buildx →
+  GHCR login → build/push) was 89s regardless of caching — that end-to-end native pipeline
+  timing is the real win here. A genuine cold-build number needs a future run that actually
+  changes `Dockerfile`/`requirements-ci.txt`.
 
 ---
 
