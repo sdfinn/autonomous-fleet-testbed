@@ -116,8 +116,11 @@ jobs:
             -k "not integration"
 
   stage-2-arm64:
+    # needs stage-3-gazebo (not just stage-1-quality) as of 2026-07-10 — fail-fast: don't
+    # spend ~10 min on a native arm64 build if the cheap, fast Gazebo nav check already
+    # failed. See BLUEPRINT.md's decision log for the full pipeline-restructure rationale.
     runs-on: [self-hosted, arm64, jetson]
-    needs: [stage-1-quality, changes]
+    needs: [stage-3-gazebo, changes]
     if: needs.changes.outputs.docker == 'true'
     permissions:
       contents: read
@@ -161,11 +164,13 @@ jobs:
     name: "Stage 3 — Gazebo Simulation Navigation"
     runs-on: [self-hosted, x86, gpu, rtx5080]
     # Was needs: stage-2-arm64 — that forced every push to wait through a ~20+ min emulated
-    # QEMU build before the sim tests even started, even though arm64 and the sim stages are
-    # unrelated (different runners, no shared artifact). stage-2 hasn't caught a genuinely
-    # arm64-specific bug since it was set up (Session 08's two catches were both generic
-    # Docker/CI-config issues, not architecture-specific) — keep it running for that modest,
-    # occasional value, but stop letting it gate iteration speed on everything else.
+    # QEMU build before the sim tests even started. Un-gated from stage-2 back when arm64
+    # moved to native Jetson hardware (Session 14) and stage-2 flipped the other direction —
+    # it now needs stage-3 to pass first (fail-fast), not the reverse. stage-2 still hasn't
+    # caught a genuinely arm64-specific bug (Session 08's two catches were both generic
+    # Docker/CI-config issues) — the point of gating it behind Gazebo isn't distrust of
+    # arm64, it's not spending ~10 real minutes building an image when the nav logic it
+    # would carry is already known-broken.
     needs: stage-1-quality
     timeout-minutes: 30
     env:
@@ -312,11 +317,52 @@ jobs:
           rm -f /tmp/isaac_ci_pid /tmp/nav2_ci_pid
           exit 0
 
-  stage-5-reports:
-    name: "Stage 5 — Reports + Dashboard"
-    # Runs on the self-hosted runner, not ubuntu-latest: stage-3/4's nav tests write
+  # Split into -sim and -hw (2026-07-10) so Gazebo's drift/report recording doesn't wait on
+  # the slower arm64+Isaac path — was one job needing stage-4-isaac only, so a sim-only
+  # result never got reported if the hardware path was skipped, slow, or failed. Both call
+  # the same report/drift scripts against the same FLEET_DB; they just fire independently.
+  # Note: both still run on the single self-hosted x86 GPU runner alongside stage-3/4, so
+  # they're logically independent but not truly wall-clock-parallel with each other or with
+  # stage-4 — only stage-2-arm64 (a separate Jetson runner) gets real hardware parallelism.
+  stage-5-reports-sim:
+    name: "Stage 5 — Reports + Dashboard (sim path)"
+    # Runs on the self-hosted runner, not ubuntu-latest: stage-3's nav tests write
     # telemetry to this runner's local disk (FLEET_DB above), so a hosted job's fresh
     # checkout would have no run data — it would PDF an empty database.
+    runs-on: [self-hosted, x86, gpu, rtx5080]
+    needs: stage-3-gazebo
+    env:
+      FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
+      REPORT_PATH: reports/latest_report.pdf
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure persistent telemetry dir exists
+        run: mkdir -p /home/mike/fleet-ci-data
+
+      - name: Generate report
+        run: |
+          source ~/fleet-env/bin/activate
+          python tools/generate_test_report.py
+
+      - name: Validate telemetry schema
+        run: |
+          source ~/fleet-env/bin/activate
+          python tools/validate_telemetry.py
+
+      - name: Check baseline drift
+        run: |
+          source ~/fleet-env/bin/activate
+          python tools/baseline_monitor.py
+
+      - name: Upload PDF report
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-${{ github.run_number }}-sim
+          path: reports/latest_report.pdf
+
+  stage-5-reports-hw:
+    name: "Stage 5 — Reports + Dashboard (hardware path)"
     runs-on: [self-hosted, x86, gpu, rtx5080]
     needs: stage-4-isaac
     env:
@@ -346,5 +392,5 @@ jobs:
       - name: Upload PDF report
         uses: actions/upload-artifact@v4
         with:
-          name: test-report-${{ github.run_number }}
+          name: test-report-${{ github.run_number }}-hw
           path: reports/latest_report.pdf

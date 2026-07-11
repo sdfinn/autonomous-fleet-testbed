@@ -111,7 +111,7 @@ docker buildx build --platform linux/arm64 \
   matched `requirements/traceability.yaml`'s placeholder names (fixed in Session 11/12: BR-01/
   BR-10 → `test_navigation_succeeds`, BR-02 → `test_no_collision`). BR-03 (recovery behavior)
   has no test at all — recovery is genuinely broken (see "Recovery behaviors" in
-  `Release1Todo.md` Session 16+), so this isn't a naming fix, it's a real missing capability.
+  `Release1Todo.md` Session 17+), so this isn't a naming fix, it's a real missing capability.
   Remove `continue-on-error` only once BR-03 has an actual test. Until then: this gate silently
   went from "intentionally red" to "actually blocking every downstream CI stage" once someone
   removed `continue-on-error` without the underlying gaps being fixed — check `gh run list`

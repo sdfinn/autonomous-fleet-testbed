@@ -585,7 +585,7 @@ the CI runner swap (Part 8) on a shaky build.**
 ## Part 9 — Migrate microSD → NVMe SSD
 
 **Why now:** the module is a bare board on the desk — swapping storage is trivial now and a
-pain later (Session 15 puts it in the robot chassis). Faster/steadier storage also makes the
+pain later (Session 16 puts it in the robot chassis). Faster/steadier storage also makes the
 CI runner's builds quicker.
 
 - [ ] Power off the Jetson. Install the **NVMe M.2 2280 SSD** into the Key-M slot (screw it
@@ -619,8 +619,17 @@ CI runner's builds quicker.
   - The plan's "SDK Manager → select JetPack, recovery mode" is correct in spirit; the
     corrected specifics (P3767-0005/P3768-0000, pre-config for headless, microSD-as-target
     caveat) live in this doc — link to it from the session.
-- [ ] Note the optional Jetson-in-the-loop-with-sim stretch goal is **not** required for
-      Session 14 completion (per the plan) — only attempt if time remains.
+- [x] Note the optional Jetson-in-the-loop-with-sim stretch goal is **not** required for
+      Session 14 completion (per the plan) — only attempt if time remains. **Update
+      (2026-07-10): promoted to its own session** (Isaac Sim + real Jetson
+      hardware-in-the-loop, a bigger version of this idea) — see `Release1Todo.md` Session 15.
+      This block stays here as the historical record of the original idea.
+- [x] **CI pipeline rewiring done tonight (2026-07-10), outside this runbook's original
+      scope:** `stage-2-arm64` now requires `stage-3-gazebo` to pass first (fail-fast — don't
+      spend ~10 real minutes on a native arm64 build if the cheap Gazebo check already
+      failed), and drift/report recording split into independent `stage-5-reports-sim` /
+      `stage-5-reports-hw` paths. Full rationale and the exact `ci.yml` diff are in
+      BLUEPRINT.md's decision log.
 - [ ] Commit the doc updates:
   ```bash
   git add Release1Todo.md BLUEPRINT.md JetsonInstallSession14.md
