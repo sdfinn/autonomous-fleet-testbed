@@ -1,5 +1,6 @@
 """Unit tests for the mission framework — pure Python, no ROS2 required (runs in stage-1)."""
 import math
+import types
 
 import pytest
 
@@ -55,3 +56,48 @@ def test_yaw_to_quaternion():
     assert yaw_to_quaternion(0.0) == pytest.approx((0.0, 1.0))
     z, w = yaw_to_quaternion(math.pi / 2)
     assert (z, w) == pytest.approx((0.7071, 0.7071), abs=1e-4)
+
+
+def _fake_image_msg(encoding='rgb8', step=None):
+    """2x2 image: (red, green) / (blue, white) in the named channel order."""
+    row0 = bytes([255, 0, 0, 0, 255, 0])
+    row1 = bytes([0, 0, 255, 255, 255, 255])
+    step = step or 6
+    pad = bytes(step - 6)
+    return types.SimpleNamespace(
+        height=2, width=2, step=step, encoding=encoding, data=row0 + pad + row1 + pad,
+    )
+
+
+def test_image_msg_to_png_rgb8(tmp_path):
+    from PIL import Image
+    from nav_fleet.image_io import image_msg_to_png
+    out = tmp_path / 'shot.png'
+    image_msg_to_png(_fake_image_msg('rgb8'), str(out))
+    img = Image.open(out)
+    assert img.size == (2, 2)
+    assert img.getpixel((0, 0)) == (255, 0, 0)
+    assert img.getpixel((1, 1)) == (255, 255, 255)
+
+
+def test_image_msg_to_png_bgr8_swaps_channels(tmp_path):
+    from PIL import Image
+    from nav_fleet.image_io import image_msg_to_png
+    out = tmp_path / 'shot.png'
+    image_msg_to_png(_fake_image_msg('bgr8'), str(out))
+    # bytes (255,0,0) read as BGR = pure blue -> stored RGB (0,0,255)
+    assert Image.open(out).getpixel((0, 0)) == (0, 0, 255)
+
+
+def test_image_msg_to_png_handles_row_padding(tmp_path):
+    from PIL import Image
+    from nav_fleet.image_io import image_msg_to_png
+    out = tmp_path / 'shot.png'
+    image_msg_to_png(_fake_image_msg('rgb8', step=8), str(out))
+    assert Image.open(out).getpixel((1, 1)) == (255, 255, 255)
+
+
+def test_image_msg_to_png_rejects_unknown_encoding(tmp_path):
+    from nav_fleet.image_io import image_msg_to_png
+    with pytest.raises(ValueError, match='mono16'):
+        image_msg_to_png(_fake_image_msg('mono16'), str(tmp_path / 'x.png'))
