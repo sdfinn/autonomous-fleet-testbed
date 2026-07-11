@@ -22,6 +22,8 @@ from rclpy.time import Time
 from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 
+from nav_fleet.missions import yaw_to_quaternion
+
 
 class NavRunner(Node):
 
@@ -47,7 +49,7 @@ class NavRunner(Node):
     def _pose_cb(self, msg):
         self._latest_pose = msg.pose.pose
 
-    def send_goal(self, x, y, timeout=90.0):
+    def send_goal(self, x, y, timeout=90.0, yaw=None):
         start_time = time.time()
         steps = 0
 
@@ -66,7 +68,12 @@ class NavRunner(Node):
         goal.pose.header.stamp = Time().to_msg()  # zero = use latest TF, works with sim time
         goal.pose.pose.position.x = x
         goal.pose.pose.position.y = y
-        goal.pose.pose.orientation.w = 1.0
+        if yaw is None:
+            goal.pose.pose.orientation.w = 1.0
+        else:
+            z, w = yaw_to_quaternion(yaw)
+            goal.pose.pose.orientation.z = z
+            goal.pose.pose.orientation.w = w
 
         # wait_for_server() only confirms the action is discoverable on the ROS graph, which
         # happens as soon as bt_navigator's node exists — not that its lifecycle state is
