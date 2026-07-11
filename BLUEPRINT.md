@@ -544,3 +544,64 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
      `stage-5-reports-sim` is unaffected and still records drift on every push regardless.
   Verified live: pushing this change showed `stage-3-arm64` and `stage-4-isaac` running in
   the corrected sequence, all 8 jobs green.
+- **2026-07-10 (same night) — Session 15 design resolved via a full `/superpowers:brainstorming`
+  pass: Gazebo (not Isaac Sim) for both Stage 2 and Stage 4/HIL; first milestone is "Mission
+  1" (navigate/photograph/return), not full coverage.** Full reasoning, rejected alternatives,
+  and the deferred "Mission 2" shape are in
+  `docs/superpowers/specs/2026-07-10-session15-gazebo-hil-mission1-design.md` — summary here
+  (mission numbering uses the revised 2026-07-11 scheme; see that day's entry below):
+  - **Gazebo wins on evidence, not vendor framing.** External research (pasted from another
+    session) leaned heavily pro-Isaac in tone ("industry leader," "production pipeline") but
+    never accounted for this project's own documented Isaac pain (Session 11/12's ~20
+    debugging iterations; `CLAUDE.md`'s gotchas). Cross-checked against real project history
+    instead of taking the research at face value, per Mike's explicit ask for that skepticism.
+  - **The camera drives real mission decisions** (object detection for mission triggering,
+    not just monitoring/logging) — confirmed early, since this is what makes the sim-engine
+    choice matter at all for perception.
+  - **Checked `/home/mike/BC/isaac_project` directly rather than trusting memory or planning
+    docs.** `MasterBrief.md` (2026-06-19, superseded, predates `BLUEPRINT.md`) describes an
+    aspirational YOLO+ArUco dual-detection design that was **never actually built**. The real,
+    working, hardware-validated code (`src/behavior_controller.py`, tested against a live USB
+    camera with real croquet balls) is classical HSV color thresholding — zero training data,
+    zero ML. This directly answered "why would 2 colored spheres need training data" (they
+    don't) and is the concrete evidence that the near-term mission needs none of Isaac's
+    synthetic-data/NITROS differentiators.
+  - **Isaac's proven fragility splits into two buckets**, and matters differently depending on
+    architecture: general operational tax (manual `/clock` wiring, DDS TF replay requiring
+    Isaac+Nav2 restarted together, headless RTX lidar breakage) applies regardless of mission;
+    Nav2/AMCL/costmap-specific fragility (the ~20-iteration saga) only applies if running full
+    Nav2 under Isaac. No camera/perception-specific Isaac issue has ever been hit in this
+    project — the fragility has always been navigation-stack-side.
+  - **NITROS clarified as Isaac ROS's runtime transport, not part of Isaac Sim** — adopting
+    NITROS-accelerated perception on the real deployed Jetson later is decoupled from which
+    simulator is used for development now. Removes "we'll want NITROS eventually" as a forcing
+    function for choosing Isaac Sim today.
+  - **Gazebo's multi-robot fleet ceiling is a real open question, deliberately left
+    unmeasured, not assumed.** One concrete precedent exists (CycloneDDS domain-0 participant
+    limit nearly exhausted by a single robot's non-composed Nav2 launch — already in
+    `CLAUDE.md`'s gotchas), but the actual N-robot RTF breaking point needs real measurement,
+    flagged as a future experiment rather than settled by argument. Isaac Lab's "thousands of
+    parallel environments" claim was also checked and pushed back on — that's usually many
+    independent simple training instances, not one shared multi-agent world, so it doesn't
+    clearly answer this project's actual fleet-coordination scaling question either.
+  - **Mission scope decomposed rather than accepted whole.** Mike's full vision (map-aware
+    navigation → full-coverage sweep → camera-reactive behavior, plus a general
+    multi-mission framework) was two different axes bundled together — a mission-framework
+    extension (small, builds on Session 13's `SEMANTIC_MAP` infrastructure) and full-coverage
+    planning (a real, standalone piece of new engineering, no existing Nav2 coverage planner
+    in this project). Landed on "Mission 1" (navigate + photograph + return, no ball-reaction,
+    no coverage) as the first HIL milestone — proves the mission-framework mechanism, real
+    navigation, the camera pipeline, and the full HIL loop, without bundling in the two
+    capabilities that are themselves substantial new engineering. "Mission 2" (full coverage +
+    camera-reactive Nav2 integration via costmap keepout + external-cancel supervisor) is an
+    explicitly deferred, already-shaped follow-up.
+  - **Next step:** review the spec doc, then `/superpowers:writing-plans` for the actual
+    implementation plan — bare-metal Mission 1 prototype first, before touching CI, per this
+    project's existing tiered dev-loop philosophy.
+- **2026-07-11 — Mission numbering flipped on Mike's spec review: the first milestone is now
+  "Mission 1" (navigate → photograph → return) and the deferred coverage + camera-reactive
+  follow-up is "Mission 2."** As brainstormed on 2026-07-10 the names were the other way
+  around (an artifact of the order the ideas came up), which read as "build Mission 2 before
+  Mission 1" — confusing. Numbering now follows build order. The spec file was renamed to
+  `...-mission1-design.md` and updated in place; anything dated 2026-07-10 that says
+  "Mission 2 first" is the old naming. No scope change — purely a rename.

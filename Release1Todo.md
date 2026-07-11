@@ -3338,15 +3338,37 @@ sim" idea, refined through discussion:
 
 ## Session 15 — Isaac Sim + Real Jetson Hardware-in-the-Loop
 
-> **Status: not started, design-only for now (created 2026-07-10).** Promoted from Session
+> **Status: design approved (2026-07-10), implementation not started.** Promoted from Session
 > 14's optional "Jetson-in-the-loop with sim" stretch goal (preserved as-written there,
 > including its original Gazebo-over-Isaac reasoning) into its own session, after a CI
 > pipeline-restructuring conversation surfaced a bigger version of the same idea: not just
 > "does Nav2 fit the Orin Nano's resource budget," but **Isaac Sim and the real Jetson
-> genuinely talking to each other as a CI-testable hardware-in-the-loop stage** — Isaac
-> simulating the world/sensors while the actual Jetson hardware runs the real ROS2/Nav2
-> stack. This session is explicitly a research-and-design pass, not an implementation
-> checklist yet — see "Open questions to resolve" below before writing any code.
+> genuinely talking to each other as a CI-testable hardware-in-the-loop stage**. A full
+> `/superpowers:brainstorming` pass (same day) resolved the "Open questions to resolve"
+> below — decisions and reasoning are captured in full at
+> `docs/superpowers/specs/2026-07-10-session15-gazebo-hil-mission1-design.md`, summarized
+> here (mission numbering below uses the revised 2026-07-11 scheme — on review Mike flagged
+> "Mission 2 first, Mission 1 second" as confusing, so the first milestone is now Mission 1
+> and the deferred coverage/reactive follow-up is Mission 2):
+> - **Gazebo, not Isaac Sim, for both Stage 2 and Stage 4/HIL.** Isaac shelved (not
+>   discarded) — its proven fragility in this project is Nav2/AMCL-specific plus a general
+>   operational tax, neither of which the actual near-term mission exercises; no
+>   camera/perception-specific Isaac issue has ever been hit here. Isaac's real
+>   differentiators (Replicator synthetic data, NITROS-accelerated Isaac ROS) only pay off
+>   once a mission needs a *trained* model — not the case yet.
+> - **Scope: one robot, not a fleet, to start.** The long-term multi-sensor/multi-robot
+>   vision is real but is its own multi-subsystem project, not designed here.
+> - **First concrete milestone: "Mission 1"** — navigate to the doorway center (real
+>   heading-correction navigation), take a picture (new action primitive), return to start.
+>   Deliberately excludes ball-reaction and full-coverage sweep — those are "Mission 2," an
+>   explicitly deferred follow-up (approach for both is decided in the spec, just not built).
+> - Mission framework builds on Session 13's `SEMANTIC_MAP` multi-waypoint infrastructure
+>   rather than a bespoke script, so different missions (Mission 1, Mission 2, ...) are
+>   actually switchable.
+>
+> **Next step:** review the spec doc, then `/superpowers:writing-plans` for the actual
+> implementation plan (bare-metal Mission 1 prototype first, per this project's tiered
+> dev-loop philosophy, before touching CI).
 >
 > **Does not include NVMe SSD migration** — that stays in Session 14 (Part 9), since it's
 > Jetson hardware setup, not HIL design; the two can proceed in parallel.
@@ -3366,6 +3388,11 @@ touch the real Jetson at all. Actually deploying/exercising the arm64-built imag
 Jetson as part of Stage 4 is the real work this session designs.
 
 ### Open questions to resolve (in order, before implementation)
+
+> **All resolved 2026-07-10** — kept below as the historical record of the reasoning process
+> (including the research/pushback that shaped it), not because they're still open. See
+> `docs/superpowers/specs/2026-07-10-session15-gazebo-hil-mission1-design.md` for the actual
+> decisions and full reasoning, and the status block at the top of this session for a summary.
 
 1. **Isaac vs. Gazebo vs. something else as the sim side — genuinely open, not decided.**
    Session 14's original 2026-07-06 note picked Gazebo specifically for this use case,
@@ -3407,14 +3434,18 @@ Jetson as part of Stage 4 is the real work this session designs.
    that image onto the real Jetson and exercise it as hardware-in-the-loop.
 
 ### Session Complete When
-- Isaac-vs-Gazebo (or other) decision made and recorded in BLUEPRINT.md's decisions log, with
-  the industry-practice research that informed it
-- A bare-metal HIL prototype (Jetson + chosen sim engine, real network link) works at least
-  once, manually, outside CI
-- A design for the actual CI stage exists (even if not yet implemented) — network
-  orchestration approach, success/failure definition, timeout/teardown behavior
-- Job renumbering plan decided (can be implemented here or deferred to whenever the CI stage
-  itself is built)
+- [x] Isaac-vs-Gazebo decision made and recorded — see spec doc + BLUEPRINT.md decision log
+      (2026-07-10). Gazebo, for both Stage 2 and Stage 4/HIL.
+- [x] First concrete milestone scoped — "Mission 1" (navigate → photograph → return),
+      ball-reaction/coverage explicitly deferred to a "Mission 2" follow-up (numbering
+      revised 2026-07-11 on review — build order now matches mission number)
+- [ ] A bare-metal HIL prototype (Jetson + Gazebo, real network link) runs Mission 1 at least
+      once, manually, outside CI
+- [ ] A design for the actual CI stage exists (even if not yet implemented) — network
+      orchestration approach, success/failure definition, timeout/teardown behavior
+- [ ] Job renumbering plan decided for any new CI stage this work introduces (separate from
+      the existing stage-0..5 renumbering already done 2026-07-10 — see BLUEPRINT.md)
+- [ ] Implementation plan written (`/superpowers:writing-plans`) from the approved design spec
 
 ---
 

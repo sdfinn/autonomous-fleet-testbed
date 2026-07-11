@@ -72,8 +72,20 @@ docker buildx build --platform linux/arm64 \
   all tools read/write (telemetry_logger, baseline_monitor drift detection, dashboard,
   generate_test_report, validate_telemetry, agentic_loop). `reports/history/` is
   empty/unused — the JSON-per-run idea was dropped in the 2026-07-03 Session 12 review.
-- `.github/workflows/ci.yml` — 6-stage CI pipeline
+- `.github/workflows/ci.yml` — 6-stage CI pipeline (job keys renumbered 2026-07-10 to match
+  execution order — Gazebo is `stage-2-gazebo`, arm64 is `stage-3-arm64`, both gate
+  `stage-4-isaac`; if older docs/notes say `stage-2-arm64`/`stage-3-gazebo`, that's the
+  pre-2026-07-10 naming)
 - `GazeboCommands.md` — Gazebo viewer navigation cheat sheet
+- `docs/superpowers/specs/` — dated design specs from `/superpowers:brainstorming` sessions
+  (e.g. `2026-07-10-session15-gazebo-hil-mission1-design.md`) — read before continuing any
+  session that has one; it's the source of truth over any summary in `Release1Todo.md`
+- **`/home/mike/BC/isaac_project`** (outside this repo, not migrated) — has more reference
+  material than what was pulled into this project. Notably `src/behavior_controller.py`
+  (HSV color-threshold ball detection — proven, hardware-validated, zero training data) and
+  `src/nav_controller.py` (the reactive coverage/avoidance mission it drives). `MasterBrief.md`
+  in that same directory describes a fancier YOLO+ArUco design that was **never actually
+  built** — don't trust that file over the real code when the two disagree (found 2026-07-10).
 
 ## Gotchas
 - `.bashrc` now sources ROS2, CycloneDDS, fleet-env venv, AND workspace overlay automatically.

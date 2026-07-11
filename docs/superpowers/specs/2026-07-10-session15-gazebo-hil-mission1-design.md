@@ -1,8 +1,15 @@
-# Session 15 — Gazebo Hardware-in-the-Loop, Mission 2 Design
+# Session 15 — Gazebo Hardware-in-the-Loop, Mission 1 Design
 
 **Date:** 2026-07-10
-**Status:** Approved
-**Scope:** Session 15 (Isaac Sim + Real Jetson Hardware-in-the-Loop, per `Release1Todo.md`) — sim engine decision, mission-framework shape, and the first concrete HIL milestone. Does not cover Mission 1 (full-area coverage + camera-reactive behavior), which is an explicitly deferred follow-up.
+**Status:** Approved (mission numbering revised 2026-07-11 on Mike's review — see note below)
+**Scope:** Session 15 (Isaac Sim + Real Jetson Hardware-in-the-Loop, per `Release1Todo.md`) — sim engine decision, mission-framework shape, and the first concrete HIL milestone. Does not cover Mission 2 (full-area coverage + camera-reactive behavior), which is an explicitly deferred follow-up.
+
+> **Mission numbering note (2026-07-11):** As originally written, the *first* milestone was
+> called "Mission 2" and the *deferred* follow-up "Mission 1" — a leftover of the order the
+> ideas came up in brainstorming, and confusing on review. Renumbered so numbering follows
+> build order: **Mission 1 = navigate → photograph → return (this spec's first milestone);
+> Mission 2 = full coverage + camera-reactive behavior (the deferred follow-up).** Any doc or
+> note dated 2026-07-10 that says "Mission 2 first" is using the old numbering.
 
 ---
 
@@ -44,17 +51,17 @@ The robot needs to run different, switchable missions (e.g. a full-coverage-with
 
 ---
 
-## Decision 4: First milestone is "Mission 2" — navigate, photograph, return
+## Decision 4: First milestone is "Mission 1" — navigate, photograph, return
 
-**Mission 2:** navigate to the doorway center (from a start position not aligned with it, so real heading-correction navigation is exercised — the same capability already proven by BR-01's corridor/doorway navigation) → take a picture (new action primitive: subscribe to `/robot_001/camera/image_raw`, save/publish one frame) → return to the start position (navigate again).
+**Mission 1:** navigate to the doorway center (from a start position not aligned with it, so real heading-correction navigation is exercised — the same capability already proven by BR-01's corridor/doorway navigation) → take a picture (new action primitive: subscribe to `/robot_001/camera/image_raw`, save/publish one frame) → return to the start position (navigate again).
 
-**Explicitly excluded from this milestone:** no ball-reaction, no coverage planning. Those are Mission 1's job (see Decision 5).
+**Explicitly excluded from this milestone:** no ball-reaction, no coverage planning. Those are Mission 2's job (see Decision 5).
 
 **Why this is the right first HIL milestone:** it exercises real navigation, the mission-framework/action-primitive mechanism, the camera pipeline, and the full HIL loop (Gazebo on the workstation ↔ real Jetson over the network) — everything Session 15 needs to prove — while staying small enough to get solid and reproducible quickly. It deliberately does not bundle in the two capabilities that are themselves substantial new engineering (full-coverage planning, camera-reactive Nav2 integration), so HIL-networking bugs don't get debugged at the same time as coverage-planning bugs or perception-integration bugs.
 
 ---
 
-## Decision 5: Deferred to a follow-up — Mission 1 (full coverage + camera-reactive behavior)
+## Decision 5: Deferred to a follow-up — Mission 2 (full coverage + camera-reactive behavior)
 
 Not designed in detail here; captured so the shape is known when that follow-up starts.
 
@@ -75,7 +82,7 @@ Direct connection between workstation and Jetson — either plain Ethernet or th
 
 ## Success criteria for this session
 
-- Mission 2 runs successfully bare-metal first — Jetson + Gazebo, no CI yet. Matches this project's existing tiered-dev-loop philosophy (cheaper to debug outside CI than inside it).
+- Mission 1 runs successfully bare-metal first — Jetson + Gazebo, no CI yet. Matches this project's existing tiered-dev-loop philosophy (cheaper to debug outside CI than inside it).
 - Only after that: design (not necessarily implement) the actual CI stage — network orchestration approach (does a GHA job on the x86 GPU runner have a clean way to coordinate the Jetson as a second self-hosted runner mid-job, or does this need to be structured differently, e.g. SSH-driven from one job rather than treating the Jetson as a GHA runner for this stage), and a definition of success/failure/timeout/teardown for a HIL test.
 - This Isaac-vs-Gazebo decision and its reasoning recorded in `BLUEPRINT.md`'s decision log (separately from this spec, per this project's existing documentation convention).
 - Job renumbering/CI-stage-shape implications (if any) decided — can be implemented in this session or deferred to whenever the CI stage itself is actually built.
@@ -86,5 +93,5 @@ Direct connection between workstation and Jetson — either plain Ethernet or th
 
 - Multi-robot fleet simulation and its scaling limits (flagged as a future measurement, not resolved here)
 - Full-area coverage planning implementation details (Decision 5 captures the shape, not the plan)
-- Camera-reactive Nav2 integration implementation details (approach is decided; implementation is Mission 1's follow-up work)
+- Camera-reactive Nav2 integration implementation details (approach is decided; implementation is Mission 2's follow-up work)
 - Isaac ROS/NITROS adoption on the real Jetson (independent decision, not blocked by this design either way)
