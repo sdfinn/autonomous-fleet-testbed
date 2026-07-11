@@ -17,6 +17,7 @@ jobs:
     # minutes instead of waiting on an irrelevant arm64 rebuild.
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pull-requests: read
     outputs:
       docker: ${{ steps.filter.outputs.docker }}
