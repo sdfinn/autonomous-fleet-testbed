@@ -160,7 +160,7 @@ Using the correct vocabulary makes the work immediately legible to hiring direct
 |---|---|---|
 | Nav2 AMCL + costmaps + behavior tree | **Probabilistic AI layer** | `src/nav_fleet/`, `nav2_params.yaml` |
 | Scan min-range assertion + collision check | **Deterministic safety layer** | `tests/test_navigation.py` |
-| Session 15 SLAM map build (drive once, auto after) | **Teach Run / Teach-and-Repeat** | `maps/bedroom_real.*` |
+| Session 16 SLAM map build (drive once, auto after) | **Teach Run / Teach-and-Repeat** | `maps/bedroom_real.*` |
 | Jetson + UGV-PT testing (Sessions 14–15) | **Hardware-in-the-Loop (HIL)** | Stage 6 CI |
 | Stage 6 SSH deploy + smoke test + rollback | **OTA update pipeline** | `.github/workflows/ci.yml` |
 | `telemetry_logger.py` + `baseline_monitor.py` | **Networked fleet learning loop** (1-robot scale) | `tools/` |
@@ -334,7 +334,7 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   one-shot BT (`navigate_simple.xml`, no periodic replanning, no recovery dependency), and a
   static `map→odom` TF instead of AMCL. Full writeup, deferred capability (AMCL hardening,
   recovery, accurate footprint planning, multi-robot launch parameterization), and two hard-won
-  ROS2/Nav2 launch gotchas are in `Release1Todo.md` Session 16+ and `CLAUDE.md`.
+  ROS2/Nav2 launch gotchas are in `Release1Todo.md` Session 17+ and `CLAUDE.md`.
   **Process note:** DDS TRANSIENT_LOCAL caches Isaac's full TF history — must kill Isaac AND Nav2 together between runs. Start Nav2 within ~5s of Isaac ready. See CLAUDE.md "Isaac GUI Nav Test — Terminal Procedure".
 - **2026-07-03 — First fully green, hands-off CI run of the Isaac nav test (Session 11/12).**
   `stage-4-isaac` rewritten from a sensor-rate smoke test to the real BR-01/02/10 headless
@@ -352,14 +352,14 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   - **Stage 3 Gazebo (headless, cold sim/Nav2 start → all 3 tests passing):** 52s
   - **Stage 4 Isaac Sim (headless, cold sim/Nav2 start → all 3 tests passing):** 100s — ~2x Gazebo, but manual testing showed the actual navigation portion is comparably fast (~13–28s) once both are already running; the gap is Isaac's own startup overhead (extension loading, URDF import), not slower navigation
   - Both stage-3/stage-4 timers start after `colcon build`, so they're apples-to-apples with each other (not full job time from checkout)
-  - This is the baseline Session 14/15 will compare real Jetson Orin Nano hardware timing against — not a sim-engine-vs-real-hardware comparison on the same platform, since Isaac Sim itself doesn't run on Jetson's embedded GPU at all (see Release1Todo.md Session 16+)
+  - This is the baseline Session 14/16 will compare real Jetson Orin Nano hardware timing against — not a sim-engine-vs-real-hardware comparison on the same platform, since Isaac Sim itself doesn't run on Jetson's embedded GPU at all (see Release1Todo.md Session 17+)
 - **2026-07-03 — Session 12 pre-flight review: SQLite is the single telemetry store.** The session text described a JSON-file-per-run architecture (`reports/history/<run_id>.json`), but all five migrated tools (telemetry_logger, generate_test_report, baseline_monitor, validate_telemetry, dashboard) were already built on SQLite (`reports/fleet_runs.db` via `FLEET_DB`) and nothing read `reports/history/` at all. Decisions: (1) SQLite stays — JSON-per-run dropped; (2) add a `sim_engine` column (gazebo/isaac/real) via the logger's `_ensure_run_columns()` migration; (3) the telemetry hook (`test_navigation.py` → `log_run()`) is the session's real deliverable — it didn't exist, so no run data did either; (4) new CI job is `stage-5-reports` on the self-hosted runner with `FLEET_DB` at a persistent path outside the job workspace (`~/fleet-ci-data/`) so drift detection accumulates cross-run history — a hosted runner would PDF an empty database. Session 12/15 text and CLAUDE.md corrected to match.
 - **2026-07-03 — Jetson deployment decisions (pre-Session 14 review).** Five decisions from the untethered/storage/container discussion:
-  1. **Storage: MicroSD first, NVMe later — both measured within Session 14 (moved up from Session 16+ on 2026-07-06).** Flash R1 to SD (dev kit default boot), record a baseline (apt/ROS2 install, `colcon build`, `docker pull` times), then swap to NVMe and re-record the same numbers before the module ever leaves the dev kit for the robot chassis — storage swaps are strictly easier on a bare dev kit than after Session 15 wires it into anything. Publish the before/after table — the second "measured, marketed" number after QEMU→native. No architecture work needed: nothing in the repo depends on the storage medium, so the swap is a reflash, not a redesign. SD hygiene until the swap: no rosbags/heavy logging to the card.
+  1. **Storage: MicroSD first, NVMe later — both measured within Session 14 (moved up from Session 17+ on 2026-07-06).** Flash R1 to SD (dev kit default boot), record a baseline (apt/ROS2 install, `colcon build`, `docker pull` times), then swap to NVMe and re-record the same numbers before the module ever leaves the dev kit for the robot chassis — storage swaps are strictly easier on a bare dev kit than after Session 16 wires it into anything. Publish the before/after table — the second "measured, marketed" number after QEMU→native. No architecture work needed: nothing in the repo depends on the storage medium, so the swap is a reflash, not a redesign. SD hygiene until the swap: no rosbags/heavy logging to the card.
   2. **Bare metal + container hybrid on the Jetson.** Native bare-metal build stays the Session 14 runner path (simplest, and it produces the QEMU→native speedup headline). The stage-2 arm64 image is repurposed, not retired: pulled on the Jetson with the unit tests run inside it — the *exact CI artifact* proven on target silicon, making "deliver hardware-verified binaries to the edge" literal rather than aspirational. The whole chain is one distro — x86 workstation, stage-2 image (`ros:jazzy-ros-base`), and Jetson (JetPack 7.2 = L4T 39.2 = Ubuntu 24.04) are all 24.04/Jazzy; no Humble anywhere. Container as robot *runtime* therefore buys env pinning/rollback, not distro compatibility: bare metal runtime is the R1 default, container runtime is an R2+ option (pairs with the RaaS/OTA framing).
   3. **Git-sync over SSH is the deployment mechanism.** Stage 6's CI job already implements it (`git pull` + `colcon build` via SSH). Ansible rejected as YAGNI for a one-robot fleet.
-  4. **systemd autostart ("going untethered") deferred to Session 16+.** r1-complete works entirely over SSH; boot-to-nav is captured as a concrete Session 16+ block (units, ordering, non-interactive-shell gotcha, headless power-cycle acceptance test).
-  5. **Plan gap found and closed: the hardware driver layer.** No session provided `/robot_001/cmd_vel`→wheels, wheel odometry, or `/scan` on real hardware — Session 15 assumed the topics existed. Added as Session 15's first step: evaluate Waveshare's `ugv_ws` ROS2 workspace before writing a thin driver node. Also removed Session 14's stale JetPack 6.x/Humble note (predates JetPack 7.x Orin Nano support) — the plan commits to JetPack 7.2/Jazzy; flash-day sanity check only.
+  4. **systemd autostart ("going untethered") deferred to Session 17+.** r1-complete works entirely over SSH; boot-to-nav is captured as a concrete Session 17+ block (units, ordering, non-interactive-shell gotcha, headless power-cycle acceptance test).
+  5. **Plan gap found and closed: the hardware driver layer.** No session provided `/robot_001/cmd_vel`→wheels, wheel odometry, or `/scan` on real hardware — Session 16 assumed the topics existed. Added as Session 16's first step: evaluate Waveshare's `ugv_ws` ROS2 workspace before writing a thin driver node. Also removed Session 14's stale JetPack 6.x/Humble note (predates JetPack 7.x Orin Nano support) — the plan commits to JetPack 7.2/Jazzy; flash-day sanity check only.
 - **2026-07-01 — Session 11 complete (Stage 4 — Isaac Sim bare metal, ROS2 bridge + scan working).** Isaac Sim 6.0.1.0 installed via pip (~20 GB). Key findings:
   - **RTX lidar (RTX render product) does not work headless.** `IsaacSensorCreateRtxLidar` creates an `OmniLidar` prim, but no sensor-specific render product is created in headless mode — only the generic `/Render/OmniverseKit/HydraTextures/Replicator` product exists. `ROS2RtxLidarHelper` OmniGraph node can't produce scan data from it.
   - **Solution: `RotatingLidarPhysX`** (PhysX raycasting, `isaacsim.sensors.physx`). Works natively headless, no render product needed. Frame key is `'linear_depth'`. Published via rclpy `sensor_msgs/LaserScan` in the simulation loop.
@@ -413,9 +413,9 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   `bedroom_goal`, `dresser`, `desk`, `pc_tower`, `bed`). Model string updated
   `claude-sonnet-4-6` → `claude-sonnet-5` (`tools/ai_test_generator.py` has the same stale
   string; not touched here since Session 13 doesn't modify that file).
-- **2026-07-06 — NVMe SSD comparison moved from Session 16+ into Session 14.** Rationale:
+- **2026-07-06 — NVMe SSD comparison moved from Session 17+ into Session 14.** Rationale:
   swapping storage is strictly easier on a bare dev kit sitting on a desk than after
-  Session 15 transfers the module into the robot chassis — no reason to wait. Session 14
+  Session 16 transfers the module into the robot chassis — no reason to wait. Session 14
   now records the same three numbers (apt/ROS2 install, `colcon build`, `docker pull`) on
   both MicroSD and NVMe and publishes the before/after table itself, rather than only
   recording an SD baseline and deferring the NVMe side. Decided during a discussion of CI
@@ -482,6 +482,46 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   trusting anything built that way. Storage/memory headroom checked and judged sufficient for
   this dual-mode setup on the *current* microSD flash (97G free per the Part 5 smoke test,
   8GB module RAM) — Docker images/layers plus native ROS2 + Nav2 packages together are a few
-  GB, well under that. The Session 15 tradeoff (transfer this Jetson into the UGV-PT chassis
+  GB, well under that. The Session 16 tradeoff (transfer this Jetson into the UGV-PT chassis
   vs. buy a second module to keep this one as a dedicated CI runner) is still open and
   unaffected by this decision either way.
+- **2026-07-10 — Pipeline restructured into two verification paths after Stage 3 (Piece 1 of
+  a two-piece plan; Piece 2 deferred to a new Session 15).** Sketched from a hand-drawn
+  diagram: Stage 3 (Gazebo) forks into a fast "sim path" (straight to its own drift/report
+  job) and a slower "hardware path" (`stage-2-arm64` → `stage-4-isaac` → its own drift/report
+  job), both writing to the same `FLEET_DB`. Concretely, in `ci.yml`:
+  - `stage-2-arm64` now `needs: [stage-3-gazebo, changes]` (was `[stage-1-quality, changes]`)
+    — fail-fast: don't spend ~10 real minutes on a native arm64 build if the fast Gazebo nav
+    check already failed. This is a real trade, not free — it removes the parallelism
+    stage-2/stage-3 used to have (both used to fire right after stage-1), in exchange for not
+    wasting the arm64 build on code already known to be broken.
+  - `stage-5-reports` split into `stage-5-reports-sim` (`needs: stage-3-gazebo`) and
+    `stage-5-reports-hw` (`needs: stage-4-isaac`) — Gazebo's drift recording no longer waits
+    on the arm64+Isaac chain to finish (or skips entirely if that chain fails/is skipped).
+  - `stage-4-isaac`'s `needs` deliberately left on `stage-3-gazebo`, **not** changed to
+    `stage-2-arm64` despite the diagram showing an arm64→Isaac arrow — nothing in Stage 4
+    consumes the arm64 artifact today (it's headless Isaac Sim only, no Jetson involvement),
+    so wiring that dependency in now would only add ~10 min of pointless waiting. That edge is
+    real, but it's Piece 2's job to earn it (see Session 15 below), not something to fake
+    today.
+  - Job keys/numbers (`stage-2`, `stage-3`, ...) intentionally **not** renumbered to match the
+    new execution order — Piece 2 will likely reshape this graph again (new HIL job(s), maybe
+    a real `stage-2→stage-4` edge), and renumbering once after that settles beats renumbering
+    twice.
+  - **Known limit, not a bug:** `stage-3-gazebo`, `stage-4-isaac`, and both `stage-5-reports-*`
+    jobs all run on the single self-hosted x86 GPU runner — they're logically independent now,
+    but still physically serialized on that one box regardless of DAG shape. Only
+    `stage-2-arm64` (a separate Jetson runner) gets genuine wall-clock parallelism. True
+    concurrency for the sim/hardware split would need a second x86 GPU runner, not attempted
+    here.
+  - **Piece 2 — Isaac Sim + real Jetson hardware-in-the-loop — promoted from Session 14's
+    optional stretch goal into its own session: see `Release1Todo.md` Session 15.** That
+    session's original 2026-07-06 write-up explicitly recommended Gazebo over Isaac for this
+    exact use case (Isaac's ROS2 integration called "the most fragile part of this project").
+    Tonight's diagram instead put the HIL stage on Isaac (reusing Stage 4's existing slot).
+    Deliberately **left open** rather than decided here — Isaac has gotten measurably more
+    stable since that note (Session 11/12 got it green in CI), but real-hardware sync is a new
+    failure mode stacked on top regardless of which sim engine. Session 15 needs its own
+    research/design pass on this, including whether industry practice actually favors Isaac
+    for this kind of work before assuming it does, and whether to prototype HIL bare-metal
+    (both Gazebo and Isaac) before ever touching the arm64/CI path.
