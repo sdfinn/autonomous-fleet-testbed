@@ -160,7 +160,7 @@ Using the correct vocabulary makes the work immediately legible to hiring direct
 |---|---|---|
 | Nav2 AMCL + costmaps + behavior tree | **Probabilistic AI layer** | `src/nav_fleet/`, `nav2_params.yaml` |
 | Scan min-range assertion + collision check | **Deterministic safety layer** | `tests/test_navigation.py` |
-| Session 17 SLAM map build (drive once, auto after) | **Teach Run / Teach-and-Repeat** | `maps/bedroom_real.*` |
+| Session 18 SLAM map build (drive once, auto after) | **Teach Run / Teach-and-Repeat** | `maps/bedroom_real.*` |
 | Jetson + UGV-PT testing (Sessions 14–15) | **Hardware-in-the-Loop (HIL)** | Stage 6 CI |
 | Stage 6 SSH deploy + smoke test + rollback | **OTA update pipeline** | `.github/workflows/ci.yml` |
 | `telemetry_logger.py` + `baseline_monitor.py` | **Networked fleet learning loop** (1-robot scale) | `tools/` |
@@ -699,3 +699,31 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   capital M was a pre-config accident), hostname `localhost.localdomain`→`jetson` (fixes
   the Session 14 wart at the source; enables `mike@jetson.local` mDNS). The SD stays
   untouched as rollback until Session 16's `stage-4-hil` is 3× green.
+- **2026-07-12 (evening, later) — Session 16 rescoped to build-only + Mission 2; new
+  Session 17 "Harden, Stabilize & Review"; Real Robot → 18, Agentic → 19+ (third
+  renumbering, same convention: dated entries keep old numbers).** Mike's review of the
+  16/17 plan: building (HIL CI stage) and hardening/review are different mindsets with
+  different definitions of done — split them. Decisions: (1) **Mission 2 = the
+  camera-reactive half of the Session 15 spec's Decision 5 only** (red ball → goal cancel,
+  yellow ball → costmap keepout, HSV detector reimplemented from BC's proven algorithm
+  with thresholds as per-source config data); the full-coverage sweep needs a coverage
+  planner that doesn't exist and becomes **Mission 3**, deferred — numbering follows build
+  order. (2) **Real USB camera on the Jetson as a two-tier design**: the CI tier runs
+  Mission 2 unattended with a scripted Gazebo sphere; the manual tier drives the detector
+  from a UVC webcam with croquet balls presented by hand — human-triggered by design,
+  stays out of CI, and produces the real-camera HSV calibration + detection-latency
+  numbers Session 18 consumes. (3) **Per-job Jetson power policy: build fast, test at
+  deployment power** — `stage-3-arm64` sets 25W, `stage-4-hil` sets the robot's real
+  deployment budget (candidate 15W — confirm with Session 18's battery design; 25W and
+  recorded until then), each job sets its mode explicitly (nvpmodel is global+persistent
+  state), teardown restores 25W, and the power mode is recorded in the telemetry row so
+  drift never compares across modes unknowingly. (4) **Drift/reports/AI review belongs in
+  Session 17**, alongside code review, performance/reuse passes, robot-debuggable logging
+  (rosbag-on-failure, on-device mission logs, failure taxonomy in telemetry), and report
+  UX for a less-technical reader; noted for the record that **the AI tooling uses direct
+  SQL context injection, not RAG — deliberate, and staying that way at this data scale**.
+  Session 17's gate: "have we done everything we can so the robot is good to go right out
+  of the gate?" answered yes in writing before Session 18 buys/builds hardware. (5)
+  `agentic_loop`'s known diagnose() gap (inferred `current_value`, verified wrong once)
+  pulled forward from 19+ into 17 — don't wait for real hardware to fix a known-wrong
+  prompt input.

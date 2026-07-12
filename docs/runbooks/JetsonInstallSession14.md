@@ -594,7 +594,7 @@ configuration (BLUEPRINT.md's 2026-07-12 entries). When the checklist is done: P
 closeout, then Session 16.
 
 **Why now:** the module is a bare board on the desk — storage work is trivial now and a
-pain later (Session 16 puts it in the robot chassis). The dev kit's M.2 Key-M slot is
+pain later (Session 18 puts it in the robot chassis). The dev kit's M.2 Key-M slot is
 **PCIe Gen3 x4** — far below a Gen4 SSD's ceiling but a large jump over microSD, especially
 for random I/O (builds, apt, DDS discovery caches). The SSD is already seated: `lsblk` on
 the board shows `nvme0n1` (465.8 G, blank — verified 2026-07-12).
