@@ -3543,6 +3543,15 @@ non-interactive-SSH sourcing trap the CI job will hit).
 - [ ] Consider adding `tests/test_mission_run.py` to `stage-2-gazebo` — a single pytest
       invocation with `test_navigation.py` works as of 2026-07-12 (shared guarded rclpy
       fixture in conftest).
+- [ ] **Review Mission 1's return-leg clearance at the outer hallway arch.** Mike observed
+      (2026-07-12, GUI viewing session) the robot appearing to clip/bang the hallway
+      door/corner on the doorway→home_base leg. Not captured by telemetry: the mission CLI
+      logs nav metrics but does NOT run the MetricsCollector collision check (that's only
+      in `tests/test_navigation.py` BR-02, which watches a different leg). To investigate:
+      re-run Mission 1 with the GUI up and the metrics collector alongside; check RPP's
+      `use_collision_detection: false` + inflation radius vs the arch corner; consider a
+      collision assertion on mission runs. May be visual-only (wheel near-miss at 3× RTF)
+      — needs eyes + data before touching params.
 
 ### Session Complete When
 - [ ] `stage-4-hil` green on a real code push, 3× consecutively, with `stage-4-isaac`
