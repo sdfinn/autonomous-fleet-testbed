@@ -12,7 +12,9 @@ SSH in (`ssh Mike@10.42.0.217` — if the DHCP lease moved, find it with
 
 ```bash
 sudo apt install -y ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-rmw-cyclonedds-cpp
-cd ~/autonomous-fleet-testbed && git fetch && git checkout session-15-mission1-hil && git pull
+# (during Session 15 development this was the `session-15-mission1-hil` branch —
+# substitute whatever branch holds the code under test)
+cd ~/autonomous-fleet-testbed && git fetch && git checkout main && git pull
 # pillow is needed by nav_fleet.image_io (take_picture writes PNGs). On this board it is
 # already present as the Ubuntu 24.04 system package python3-pil (PIL 10.2.0, satisfies
 # >=10.0) — no pip install needed. If a fresh board lacks it, prefer `sudo apt install -y
@@ -110,6 +112,14 @@ DDS ~5 s after both sides are down before relaunching.
 - **Goal rejected repeatedly:** bt_navigator not ACTIVE yet — the runner retries 5×, but
   if it still fails, Nav2 bringup on the Orin may just be slower than x86; wait for
   `Managed nodes are active` before Terminal 3.
+- **Non-interactive SSH (automation, CI) gets a bare environment.** The Jetson's `.bashrc`
+  has the same early interactivity guard as the workstation's (see CLAUDE.md Gotchas) —
+  a non-interactive shell skips all of its sourcing, so ROS2, the workspace overlay, and
+  the RMW setting are simply absent. Every scripted SSH command must explicitly run
+  `source /opt/ros/jazzy/setup.bash && source ~/autonomous-fleet-testbed/install/setup.bash
+  && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` before any `ros2`/mission command.
+  Human interactive SSH terminals are unaffected. Known trap for the future HIL CI stage —
+  do not rely on login-shell env there.
 
 ## Results — first HIL run (2026-07-11)
 
@@ -159,3 +169,10 @@ executor on the real Jetson Orin Nano, talking over the shared-Ethernet link.
      Jetson env; DB verification uses `python3` (no `sqlite3` CLI on the Jetson).
   5. **Discovery:** multicast worked first try — the unicast-peers fallback in Part 2 was not
      exercised this run (left in place as documented insurance).
+  6. **Part 1 — branch:** this run checked out `session-15-mission1-hil` (the Session 15
+     development branch, pre-merge); Part 1 now says `git checkout main` so the runbook stays
+     correct after the branch merges — substitute the branch under test where applicable.
+
+**Caveat:** this is a **single successful run**. Reproducibility across reboots / fresh DDS
+state is not yet established — open item for the HIL CI-stage design (Task 9 /
+docs/session15-hil-ci-stage-design.md).
