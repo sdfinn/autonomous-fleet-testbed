@@ -16,7 +16,7 @@
 import os
 
 import pytest
-import rclpy
+import rclpy  # noqa: F401 — module-level import ensures collection fails without ROS2
 
 from nav_fleet.nav_runner import NavRunner
 from nav_fleet.metrics_collector import MetricsCollector
@@ -24,10 +24,9 @@ from tools.telemetry_logger import log_run
 
 
 @pytest.fixture(scope='session', autouse=True)
-def ros_context():
-    rclpy.init()
+def _module_ros(ros_context):
+    """Activate the shared session ros_context for this module."""
     yield
-    rclpy.shutdown()
 
 
 @pytest.fixture(scope='session')
