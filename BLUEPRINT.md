@@ -674,7 +674,8 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   kept apt cached) — fixes (GHCR registry-backed build cache, BuildKit GC budget, pinned
   power mode, post-NVMe re-benchmark) are Session 16 Piece 1 checkboxes.
 - **2026-07-12 (evening) — NVMe migration method flipped: on-device clone → fresh install
-  (Jetson ISO, runbook Part 9 "Path C").** The same-day clone plan died at its own
+  (headless SDK Manager recovery flash primary, Jetson ISO USB as monitor-attached
+  fallback — runbook Part 9's "The migration" checklist).** The same-day clone plan died at its own
   compatibility gate, checked before touching hardware: JetsonHacks'
   `migrate-jetson-to-ssd` is "only tested on JetPack 6" (repo README; last commit Jan
   2025, zero JetPack-7/r39 reports, open post-migration boot-hang issues #12/#13), while
@@ -688,8 +689,13 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   the Part 4–8 re-provision as a learning pass that doubles as a live completeness test of
   the runbook (which is slated to graduate into a general robot-setup manual, candidate
   name `RobotSetup.md`; per the same discussion, **no new per-session runbooks** — Session
-  16 material lives in `Release1Todo.md`). Rider decisions: Jetson identity changes at the
-  fresh install — username `Mike`→`mike` (matches workstation; capital M was a pre-config
-  accident), hostname `localhost.localdomain`→`jetson` set at first-boot (fixes the
-  Session 14 wart at the source; enables `mike@jetson.local` mDNS). The SD stays untouched
-  as rollback until Session 16's `stage-4-hil` is 3× green.
+  16 material lives in `Release1Todo.md`). Rider decisions: **headless-first** — SDK
+  Manager recovery flash (the already-executed Part 3 process, retargeted at NVMe) chosen
+  over NVIDIA's recommended Jetson ISO installer specifically because it needs no
+  monitor/keyboard (Mike's call; ISO kept as fallback); **no GUI on the Jetson** — stock
+  desktop left installed but boot target set to `multi-user.target` (headless CI runner +
+  Nav2 don't need it; frees memory on the 8 GB board; one-command reversible); Jetson
+  identity changes at the fresh install — username `Mike`→`mike` (matches workstation;
+  capital M was a pre-config accident), hostname `localhost.localdomain`→`jetson` (fixes
+  the Session 14 wart at the source; enables `mike@jetson.local` mDNS). The SD stays
+  untouched as rollback until Session 16's `stage-4-hil` is 3× green.

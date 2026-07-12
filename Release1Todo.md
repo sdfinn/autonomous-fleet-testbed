@@ -3048,13 +3048,15 @@ ros2 topic echo /robot_001/amcl_pose
 > the original 3–5 min estimate undershot). Two real CI permissions bugs were hit and fixed
 > along the way (PR #1) — see `docs/runbooks/JetsonInstallSession14.md` Part 8.2 for the story. **Resume at
 > `docs/runbooks/JetsonInstallSession14.md` Part 9 (NVMe migration)** — SSD arrived and is
-> seated (`nvme0n1` blank, verified 2026-07-12); method re-decided 2026-07-12: **fresh
-> install via Jetson ISO (Path C)**, the clone path retired unattempted (JetPack-6-era
-> scripts vs this board's r39.2 boot layout — evidence in the runbook's Part 9 decision
-> note). Part 10 (closeout) remains after that. State to know: username `Mike` (capital M;
-> becomes lowercase `mike` at the Part 9 fresh install), IP `10.42.0.217` (DHCP, may
-> shift), hostname still `localhost.localdomain` (becomes `jetson` at Part 9),
-> CUDA/TensorRT intentionally not installed.
+> seated (`nvme0n1` blank, verified 2026-07-12); method re-decided 2026-07-12: **headless
+> fresh install via SDK Manager recovery flash** (Jetson ISO USB kept as the
+> monitor-attached fallback; the clone path retired unattempted — JetPack-6-era scripts vs
+> this board's r39.2 boot layout, evidence in the runbook's Part 9 decision notes). GUI
+> will be disabled on the new install (`multi-user.target`). Part 10 (closeout) remains
+> after that. State to know: username `Mike` (capital M; becomes lowercase `mike` at the
+> Part 9 fresh install), IP `10.42.0.217` (DHCP, may shift), hostname still
+> `localhost.localdomain` (becomes `jetson` at Part 9), CUDA/TensorRT intentionally not
+> installed.
 >
 > **CI pipeline rewiring done in parallel tonight (2026-07-10), not part of this session's
 > original scope:** `stage-3-arm64` now fails fast behind `stage-2-gazebo` passing, and
