@@ -3439,13 +3439,21 @@ Jetson as part of Stage 4 is the real work this session designs.
 - [x] First concrete milestone scoped — "Mission 1" (navigate → photograph → return),
       ball-reaction/coverage explicitly deferred to a "Mission 2" follow-up (numbering
       revised 2026-07-11 on review — build order now matches mission number)
-- [ ] A bare-metal HIL prototype (Jetson + Gazebo, real network link) runs Mission 1 at least
-      once, manually, outside CI
-- [ ] A design for the actual CI stage exists (even if not yet implemented) — network
-      orchestration approach, success/failure definition, timeout/teardown behavior
-- [ ] Job renumbering plan decided for any new CI stage this work introduces (separate from
-      the existing stage-0..5 renumbering already done 2026-07-10 — see BLUEPRINT.md)
-- [ ] Implementation plan written (`/superpowers:writing-plans`) from the approved design spec
+- [x] A bare-metal HIL prototype (Jetson + Gazebo, real network link) runs Mission 1 at least
+      once, manually, outside CI — **PASS on the first attempt (2026-07-11)**, see
+      `Mission1HILSession15.md` Results section (multicast DDS discovery worked, Nav2 active
+      in ~5 s on the Orin, mission total ~18 s, DB row
+      `('mission1','PASS','hil_jetson','gazebo')`; single-run caveat noted there)
+- [x] A design for the actual CI stage exists (even if not yet implemented) — network
+      orchestration approach, success/failure definition, timeout/teardown behavior — see
+      `docs/session15-hil-ci-stage-design.md` (one GHA job on the x86 runner driving the
+      Jetson over SSH; §1–§3 cover orchestration, success/failure, timeout/teardown)
+- [x] Job renumbering plan decided for any new CI stage this work introduces (separate from
+      the existing stage-0..5 renumbering already done 2026-07-10 — see BLUEPRINT.md) — **no
+      renumbering; `stage-4-hil` takes the existing Stage 4 slot, replacing `stage-4-isaac`
+      when implemented** (`docs/session15-hil-ci-stage-design.md` §4)
+- [x] Implementation plan written (`/superpowers:writing-plans`) from the approved design spec
+      — `docs/superpowers/plans/2026-07-11-session15-mission1-hil.md`
 
 ---
 

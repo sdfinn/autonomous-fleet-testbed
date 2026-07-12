@@ -605,3 +605,39 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   Mission 1" — confusing. Numbering now follows build order. The spec file was renamed to
   `...-mission1-design.md` and updated in place; anything dated 2026-07-10 that says
   "Mission 2 first" is the old naming. No scope change — purely a rename.
+- **2026-07-11 — Session 15 closeout: Mission 1 implemented, first real HIL run passed, HIL CI
+  stage design decided.**
+  - **Mission 1 implemented** on top of Session 13's `SEMANTIC_MAP` multi-waypoint
+    infrastructure (`nav_fleet/semantic_map.py`, `missions.py`, `mission_runner.py`) rather
+    than a bespoke script, so future missions (Mission 2, ...) are switchable through the same
+    framework. New `take_picture` action primitive (`nav_fleet/image_io.py`, backed by
+    pillow) writes a PNG from `/robot_001/camera/image_raw` mid-mission. The single-machine
+    `sim_launch.py` was split into `sim_only_launch.py` (Gazebo + bridge) and
+    `nav2_only_launch.py` (Nav2 + mission executor), composed back together by
+    `sim_launch.py` for Tier-1, so the same two halves can instead run on separate machines
+    for HIL.
+  - **Mission 1 Tier-1 (x86 Gazebo, single machine): PASS.** CLI exit 0, telemetry row
+    `mission1|PASS|local|gazebo`, photo shows the bedroom from the doorway, integration test
+    `tests/test_mission_run.py` passed in 16.21 s. The doorway goal `(-0.974, 2.430)` worked
+    without needing the costmap-inflation fallback that was flagged as a risk at plan time.
+  - **First real HIL run (2026-07-11): PASS on the first attempt.** Gazebo on the x86
+    workstation talked to Nav2 + the mission executor running natively on the real Jetson
+    Orin Nano, over the existing shared-Ethernet link. **Plain CycloneDDS multicast discovery
+    worked — the unicast-peers fallback was not needed.** Nav2 reached "Managed nodes are
+    active" in ~5 s on the Orin; the mission ran in ~18 s total (step 1 navigate ~5.3 s, step 2
+    take_picture ~0.07 s, step 3 navigate ~10.6 s); DB row
+    `('mission1','PASS','hil_jetson','gazebo', 7.95, 0.21)` (`mean_time_to_goal`,
+    `mean_position_error`); photo verified — bedroom from the doorway, camera pipeline crossed
+    the network intact. Full record, including deviations from the runbook and the
+    single-run reproducibility caveat: `Mission1HILSession15.md` (Results section).
+  - **HIL CI stage design decided** (`docs/session15-hil-ci-stage-design.md`): one GitHub
+    Actions job on the existing x86 GPU self-hosted runner, driving the Jetson entirely over
+    SSH (Nav2 launch, mission run, DB read, photo retrieval, teardown) rather than
+    coordinating two separate runner jobs — keeps a single `if: always()` teardown in control
+    of both sides. **No job renumbering**: the new job takes the existing Stage 4 slot as
+    `stage-4-hil`, replacing `stage-4-isaac` in the same PR that adds it, so the pipeline
+    shape and `needs:` edges stay stable. **`stage-4-isaac` remains in `ci.yml` until
+    `stage-4-hil` is actually implemented** — this closeout only records the design, it does
+    not touch `ci.yml`. Phase 2 (deferred, mechanism already decided) is what finally makes
+    the existing `needs: stage-3-arm64` edge real: pulling the Stage 3 GHCR arm64 image onto
+    the Jetson and running the mission executor inside it, instead of natively.
