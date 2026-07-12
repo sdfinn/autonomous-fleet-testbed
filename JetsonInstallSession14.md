@@ -584,23 +584,119 @@ the CI runner swap (Part 8) on a shaky build.**
 
 ## Part 9 — Migrate microSD → NVMe SSD
 
+> **Rewritten 2026-07-12.** The original Part 9 said "re-flash to NVMe via SDK Manager."
+> That still works and is preserved below as **Path B (fallback)**, but the primary method is
+> now an **on-device clone (Path A)**: same system, same data, only the storage changes. Why
+> that's better for us specifically: (1) it preserves everything Sessions 14–15 installed on
+> the SD — ROS2, the GitHub runner *registration*, the Session 15 HIL prerequisites
+> (`Mission1HILSession15.md` Part 1), the repo build, even the Jetson-side telemetry rows —
+> so there is no Part 4–8 redo; (2) it gives a true apples-to-apples SD-vs-NVMe baseline for
+> the Part 7 table (identical bits, only storage differs); (3) no host PC, no recovery mode.
+> Risk asymmetry favors trying it: if the clone won't boot, the SD is untouched — pull the
+> NVMe or fix boot order and you're back where you started, with Path B still available.
+
 **Why now:** the module is a bare board on the desk — swapping storage is trivial now and a
 pain later (Session 16 puts it in the robot chassis). Faster/steadier storage also makes the
-CI runner's builds quicker.
+CI runner's builds quicker. The dev kit's M.2 Key-M slot is **PCIe Gen3 x4** — far below a
+Gen4 SSD's ceiling but a large jump over microSD, especially for random I/O (builds, apt,
+DDS discovery caches).
 
-- [ ] Power off the Jetson. Install the **NVMe M.2 2280 SSD** into the Key-M slot (screw it
-      down at the standoff).
-- [ ] Re-flash JetPack 7.2 with SDK Manager exactly as in **Part 3**, but choose **NVMe** as the
-      storage target this time. (Recovery mode → SDK Manager → OS image → target = NVMe.)
+### Path A — on-device clone (recommended)
+
+**How it works (learning note):** on Orin-generation Jetsons the early boot chain (UEFI)
+lives in **QSPI flash on the module itself**, not on the storage device. So "migrating" is
+just: copy the partitions to the SSD, point the SSD's boot config at itself, and tell UEFI
+to prefer NVMe. Two files matter on the cloned rootfs: `/boot/extlinux/extlinux.conf`
+(kernel command line's `root=` must become the NVMe partition) and `/etc/fstab` (the `/`
+entry must reference the SSD, not the SD).
+
+- [ ] **A0 — Backup the SD first (non-negotiable).** Power off the Jetson, move the microSD
+      to the x86 workstation's reader, and image it (compressed — the card is 128 GB but only
+      ~18 GB is used):
+
+  ```bash
+  lsblk   # identify the SD card device — triple-check; dd on the wrong device is fatal
+  sudo dd if=/dev/sdX bs=4M status=progress | gzip > ~/jetson_orin_backup_$(date +%F).img.gz
+  # Restore later, if ever needed:
+  #   gunzip -c ~/jetson_orin_backup_YYYY-MM-DD.img.gz | sudo dd of=/dev/sdX bs=4M status=progress
+  ```
+
+  Put the SD back in the Jetson and boot normally.
+- [ ] **A1 — Install the SSD.** Power off completely and unplug. Flip the carrier board:
+      the **M.2 Key-M 2280** slot is on the underside (the short 2230 Key-E slot next to it
+      is for wifi cards — wrong slot). Insert the NVMe SSD, secure with the standoff screw.
+      Boot from the SD as normal.
+- [ ] **A2 — Verify device names.** `lsblk` — on this board the SD rootfs is
+      **`/dev/mmcblk0p1`** (confirmed over SSH 2026-07-11) and the SSD should appear as
+      **`nvme0n1`**, ideally unpartitioned. If the SSD auto-mounted anything:
+      `sudo umount /dev/nvme0n1*`.
+- [ ] **A3 — Check script compatibility BEFORE running.** The clone uses JetsonHacks'
+      `migrate-jetson-to-ssd` scripts. **This runbook has not verified them on JetPack 7.2 /
+      L4T r39.2** (they were written in the JetPack 5/6 era). Read the repo README + open
+      issues for r39/JetPack-7 reports first, and check each script's `-h`/README for the
+      exact source/target flag syntax — the flags shown in A4 are the intent (source = SD,
+      target = NVMe), not gospel. If the repo looks abandoned or r39-incompatible, use Path B.
+- [ ] **A4 — Run the clone (on the Jetson, ~20–45 min for the copy step):**
+
+  ```bash
+  git clone https://github.com/jetsonhacks/migrate-jetson-to-ssd
+  cd migrate-jetson-to-ssd
+  sudo bash make_partitions.sh   -s /dev/mmcblk0 -t /dev/nvme0n1  # partition table on SSD, rootfs expanded
+  sudo bash copy_partitions.sh   -s /dev/mmcblk0 -t /dev/nvme0n1  # the long step
+  sudo bash configure_ssd_boot.sh -s /dev/mmcblk0 -t /dev/nvme0n1 # fixes extlinux.conf root= + fstab on the SSD
+  ```
+
+  Pass source/target explicitly even though our SD happens to match the scripts' default —
+  explicit beats default when a wrong guess dd's over the wrong disk.
+- [ ] **A5 — First NVMe boot, the safe way.** Power off, **remove the microSD entirely**,
+      power on. UEFI falls through to the only bootable device — the NVMe. This proves the
+      SSD boots standalone with zero risk to the SD. (Alternative: hold **ESC** at boot →
+      UEFI → Boot Manager → move NVMe above SD/mmc — do this later anyway if you ever
+      re-insert the SD.)
+- [ ] **A6 — Verify:**
+
+  ```bash
+  findmnt /                     # must show /dev/nvme0n1p1
+  df -h /                       # full SSD capacity — if it shows ~SD-size instead:
+                                #   sudo resize2fs /dev/nvme0n1p1
+  cat /etc/nv_tegra_release     # L4T r39.2 still intact (jetson_release needs jetson-stats, not stock)
+  systemctl status actions.runner.* --no-pager   # runner registration survived the clone
+  ip a                          # same MAC → usually the same 10.42.0.x lease; re-check with
+                                # `ip neigh show dev enp6s0` on the workstation if SSH fails
+  ```
+- [ ] **A7 — What to do with the SD card.** Prefer keeping it **out of the Jetson**, stored
+      as a known-good offline backup. **Caution:** the clone can leave both devices with
+      identical filesystem UUIDs/PARTUUIDs (depends on how the scripts create the SSD
+      filesystem) — with both inserted, UUID-based resolution in fstab/initrd can grab the
+      *SD's* partition and silently put you back on slow storage. If you re-insert the SD,
+      verify `findmnt /` says nvme afterwards; wipe or re-purpose the SD once confident.
+- [ ] **A8 — Fill the NVMe column** of the Part 7 baseline table: same timed
+      `colcon build --base-paths src`, same `docker pull`, same pytest run. This is the
+      payoff number for BLUEPRINT.md's SD-vs-NVMe comparison (Part 10).
+- [ ] **A9 — If it doesn't boot:** remove the NVMe (or restore SD-first boot order) → the SD
+      boots exactly as before. Skim the script repo's issues for your symptom once, then cut
+      losses and use Path B — don't sink a session into debugging a hybrid boot state.
+
+### Path B — fallback: fresh re-flash to NVMe via SDK Manager
+
+The original method. Known-good (it's exactly the Part 3 process we already executed once),
+but it wipes everything — budget ~1–2 h of reinstalls afterwards.
+
+- [ ] Power off; install the SSD (Path A's A1) if not already installed.
+- [ ] Re-flash JetPack 7.2 with SDK Manager exactly as in **Part 3**, but choose **NVMe** as
+      the storage target this time. (Recovery mode → SDK Manager → OS image → target = NVMe.)
 - [ ] First boot, then re-establish the network (**Part 4** — the shared connection recipe is
       unchanged; the Jetson gets a fresh `10.42.0.x` lease).
-- [ ] Re-run the **smoke tests** (Part 5) — confirm `lsblk` now shows rootfs on `nvme0n1`, not
-      `mmcblk*`.
+- [ ] Re-run the **smoke tests** (Part 5) — confirm `lsblk` shows rootfs on `nvme0n1`.
 - [ ] Re-install **ROS2 Jazzy** (Part 6) and re-do the **timed build + docker pull** (Part 7),
-      filling in the **NVMe column** of the baseline table. Expect meaningfully faster build and
-      pull times than microSD.
+      filling in the **NVMe column** of the baseline table.
 - [ ] Re-register / restart the **CI runner** (Part 8) on the NVMe install (fresh OS = fresh
       runner registration; remove the stale runner entry in GitHub if it lingers).
+- [ ] Re-run the **HIL prerequisites** (`Mission1HILSession15.md` Part 1):
+      `ros-jazzy-navigation2`, `ros-jazzy-nav2-bringup`, `ros-jazzy-rmw-cyclonedds-cpp`,
+      `python3-pil`, repo on `main`, `colcon build --base-paths src`. The Session 15 HIL run
+      was done on the microSD install, so a fresh NVMe flash loses all of it. (Path A
+      preserves all of this — one of the reasons it's Path A.)
 
 > **SD hygiene reminder (from Release1Todo):** don't record rosbags/heavy logs to a microSD
 > while it's the live rootfs — sustained writes wear SD cards. On NVMe this stops mattering.
