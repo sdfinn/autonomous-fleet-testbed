@@ -584,6 +584,29 @@ the CI runner swap (Part 8) on a shaky build.**
 
 ## Part 9 — Migrate microSD → NVMe SSD
 
+### Execution sequence (agreed 2026-07-12 — run in this order)
+
+The migration happens **before Session 16** (so Session 16's CI/HIL benchmarks and
+reproducibility records land once, on the final configuration — see BLUEPRINT.md's
+2026-07-12 sequencing entry). The Jetson was pinned to **25W power mode on 2026-07-12**;
+all timings below are taken at that mode.
+
+- [ ] **1. Re-record the SD baseline at 25W** (~15 min, over SSH): re-run Part 7's timed
+      commands (`colcon build --base-paths src`, native pytest, `docker pull`) on the
+      microSD. Session 14's original SD numbers were taken at an unrecorded (likely 15W)
+      mode — without this re-baseline the SD-vs-NVMe table is storage+power confounded.
+- [ ] **2. Clone to NVMe — Path A below** (A0 backup → A1 install SSD [physical] →
+      A2 device check → A3 JetsonHacks JetPack-7.2 compatibility gate → A4 clone scripts →
+      A5 first boot with SD removed → A6 verify → A7 SD disposition).
+- [ ] **3. Re-run the same numbers on NVMe at 25W** (step A8): fill both columns of the
+      Part 7 baseline table, publish it in BLUEPRINT.md, then do Part 10 closeout and mark
+      Session 14 ✅ in `Release1Todo.md`'s Session Index.
+- [ ] **4. One manual HIL run on NVMe** (~10 min): `docs/runbooks/Mission1HILSession15.md`
+      Parts 2–3 — confirms Nav2, the mission executor, and the CI-runner registration all
+      survived the migration.
+- [ ] **5. Then Session 16** (`Release1Todo.md` — implement `stage-4-hil`, retire
+      `stage-4-isaac`) on the final storage + power configuration.
+
 > **Rewritten 2026-07-12.** The original Part 9 said "re-flash to NVMe via SDK Manager."
 > That still works and is preserved below as **Path B (fallback)**, but the primary method is
 > now an **on-device clone (Path A)**: same system, same data, only the storage changes. Why
