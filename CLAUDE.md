@@ -58,9 +58,11 @@ docker buildx build --platform linux/arm64 \
 ## Directory Layout
 - `src/nav_fleet/`         — ROS2 colcon package (nav runner, metrics collector)
   - `launch/sim_launch.py` — main launch file (Gazebo + bridge); Session 15 split it into
-    `launch/sim_only_launch.py` (Gazebo + bridge) and `launch/nav2_only_launch.py` (Nav2 +
-    mission executor), which `sim_launch.py` now composes for Tier-1 — the same split lets
-    the two halves run on separate machines for HIL (Gazebo on x86, Nav2 on the Jetson).
+    `launch/sim_only_launch.py` (Gazebo + bridge) and `launch/nav2_only_launch.py` (Nav2
+    bringup only — the mission executor is a separate third process,
+    `python -m nav_fleet.mission_runner`), which `sim_launch.py` now composes for Tier-1 —
+    the same split lets the two halves run on separate machines for HIL (Gazebo on x86,
+    Nav2 on the Jetson).
   - `nav_fleet/semantic_map.py` — Session 15: `SEMANTIC_MAP` waypoint registry (doorway_center,
     home_base, ...) that missions reference by name
   - `nav_fleet/missions.py` — Session 15: mission data model (`MissionStep(action, label,
