@@ -23,10 +23,11 @@
 | 11 | Isaac Sim: Install + First Nav Test | ✅ |
 | 12 | Reports + Dashboard: True End-to-End | ✅ |
 | 13 | Agentic Test Loop in Sim | ✅ |
-| 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | 🔄 (Parts 1–8 done — see `JetsonInstallSession14.md`; Part 9 NVMe pending SSD arrival, Part 10 closeout remaining) |
-| 15 | Gazebo + Real Jetson Hardware-in-the-Loop (Mission 1) | ✅ (2026-07-11 — Mission 1 PASS on x86 sim AND real-Jetson HIL, merged to main; CI stage designed but not yet implemented — see `Mission1HILSession15.md` + `docs/session15-hil-ci-stage-design.md`) |
-| 16 | Real Robot: Deploy + Sim-to-Real Comparison | ⬜ |
-| 17+ | Agentic Loop on Real Hardware + Advanced Missions | ⬜ |
+| 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | 🔄 (Parts 1–8 done — see `docs/runbooks/JetsonInstallSession14.md`; Part 9 NVMe pending SSD arrival, Part 10 closeout remaining) |
+| 15 | Gazebo + Real Jetson Hardware-in-the-Loop (Mission 1) | ✅ (2026-07-11 — Mission 1 PASS on x86 sim AND real-Jetson HIL, merged to main; CI stage designed but not yet implemented — see `docs/runbooks/Mission1HILSession15.md` + `docs/session15-hil-ci-stage-design.md`) |
+| 16 | Update HIL Stage with Gazebo + Tidy Up E2E Simulation | ⬜ (created 2026-07-12 — implement `stage-4-hil` from `docs/session15-hil-ci-stage-design.md`, retire `stage-4-isaac`; prior 16/17+ renumbered to 17/18+) |
+| 17 | Real Robot: Deploy + Sim-to-Real Comparison | ⬜ (was 16 until 2026-07-12) |
+| 18+ | Agentic Loop on Real Hardware + Advanced Missions | ⬜ (was 17+ until 2026-07-12) |
 
 ---
 
@@ -1455,7 +1456,7 @@ The changes below are the minimum needed to run correctly in the new project. De
 
 - [x] **Create a simplified URDF for Stage 3 (`urdf/ugv_pt.urdf.xacro`):**
 
-  > **Note:** The full Waveshare URDF includes hardware-specific plugins. For Stage 3 (Gazebo only), use a simplified version with Gazebo diff-drive and lidar plugins. Refine to match real hardware specs in Session 16.
+  > **Note:** The full Waveshare URDF includes hardware-specific plugins. For Stage 3 (Gazebo only), use a simplified version with Gazebo diff-drive and lidar plugins. Refine to match real hardware specs in Session 17.
 
   ```xml
   <?xml version="1.0"?>
@@ -3045,8 +3046,8 @@ ros2 topic echo /robot_001/amcl_pose
 > confirmed running natively on it (585s/9m45s non-cached build+push vs. the 23m43s–24m31s
 > QEMU baseline, ~2.4x faster — see BLUEPRINT.md's decision log for the full numbers and why
 > the original 3–5 min estimate undershot). Two real CI permissions bugs were hit and fixed
-> along the way (PR #1) — see `JetsonInstallSession14.md` Part 8.2 for the story. **Resume at
-> `JetsonInstallSession14.md` Part 9 (NVMe migration)** once the SSD arrives (expected
+> along the way (PR #1) — see `docs/runbooks/JetsonInstallSession14.md` Part 8.2 for the story. **Resume at
+> `docs/runbooks/JetsonInstallSession14.md` Part 9 (NVMe migration)** once the SSD arrives (expected
 > 2026-07-11); Part 10 (closeout) remains after that. State to know: username `Mike` (capital
 > M), IP `10.42.0.217` (DHCP, may shift), hostname still `localhost.localdomain` (not fixed
 > yet), CUDA/TensorRT intentionally not installed.
@@ -3104,7 +3105,7 @@ ros2 topic echo /robot_001/amcl_pose
 
 ### Steps
 
-> **➡️ Detailed do-it-yourself runbook: [`JetsonInstallSession14.md`](JetsonInstallSession14.md).**
+> **➡️ Detailed do-it-yourself runbook: [`docs/runbooks/JetsonInstallSession14.md`](JetsonInstallSession14.md).**
 > That doc is the step-by-step version of everything below (unpack → flash → headless SSH →
 > smoke tests → ROS2 → baseline → CI runner → NVMe). The checkboxes here are the summary.
 
@@ -3122,7 +3123,7 @@ ros2 topic echo /robot_001/amcl_pose
   sdkmanager  # launches GUI
   ```
 
-- [ ] **Flash JetPack 7.2 via SDK Manager** (full steps in `JetsonInstallSession14.md` Part 3):
+- [ ] **Flash JetPack 7.2 via SDK Manager** (full steps in `docs/runbooks/JetsonInstallSession14.md` Part 3):
   - Jetson into recovery mode: **short `FC REC`↔`GND` on J14 while applying power** (confirm
     pin numbers against the printed quick-start card), USB-C to the host; verify with
     `lsusb | grep -i nvidia` → `0955:7523 APX`.
@@ -3143,9 +3144,9 @@ ros2 topic echo /robot_001/amcl_pose
   > use — storage write speed only bites when *recording*, and sustained writes are what
   > wear SD cards out. DDS traffic itself is RAM-to-RAM and doesn't touch storage.
 
-- [ ] **Swap to NVMe SSD and re-record the same numbers (moved up from Session 17+,
+- [ ] **Swap to NVMe SSD and re-record the same numbers (moved up from Session 18+,
   2026-07-06)** — do this now, while the module is still a bare dev kit on the desk, not
-  after Session 16 transfers it into the robot chassis. Swapping storage is strictly easier
+  after Session 17 transfers it into the robot chassis. Swapping storage is strictly easier
   before it's wired into anything:
   ```bash
   # Reflash to NVMe via SDK Manager — same recovery-mode/USB-C process as the
@@ -3294,13 +3295,13 @@ ros2 topic echo /robot_001/amcl_pose
 > Gazebo over Isaac, argued below) — Session 15 is where that reasoning gets re-examined and
 > the actual design happens, since the new idea explicitly puts Isaac in this slot instead.
 
-Not required for session completion, r1-complete, or Session 16 — only attempt this if the
+Not required for session completion, r1-complete, or Session 17 — only attempt this if the
 core flow above (unpack → flash → storage baseline → native build → CI runner swap) goes
 smoothly with session time left over. This is the "run ROS2 code on the Jetson as part of
 sim" idea, refined through discussion:
 
 - **Goal:** validate robustness/speed/reproducibility of running Nav2 on Jetson-class ARM
-  hardware before Session 16's real robot arrives — mainly, does Nav2 (AMCL, costmaps,
+  hardware before Session 17's real robot arrives — mainly, does Nav2 (AMCL, costmaps,
   planners) actually fit the Orin Nano's CPU/RAM budget, or does it need retuning first.
 - **Use Gazebo, not Isaac Sim, as the sim side.** Isaac's ROS2 integration is already the
   most fragile part of this project (manual `/clock` wiring, TF replay requiring
@@ -3322,7 +3323,7 @@ sim" idea, refined through discussion:
   as a documented fallback — a known fix, not a research project.
 - **Sensors stay on the Gazebo/workstation side; Nav2 runs entirely on the Jetson** — the
   workstation's job is only to stream sensor topics and listen for `cmd_vel`, matching
-  Session 16's actual target architecture where sensors and Nav2 will both live on the
+  Session 17's actual target architecture where sensors and Nav2 will both live on the
   Jetson (this exercise doesn't test that exact network topology, since nothing streams
   over a network in the real robot — but it does validate Nav2-on-Jetson resource usage).
 
@@ -3347,7 +3348,7 @@ sim" idea, refined through discussion:
 > **Status: COMPLETE (2026-07-11, merged to main 2026-07-12).** Designed 2026-07-10 (spec
 > approved); implemented and HIL-proven 2026-07-11 — Mission 1 (navigate → photograph →
 > return) PASS on x86 Gazebo and PASS on the real Jetson (Nav2 + mission executor on the
-> Orin, Gazebo on the workstation, first attempt, ~18 s — `Mission1HILSession15.md`
+> Orin, Gazebo on the workstation, first attempt, ~18 s — `docs/runbooks/Mission1HILSession15.md`
 > Results). The CI stage is **designed, not implemented**
 > (`docs/session15-hil-ci-stage-design.md` — `stage-4-hil` replaces `stage-4-isaac` when
 > built); until then CI's Stage 4 remains the existing Isaac check. Promoted from Session
@@ -3453,7 +3454,7 @@ Jetson as part of Stage 4 is the real work this session designs.
       revised 2026-07-11 on review — build order now matches mission number)
 - [x] A bare-metal HIL prototype (Jetson + Gazebo, real network link) runs Mission 1 at least
       once, manually, outside CI — **PASS on the first attempt (2026-07-11)**, see
-      `Mission1HILSession15.md` Results section (multicast DDS discovery worked, Nav2 active
+      `docs/runbooks/Mission1HILSession15.md` Results section (multicast DDS discovery worked, Nav2 active
       in ~5 s on the Orin, mission total ~18 s, DB row
       `('mission1','PASS','hil_jetson','gazebo')`; single-run caveat noted there)
 - [x] A design for the actual CI stage exists (even if not yet implemented) — network
@@ -3469,7 +3470,93 @@ Jetson as part of Stage 4 is the real work this session designs.
 
 ---
 
-## Session 16 — Real Robot: Deploy + Sim-to-Real Comparison (~3 hrs)
+## Session 16 — Update HIL Stage with Gazebo + Tidy Up E2E Simulation
+
+> **Created 2026-07-12** — closes the gap Mike caught on review: Session 15 *designed* the
+> Gazebo HIL CI stage but (deliberately) did not implement it, and the plan then jumped
+> straight to the real robot. The pipeline should run hardware-in-the-loop automatically
+> before a rover exists. Prior Session 16 (Real Robot) renumbered to 17; prior 17+ (Agentic
+> on hardware) to 18+ — second renumbering, same convention as 2026-07-10: dated historical
+> entries keep their original numbers, living text uses the new ones.
+
+**Build from:** `docs/session15-hil-ci-stage-design.md` (the decided design — one
+SSH-orchestrated job on the x86 runner driving the Jetson; success/failure definition;
+timeout budgets; teardown) and `docs/runbooks/Mission1HILSession15.md` (the proven manual
+procedure this stage automates — its Troubleshooting section already documents the
+non-interactive-SSH sourcing trap the CI job will hit).
+
+### Piece 1 — Implement `stage-4-hil` (replaces `stage-4-isaac`)
+
+- [ ] New CI job `stage-4-hil` per the design doc: x86 runner launches
+      `sim_only_launch.py`, drives the Jetson over SSH (explicit ROS+overlay sourcing +
+      `RMW_IMPLEMENTATION` export in every SSH command), runs
+      `RUNNER_TYPE=hil_jetson python3 -m nav_fleet.mission_runner mission1`, scps the photo
+      back as a workflow artifact, prints the Jetson's telemetry row to the job log.
+- [ ] Timeouts and teardown exactly per design doc §3 — job `timeout-minutes: 15`; phase
+      budgets 60/120/300 s; `if: always()` teardown with unconditional `pkill -9` on BOTH
+      sides (SIGINT alone left orphans in 2 of 3 Session 15 manual Tier-1 teardowns).
+- [ ] **Retire `stage-4-isaac` in the SAME change** (slot swap — keep `needs: stage-3-arm64`
+      and `stage-5-reports-hw`'s shape; Isaac scripts stay in git history, not deleted from
+      disk preemptively).
+- [ ] Jetson-side prerequisites: resolve the DHCP lease at job start
+      (`ip neigh show dev enp6s0`); deal with the nested `actions-runner/` checkout inside
+      the repo (relocate it, or standardize `colcon build --base-paths src` — it's a latent
+      colcon trap either way).
+- [ ] **Reproducibility:** ≥3 consecutive green `stage-4-hil` runs. Session 15's HIL record
+      is a single successful run — this is the open risk the CI stage exists to close.
+- [ ] Phase 2 (this session or explicitly re-deferred): the job pulls the `stage-3-arm64`
+      GHCR arm64 image onto the Jetson and runs the mission executor *inside that
+      container* — finally making the arm64→Stage-4 edge consume something real.
+- [ ] **Registry-backed Docker build cache** for `stage-3-arm64`: add
+      `cache-from`/`cache-to: type=registry,ref=ghcr.io/sdfinn/autonomous-fleet-testbed:buildcache,mode=max`
+      to the build-push step so layer cache survives BuildKit GC, builder recreation, and
+      Jetson reboots. (Root cause of the 2026-07-12 18-minute build: the apt layer's cache
+      was evicted, so the build ran fully cold — vs Session 14's 9m45s baseline which kept
+      apt cached and only rebuilt pip+colcon.)
+- [ ] **Pin + record the Jetson power mode** the CI/HIL numbers assume. Modes on the Orin
+      Nano Super: 0=15W, 1=25W, 2=MAXN_SUPER (`sudo nvpmodel -p --verbose` to list,
+      `-q` to query, `-m <id>` to set; persists across reboots via
+      `/var/lib/nvpmodel/status`). Set to **25W on 2026-07-12** (was 15W — unknown which
+      mode the Session 14 build baseline used); consider MAXN_SUPER + a thermal check when
+      benchmarking. `sudo jetson_clocks` additionally locks clocks to the mode's max
+      (does NOT persist across reboots — CI job could run it as a step).
+- [ ] **Raise BuildKit's GC budget** on the Jetson builder (`buildkitd.toml` `keepBytes` —
+      the SD/NVMe has ~90 GB free; the default budget evicts the ~1–2 GB apt layer first).
+      Belt-and-braces alongside the registry cache.
+- [ ] **Re-benchmark the arm64 build after the NVMe migration** (runbook Part 9) at the
+      pinned power mode — one fully-cold and one cached timing, recorded in the Part 7
+      baseline table, so future "is CI slow?" questions have honest reference numbers.
+
+### Piece 2 — Tidy up end-to-end simulation (Session 15 follow-ups, parked at merge)
+
+- [ ] FAIL-row metric skew: failed/timed-out navigate durations currently feed
+      `mean_time_to_goal` — decide how FAIL rows enter drift analysis before
+      baseline_monitor ever ingests one.
+- [ ] Tighten `validate_mission` (clear error for navigate-without-location; reject stray
+      fields on `take_picture`) — groundwork for Mission 2's new action types.
+- [ ] `headless` launch arg: wire it to `gz sim` or delete it (dead code in both
+      `sim_launch.py` and `sim_only_launch.py`).
+- [ ] `take_picture` freshness: gate on `msg.header.stamp` newer than capture start (needed
+      before photo *content* becomes a pass/fail signal in Mission 2).
+- [ ] Move `MissionRunner()` construction inside `main()`'s try (constructor crash currently
+      skips the FAIL telemetry row).
+- [ ] Consider adding `tests/test_mission_run.py` to `stage-2-gazebo` — a single pytest
+      invocation with `test_navigation.py` works as of 2026-07-12 (shared guarded rclpy
+      fixture in conftest).
+
+### Session Complete When
+- [ ] `stage-4-hil` green on a real code push, 3× consecutively, with `stage-4-isaac`
+      retired in the same change and `stage-5-reports-hw` running off the new stage
+- [ ] `docs/runbooks/Mission1HILSession15.md` updated to note the CI stage exists (manual
+      procedure remains as the debugging path)
+- [ ] Every Piece 2 item closed or explicitly re-deferred with a written reason
+
+---
+
+## Session 17 — Real Robot: Deploy + Sim-to-Real Comparison (~3 hrs)
+
+> **Renumbered from Session 16 on 2026-07-12** (a new Session 16 — HIL CI stage
+> implementation — was inserted ahead of it; see above).
 
 ### Recommended Reading
 - [SLAM Toolbox online async](https://github.com/SteveMacenski/slam_toolbox#readme) — for building the real-room map
@@ -3671,13 +3758,13 @@ Jetson as part of Stage 4 is the real work this session designs.
 
 ---
 
-## Session 17+ — Agentic Loop on Real Hardware + Advanced Missions
+## Session 18+ — Agentic Loop on Real Hardware + Advanced Missions
 
-> Expand this section when Session 16 is complete. At this point the agentic loop from
+> Expand this section when Session 17 is complete. At this point the agentic loop from
 > Session 13 runs against real robot telemetry instead of simulated data. The learning
 > loop feeds live results back into both sim improvement and nav parameter tuning.
 
-**Direction for Session 17:**
+**Direction for Session 18:**
 - **Feed the real `nav2_params.yaml` into `diagnose()`'s prompt (gap found 2026-07-06).**
   Right now Claude infers a plausible-sounding `current_value` for
   `propose_nav_param_change` instead of reading the actual file — verified wrong once
@@ -3693,11 +3780,11 @@ Jetson as part of Stage 4 is the real work this session designs.
 
 ### Going untethered — systemd autostart (decision 2026-07-03: deferred out of R1)
 
-r1-complete is achievable entirely over SSH (Session 16's smoke test, nav goal, and
+r1-complete is achievable entirely over SSH (Session 17's smoke test, nav goal, and
 sim-to-real comparison all run remotely). True autonomy — flip the power switch, robot boots
 into nav with no monitor/keyboard/SSH — is this item:
 
-- systemd units on the Jetson: one for the base+lidar driver bringup (Session 16's driver
+- systemd units on the Jetson: one for the base+lidar driver bringup (Session 17's driver
   layer), one for `robot_launch.py` (Nav2). Order them with `After=`/`Requires=` (drivers
   before Nav2); restart policy `on-failure`.
 - **Non-interactive shell gotcha** (same one as the Session 10 runner service): systemd units
@@ -3716,7 +3803,7 @@ all at once with no working baseline underneath). **Result: BR-01 passes green**
 `controller_server` (RPP + `NavfnPlanner`, plain `robot_radius: 0.24`), `planner_server`,
 `bt_navigator` (minimal one-shot `navigate_simple.xml`, no periodic replanning, no recovery
 dependency), and two lifecycle managers — nothing else. This deliberately defers capability the
-fleet needs before Session 17 is for real — captured here so it doesn't quietly get forgotten:
+fleet needs before Session 18 is for real — captured here so it doesn't quietly get forgotten:
 
 > **Methodology for re-adding these (2026-07-06 review):** the root cause of the ~20-iteration
 > debugging saga wasn't fundamental Isaac Sim fragility — it was re-enabling AMCL,
