@@ -584,142 +584,217 @@ the CI runner swap (Part 8) on a shaky build.**
 
 ## Part 9 — Migrate microSD → NVMe SSD
 
-### Execution sequence (agreed 2026-07-12 — run in this order)
+### Execution sequence (revised 2026-07-12 evening — run in this order)
 
 The migration happens **before Session 16** (so Session 16's CI/HIL benchmarks and
 reproducibility records land once, on the final configuration — see BLUEPRINT.md's
-2026-07-12 sequencing entry). The Jetson was pinned to **25W power mode on 2026-07-12**;
+2026-07-12 sequencing entries). The Jetson was pinned to **25W power mode on 2026-07-12**;
 all timings below are taken at that mode.
 
-- [ ] **1. Re-record the SD baseline at 25W** (~15 min, over SSH): re-run Part 7's timed
-      commands (`colcon build --base-paths src`, native pytest, `docker pull`) on the
-      microSD. Session 14's original SD numbers were taken at an unrecorded (likely 15W)
-      mode — without this re-baseline the SD-vs-NVMe table is storage+power confounded.
-- [ ] **2. Clone to NVMe — Path A below** (A0 backup → A1 install SSD [physical] →
-      A2 device check → A3 JetsonHacks JetPack-7.2 compatibility gate → A4 clone scripts →
-      A5 first boot with SD removed → A6 verify → A7 SD disposition).
-- [ ] **3. Re-run the same numbers on NVMe at 25W** (step A8): fill both columns of the
-      Part 7 baseline table, publish it in BLUEPRINT.md, then do Part 10 closeout and mark
-      Session 14 ✅ in `Release1Todo.md`'s Session Index.
+- [x] ~~**1. Re-record the SD baseline at 25W**~~ — **skipped by decision (2026-07-12).**
+      The re-baseline only mattered for an apples-to-apples SD-vs-NVMe A/B on identical
+      bits, which the (now-retired) clone path would have given us. With a fresh install
+      the bits differ anyway, so the A/B is off the table: the Part 7 table becomes an
+      **NVMe-at-25W record** — the number future regressions are measured against — with
+      the original SD numbers kept as historical context flagged "unrecorded power mode."
+- [ ] **2. Fresh install to NVMe — Path C below** (C0 targeted backup → C1 SSD installed
+      [✅ done 2026-07-12] → C2 install USB → C3 install with SD removed → C4 first boot:
+      user `mike`, hostname `jetson` → C5 re-provision from Parts 4–8 → C6 restore data →
+      C7 verify → C8 SD disposition + doc sweep).
+- [ ] **3. Record the NVMe numbers at 25W**: Part 7's timed commands (`colcon build
+      --base-paths src`, native pytest, `docker pull`) on the fresh install; publish in
+      BLUEPRINT.md, then do Part 10 closeout and mark Session 14 ✅ in `Release1Todo.md`'s
+      Session Index.
 - [ ] **4. One manual HIL run on NVMe** (~10 min): `docs/runbooks/Mission1HILSession15.md`
-      Parts 2–3 — confirms Nav2, the mission executor, and the CI-runner registration all
-      survived the migration.
+      Parts 2–3 — confirms Nav2, the mission executor, and the fresh CI-runner registration
+      all work on the new install.
 - [ ] **5. Then Session 16** (`Release1Todo.md` — implement `stage-4-hil`, retire
       `stage-4-isaac`) on the final storage + power configuration.
 
-> **Rewritten 2026-07-12.** The original Part 9 said "re-flash to NVMe via SDK Manager."
-> That still works and is preserved below as **Path B (fallback)**, but the primary method is
-> now an **on-device clone (Path A)**: same system, same data, only the storage changes. Why
-> that's better for us specifically: (1) it preserves everything Sessions 14–15 installed on
-> the SD — ROS2, the GitHub runner *registration*, the Session 15 HIL prerequisites
-> (`docs/runbooks/Mission1HILSession15.md` Part 1), the repo build, even the Jetson-side telemetry rows —
-> so there is no Part 4–8 redo; (2) it gives a true apples-to-apples SD-vs-NVMe baseline for
-> the Part 7 table (identical bits, only storage differs); (3) no host PC, no recovery mode.
-> Risk asymmetry favors trying it: if the clone won't boot, the SD is untouched — pull the
-> NVMe or fix boot order and you're back where you started, with Path B still available.
+> **Re-decided 2026-07-12 (evening): fresh install, not clone.** An earlier same-day
+> revision of this Part made the JetsonHacks `migrate-jetson-to-ssd` clone the primary
+> path. Running this Part's own compatibility gate (old step A3) killed it before any
+> hardware was touched:
+> 1. The repo's README says the scripts are **"only tested on JetPack 6"** — last touched
+>    Jan 2025, with zero JetPack 7 / L4T r39 reports anywhere in its issues.
+> 2. Checked live on this board (2026-07-12): JetPack 7.2 still boots UEFI →
+>    `/boot/extlinux/extlinux.conf` (so "extlinux is gone in JP7" claims are false), **but**
+>    with `root=PARTUUID=...` plus a separate `/boot/efi` ESP (`mmcblk0p10`, mounted by
+>    filesystem UUID) in a **15-partition layout**. The scripts are UUID-era and predate
+>    that layout — the one step that matters most (`configure_ssd_boot.sh` rewriting the
+>    boot config) is exactly the unverified part.
+> 3. The repo's open issues #12/#13 are post-migration boot hangs even on supported setups.
+>
+> Meanwhile the clone's two selling points evaporated: the SD re-baseline (step 1) was
+> dropped, and Mike explicitly *wants* the Part 4–8 redo — re-provisioning purely from this
+> runbook is a live test that the runbook is complete and reusable, which is the project's
+> whole thesis (and this doc's future: it's slated to become a general robot-setup manual,
+> candidate name `RobotSetup.md`). The fresh install also fixes two warts at the source:
+> hostname (`localhost.localdomain` → `jetson`) and username casing (`Mike` → `mike`,
+> matching the workstation). The retired clone path is kept as a short note at the end of
+> this Part for the record.
 
-**Why now:** the module is a bare board on the desk — swapping storage is trivial now and a
+**Why now:** the module is a bare board on the desk — storage work is trivial now and a
 pain later (Session 16 puts it in the robot chassis). Faster/steadier storage also makes the
 CI runner's builds quicker. The dev kit's M.2 Key-M slot is **PCIe Gen3 x4** — far below a
 Gen4 SSD's ceiling but a large jump over microSD, especially for random I/O (builds, apt,
-DDS discovery caches).
+DDS discovery caches). The SSD is already seated: `lsblk` on the board shows `nvme0n1`
+(465.8 G, blank — verified 2026-07-12).
 
-### Path A — on-device clone (recommended)
+### Path C — fresh install to NVMe via Jetson ISO (primary)
 
 **How it works (learning note):** on Orin-generation Jetsons the early boot chain (UEFI)
-lives in **QSPI flash on the module itself**, not on the storage device. So "migrating" is
-just: copy the partitions to the SSD, point the SSD's boot config at itself, and tell UEFI
-to prefer NVMe. Two files matter on the cloned rootfs: `/boot/extlinux/extlinux.conf`
-(kernel command line's `root=` must become the NVMe partition) and `/etc/fstab` (the `/`
-entry must reference the SSD, not the SD).
+lives in **QSPI flash on the module itself**, not on the storage device — that's why a
+board with no SD card inserted can still show a UEFI menu and boot an installer USB. The
+**Jetson ISO** is NVIDIA's JetPack 7.2-native install method (7.2 is also the only JetPack
+that supports it on Orin Nano): boot a USB stick, a GRUB menu offers "Install Jetson ISO
+r39.2", and the installer writes a complete Jetson Linux system onto whatever target
+storage you pick — our blank `nvme0n1`. The installed system then boots UEFI →
+`/boot/extlinux/extlinux.conf` on the NVMe, same chain the SD uses today. The firmware
+prerequisite (JetPack 6.x-generation UEFI in QSPI) is already satisfied — this board runs
+JetPack 7.2 now.
 
-- [ ] **A0 — Backup the SD first (non-negotiable).** Power off the Jetson, move the microSD
-      to the x86 workstation's reader, and image it (compressed — the card is 128 GB but only
-      ~18 GB is used):
+**Extra materials vs. the SDK Manager flash:** a **USB stick (≥16 GB, will be wiped)**, a
+**monitor on DisplayPort** (the dev kit has DP, not HDMI — have a DP cable or adapter
+ready), and a **USB keyboard**. This is a monitor-attached procedure; if that's a blocker,
+Path B below is the headless alternative.
 
-  ```bash
-  lsblk   # identify the SD card device — triple-check; dd on the wrong device is fatal
-  sudo dd if=/dev/sdX bs=4M status=progress | gzip > ~/jetson_orin_backup_$(date +%F).img.gz
-  # Restore later, if ever needed:
-  #   gunzip -c ~/jetson_orin_backup_YYYY-MM-DD.img.gz | sudo dd of=/dev/sdX bs=4M status=progress
-  ```
-
-  Put the SD back in the Jetson and boot normally.
-- [ ] **A1 — Install the SSD.** Power off completely and unplug. Flip the carrier board:
-      the **M.2 Key-M 2280** slot is on the underside (the short 2230 Key-E slot next to it
-      is for wifi cards — wrong slot). Insert the NVMe SSD, secure with the standoff screw.
-      Boot from the SD as normal.
-- [ ] **A2 — Verify device names.** `lsblk` — on this board the SD rootfs is
-      **`/dev/mmcblk0p1`** (confirmed over SSH 2026-07-11) and the SSD should appear as
-      **`nvme0n1`**, ideally unpartitioned. If the SSD auto-mounted anything:
-      `sudo umount /dev/nvme0n1*`.
-- [ ] **A3 — Check script compatibility BEFORE running.** The clone uses JetsonHacks'
-      `migrate-jetson-to-ssd` scripts. **This runbook has not verified them on JetPack 7.2 /
-      L4T r39.2** (they were written in the JetPack 5/6 era). Read the repo README + open
-      issues for r39/JetPack-7 reports first, and check each script's `-h`/README for the
-      exact source/target flag syntax — the flags shown in A4 are the intent (source = SD,
-      target = NVMe), not gospel. If the repo looks abandoned or r39-incompatible, use Path B.
-- [ ] **A4 — Run the clone (on the Jetson, ~20–45 min for the copy step):**
+- [ ] **C0 — Targeted backup off the SD (minutes).** The SD is never written during this
+      path — it comes out of the machine before the installer runs and *is* the rollback,
+      so no full `dd` image is needed. Just copy off the few things that exist only on the
+      Jetson (inventoried over SSH 2026-07-12: `git status` shows nothing untracked except
+      `reports/photos/`; ROS2 is stock apt at `/opt/ros/jazzy`; no separate venv; the
+      runner registration can't be transplanted anyway):
 
   ```bash
-  git clone https://github.com/jetsonhacks/migrate-jetson-to-ssd
-  cd migrate-jetson-to-ssd
-  sudo bash make_partitions.sh   -s /dev/mmcblk0 -t /dev/nvme0n1  # partition table on SSD, rootfs expanded
-  sudo bash copy_partitions.sh   -s /dev/mmcblk0 -t /dev/nvme0n1  # the long step
-  sudo bash configure_ssd_boot.sh -s /dev/mmcblk0 -t /dev/nvme0n1 # fixes extlinux.conf root= + fstab on the SSD
+  # From the workstation (last run with the capital-M username):
+  mkdir -p ~/jetson-backup-2026-07
+  scp Mike@10.42.0.217:autonomous-fleet-testbed/reports/fleet_runs.db ~/jetson-backup-2026-07/
+  scp -r Mike@10.42.0.217:autonomous-fleet-testbed/reports/photos     ~/jetson-backup-2026-07/
+  scp Mike@10.42.0.217:.bashrc                                        ~/jetson-backup-2026-07/jetson.bashrc
   ```
 
-  Pass source/target explicitly even though our SD happens to match the scripts' default —
-  explicit beats default when a wrong guess dd's over the wrong disk.
-- [ ] **A5 — First NVMe boot, the safe way.** Power off, **remove the microSD entirely**,
-      power on. UEFI falls through to the only bootable device — the NVMe. This proves the
-      SSD boots standalone with zero risk to the SD. (Alternative: hold **ESC** at boot →
-      UEFI → Boot Manager → move NVMe above SD/mmc — do this later anyway if you ever
-      re-insert the SD.)
-- [ ] **A6 — Verify:**
+  `fleet_runs.db` = the Jetson-side telemetry rows (16 K); `photos/` = Mission 1 HIL
+  evidence — cross-check against the copies already sitting untracked in the workstation
+  repo's `reports/photos/`; the `.bashrc` is a reference for any env tweaks worth
+  re-applying by hand (don't restore it wholesale over the fresh one).
+- [x] **C1 — Install the SSD.** ✅ Done — seated and verified 2026-07-12: `lsblk` on the
+      board shows `nvme0n1`, 465.8 G, no partitions. (For the record / future boards: the
+      **M.2 Key-M 2280** slot is on the underside of the carrier board; the short 2230
+      Key-E slot next to it is for wifi cards — wrong slot. Power off and unplug before
+      seating; secure with the standoff screw.)
+- [ ] **C2 — Make the install USB (on the workstation).** Download the **JetPack 7.2
+      Jetson ISO** from NVIDIA's JetPack downloads page and write it to the stick with
+      Balena Etcher, or:
 
   ```bash
-  findmnt /                     # must show /dev/nvme0n1p1
-  df -h /                       # full SSD capacity — if it shows ~SD-size instead:
-                                #   sudo resize2fs /dev/nvme0n1p1
-  cat /etc/nv_tegra_release     # L4T r39.2 still intact (jetson_release needs jetson-stats, not stock)
-  systemctl status actions.runner.* --no-pager   # runner registration survived the clone
-  ip a                          # same MAC → usually the same 10.42.0.x lease; re-check with
-                                # `ip neigh show dev enp6s0` on the workstation if SSH fails
+  lsblk   # identify the USB stick device — triple-check; dd on the wrong device is fatal
+  sudo dd if=~/Downloads/<jetson-iso>.iso of=/dev/sdX bs=4M status=progress oflag=sync
   ```
-- [ ] **A7 — What to do with the SD card.** Prefer keeping it **out of the Jetson**, stored
-      as a known-good offline backup. **Caution:** the clone can leave both devices with
-      identical filesystem UUIDs/PARTUUIDs (depends on how the scripts create the SSD
-      filesystem) — with both inserted, UUID-based resolution in fstab/initrd can grab the
-      *SD's* partition and silently put you back on slow storage. If you re-insert the SD,
-      verify `findmnt /` says nvme afterwards; wipe or re-purpose the SD once confident.
-- [ ] **A8 — Fill the NVMe column** of the Part 7 baseline table: same timed
-      `colcon build --base-paths src`, same `docker pull`, same pytest run. This is the
-      payoff number for BLUEPRINT.md's SD-vs-NVMe comparison (Part 10).
-- [ ] **A9 — If it doesn't boot:** remove the NVMe (or restore SD-first boot order) → the SD
-      boots exactly as before. Skim the script repo's issues for your symptom once, then cut
-      losses and use Path B — don't sink a session into debugging a hybrid boot state.
+- [ ] **C3 — Install to the NVMe.** Power the Jetson off. **Remove the microSD and set it
+      aside** — with it out of the machine the installer physically cannot touch it, and it
+      remains a complete, bootable, known-good system for instant rollback. Connect the
+      monitor (DP) + keyboard, insert the USB stick, power on and hold **ESC** for the UEFI
+      menu → **Boot Manager** → the USB device. At the GRUB menu choose **Install Jetson
+      ISO r39.2**; when it asks for target storage, select **`nvme0n1`** (with the SD out,
+      the blank SSD is the only sane target — unambiguous by construction).
+- [ ] **C4 — First boot + initial setup.** The board reboots into Ubuntu's first-boot
+      wizard. Identity decisions (made 2026-07-12):
+      - **Username: `mike`** — lowercase. Matches the workstation username, so plain
+        `ssh <ip>` works with no `user@` prefix. (The old capital-M `Mike` was an
+        SDK-Manager pre-config accident, not a choice.)
+      - **Hostname: `jetson`** — lowercase. If the wizard offers a "computer's name" field,
+        set it there. **If it skips the field, don't assume — check.** The SDK Manager
+        pre-config screen silently skipped hostname on the SD flash (that's how we got
+        `localhost.localdomain`). Fix immediately after first login if needed:
 
-### Path B — fallback: fresh re-flash to NVMe via SDK Manager
+        ```bash
+        hostname                                  # if it's not "jetson":
+        sudo hostnamectl set-hostname jetson
+        grep -n localhost.localdomain /etc/hosts  # update any stale entry to "jetson"
+        ```
+      - Payoff: `ssh mike@jetson.local` (mDNS) should work from the workstation, ending
+        the chase-the-DHCP-lease routine — though the lease will likely stay on the same
+        `10.42.0.x` anyway (same MAC, same shared-Ethernet setup).
+- [ ] **C5 — Re-provision from this runbook (the reusability test).** Re-run, in order:
+      **Part 4** (shared-Ethernet network + `ssh-copy-id mike@<ip>` — fresh home dir means
+      fresh `authorized_keys`), **Part 5** (smoke tests — expect rootfs on `nvme0n1p1`
+      this time), **Part 6** (ROS2 Jazzy), **Part 7**'s timed build steps (these ARE the
+      NVMe baseline numbers — sequence step 3), **Part 8** (CI runner — **first remove the
+      old `jetson-orin` runner entry** in GitHub → Settings → Actions → Runners, since its
+      registration died with the SD install; then register fresh with a new token, same
+      `jetson-orin` name and labels so `ci.yml` needs no changes), and the **HIL
+      prerequisites** from `docs/runbooks/Mission1HILSession15.md` Part 1. Also re-pin the
+      power mode — the 25W pin lived in `/var/lib/nvpmodel/status` on the SD:
 
-The original method. Known-good (it's exactly the Part 3 process we already executed once),
-but it wipes everything — budget ~1–2 h of reinstalls afterwards.
+  ```bash
+  sudo nvpmodel -m 1 && sudo nvpmodel -q   # expect mode 1 / 25W
+  ```
 
-- [ ] Power off; install the SSD (Path A's A1) if not already installed.
-- [ ] Re-flash JetPack 7.2 with SDK Manager exactly as in **Part 3**, but choose **NVMe** as
-      the storage target this time. (Recovery mode → SDK Manager → OS image → target = NVMe.)
-- [ ] First boot, then re-establish the network (**Part 4** — the shared connection recipe is
-      unchanged; the Jetson gets a fresh `10.42.0.x` lease).
-- [ ] Re-run the **smoke tests** (Part 5) — confirm `lsblk` shows rootfs on `nvme0n1`.
-- [ ] Re-install **ROS2 Jazzy** (Part 6) and re-do the **timed build + docker pull** (Part 7),
-      filling in the **NVMe column** of the baseline table.
-- [ ] Re-register / restart the **CI runner** (Part 8) on the NVMe install (fresh OS = fresh
-      runner registration; remove the stale runner entry in GitHub if it lingers).
-- [ ] Re-run the **HIL prerequisites** (`docs/runbooks/Mission1HILSession15.md` Part 1):
-      `ros-jazzy-navigation2`, `ros-jazzy-nav2-bringup`, `ros-jazzy-rmw-cyclonedds-cpp`,
-      `python3-pil`, repo on `main`, `colcon build --base-paths src`. The Session 15 HIL run
-      was done on the microSD install, so a fresh NVMe flash loses all of it. (Path A
-      preserves all of this — one of the reasons it's Path A.)
+  **Log every gap, stale step, or surprise in this runbook as you hit it — that's a
+  deliverable of this path, not an interruption.** This doc is meant to be reusable for
+  future boards and robots (candidate rename: `RobotSetup.md`).
+- [ ] **C6 — Restore the backed-up data:**
+
+  ```bash
+  scp ~/jetson-backup-2026-07/fleet_runs.db mike@<ip>:autonomous-fleet-testbed/reports/
+  scp -r ~/jetson-backup-2026-07/photos     mike@<ip>:autonomous-fleet-testbed/reports/
+  ```
+- [ ] **C7 — Verify:**
+
+  ```bash
+  findmnt /                     # rootfs on /dev/nvme0n1p1 (or the installer's rootfs partition)
+  df -h /                       # ~465 G capacity visible
+  cat /etc/nv_tegra_release     # L4T r39.2
+  hostname && whoami            # jetson / mike
+  sudo nvpmodel -q              # 25W
+  systemctl status actions.runner.* --no-pager   # runner service active
+  ```
+
+  Then confirm the runner shows **Idle (green)** under GitHub → Settings → Actions →
+  Runners, the native pytest suite passes (Part 7's command), and run sequence step 4
+  (manual HIL run, Mission 1 runbook Parts 2–3).
+- [ ] **C8 — SD disposition + doc sweep.** Keep the microSD **out of the Jetson**, stored
+      untouched as the known-good rollback until Session 16's `stage-4-hil` has gone green
+      3× consecutively — wipe or repurpose it only after that. Then sweep the docs for the
+      identity change: update `Mike@` → `mike@`, `localhost.localdomain` → `jetson`, and
+      any remaining "SD→NVMe clone" phrasing in `CLAUDE.md` (Jetson state paragraph),
+      `docs/runbooks/Mission1HILSession15.md` (SSH line),
+      `docs/session15-hil-ci-stage-design.md` (its SSH commands say `Mike@` — Session 16
+      implements `stage-4-hil` from that doc, so it must say `mike@` before then), and
+      `Release1Todo.md` Session 14's "state to know" line. Leave the dated files in
+      `docs/superpowers/plans/` and `docs/superpowers/specs/` alone — they're historical
+      records of what was true at the time.
+- [ ] **C9 — If the install or first boot fails:** power off, put the microSD back in,
+      boot — you're exactly where you started, since the SD was out of the machine the
+      whole time. Retry from C3, or fall back to Path B.
+
+### Path B — fallback: fresh flash to NVMe via SDK Manager (headless)
+
+The known-good method — it's exactly the Part 3 process already executed once for the SD,
+with NVMe as the target instead. Use it if the Jetson ISO path is blocked (no
+DP monitor/keyboard available, USB won't boot, installer misbehaves).
+
+- [ ] Put the Jetson into recovery mode and flash JetPack 7.2 with SDK Manager exactly as
+      in **Part 3**, but choose **NVMe** as the storage target. Remove the microSD first —
+      same insurance logic as C3. In the OEM pre-config screen use the C4 identity:
+      username **`mike`**, hostname **`jetson`** — and remember this screen **skipped the
+      hostname field last time**; verify `hostname` on first boot (C4's fix applies).
+- [ ] Then continue from **C5** above — the re-provision, restore, verify, and SD-disposition
+      steps are identical regardless of which installer laid down the OS.
+
+### Path A — on-device clone (retired 2026-07-12, never attempted)
+
+For the record: this Part briefly recommended cloning the running SD to the NVMe with
+JetsonHacks' [`migrate-jetson-to-ssd`](https://github.com/jetsonhacks/migrate-jetson-to-ssd)
+scripts (`make_partitions.sh` / `copy_partitions.sh` / `configure_ssd_boot.sh`), preserving
+the whole Sessions 14–15 install. It was retired by its own compatibility gate before any
+hardware was touched — evidence in the decision note at the top of this Part (scripts tested
+only on JetPack 6; this board's r39.2 boot config uses `root=PARTUUID` + a separate
+`/boot/efi` ESP in a 15-partition layout the UUID-era scripts predate; open boot-hang
+issues). If a future board ever genuinely needs a clone (e.g. an install too costly to
+reproduce), re-verify those scripts against that JetPack version first — but the better fix
+is keeping this runbook good enough that no install is ever too costly to reproduce.
 
 > **SD hygiene reminder (from Release1Todo):** don't record rosbags/heavy logs to a microSD
 > while it's the live rootfs — sustained writes wear SD cards. On NVMe this stops mattering.
@@ -728,8 +803,11 @@ but it wipes everything — budget ~1–2 h of reinstalls afterwards.
 
 ## Part 10 — Close out Session 14
 
-- [ ] Fill in both columns of the baseline table (Part 7) and drop the numbers into
-      `BLUEPRINT.md` where the QEMU-vs-native / SD-vs-NVMe comparison lives.
+- [ ] Fill in the NVMe-at-25W numbers in the baseline table (Part 7) and drop them into
+      `BLUEPRINT.md` where the QEMU-vs-native / SD-vs-NVMe comparison lives. Flag the
+      original SD column as historical ("unrecorded power mode, pre-25W-pin") — the
+      planned 25W SD re-baseline was skipped when Part 9 switched from clone to fresh
+      install (2026-07-12), so the table is a record, not a controlled A/B.
 - [ ] Mark **Session 14 ✅** in `Release1Todo.md`'s Session Index.
 - [ ] **Correct the stale assumptions** this runbook uncovered, so the plan matches reality:
   - In `Release1Todo.md` Session 14, the "flash to MicroSD image" framing is obsolete —
@@ -759,10 +837,10 @@ but it wipes everything — budget ~1–2 h of reinstalls afterwards.
   ```
 
 ### Follow-ups for a later session (not blocking Session 14)
-- **Hostname:** still `localhost.localdomain` — the SDK Manager pre-config screen only asked
-  for username/password this run, hostname got skipped. Fix with `sudo hostnamectl
-  set-hostname jetson-orin` (plus updating `/etc/hosts`) whenever it's convenient; not urgent
-  since SSH works fine via the DHCP IP (`10.42.0.217`) in the meantime.
+- **Hostname:** ~~still `localhost.localdomain`~~ — **resolved by Part 9 Path C**: the fresh
+  NVMe install sets hostname `jetson` (and username `mike`) at first-boot setup, per the
+  2026-07-12 decision. (Original note: the SDK Manager pre-config screen only asked for
+  username/password on the SD flash, hostname got skipped.)
 - **GPU access for on-device inference:** this flash intentionally skipped CUDA/cuDNN/TensorRT
   (Part 3.2 Target Components, confirmed skipped in Part 5's `nvcc` check above). Fine for
   Parts 6–9 (ROS2 Jazzy, native build, CI runner — none need the GPU compute stack). Once

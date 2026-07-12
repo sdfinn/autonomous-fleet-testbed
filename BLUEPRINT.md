@@ -673,3 +673,23 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   (BuildKit evicted the apt layer's cache → fully cold build, vs the 9m45s baseline that
   kept apt cached) — fixes (GHCR registry-backed build cache, BuildKit GC budget, pinned
   power mode, post-NVMe re-benchmark) are Session 16 Piece 1 checkboxes.
+- **2026-07-12 (evening) — NVMe migration method flipped: on-device clone → fresh install
+  (Jetson ISO, runbook Part 9 "Path C").** The same-day clone plan died at its own
+  compatibility gate, checked before touching hardware: JetsonHacks'
+  `migrate-jetson-to-ssd` is "only tested on JetPack 6" (repo README; last commit Jan
+  2025, zero JetPack-7/r39 reports, open post-migration boot-hang issues #12/#13), while
+  live inspection of the board (2026-07-12, SSD already seated — `nvme0n1` 465.8 G blank)
+  showed JetPack 7.2 boots UEFI→extlinux with `root=PARTUUID` plus a separate `/boot/efi`
+  ESP (`mmcblk0p10`) in a 15-partition layout the UUID-era scripts predate — the boot-config
+  rewrite, the script's most critical step, is exactly the unverified part. The clone's two
+  advantages had also evaporated: the 25W SD re-baseline (previous entry, point 4) was
+  **dropped by decision** — the Part 7 table becomes an NVMe-at-25W go-forward record with
+  the old SD numbers flagged historical, not a controlled A/B — and Mike explicitly wants
+  the Part 4–8 re-provision as a learning pass that doubles as a live completeness test of
+  the runbook (which is slated to graduate into a general robot-setup manual, candidate
+  name `RobotSetup.md`; per the same discussion, **no new per-session runbooks** — Session
+  16 material lives in `Release1Todo.md`). Rider decisions: Jetson identity changes at the
+  fresh install — username `Mike`→`mike` (matches workstation; capital M was a pre-config
+  accident), hostname `localhost.localdomain`→`jetson` set at first-boot (fixes the
+  Session 14 wart at the source; enables `mike@jetson.local` mDNS). The SD stays untouched
+  as rollback until Session 16's `stage-4-hil` is 3× green.

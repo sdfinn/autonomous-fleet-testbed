@@ -380,18 +380,25 @@ then wait 5s for DDS to clear before restarting.
 Full step-by-step runbook: `docs/runbooks/JetsonInstallSession14.md`. **Parts 1–8 done as of
 2026-07-11** — flashed (JetPack 7.2), networked, ROS2 Jazzy installed, full pytest suite
 native, registered as the arm64 self-hosted CI runner, and HIL-proven (Session 15's Mission 1
-ran on it against workstation Gazebo, 2026-07-11). **Next: Part 9 (SD→NVMe clone) via the
-"Execution sequence" checklist at the top of that Part** (agreed 2026-07-12 — happens before
-Session 16). Confirmed-for-this-board state, not guesses: username `Mike` (capital M — set
-during SDK Manager pre-config), IP `10.42.0.217` (DHCP lease from the shared Ethernet
-connection, may change across reboots — re-check with `ip neigh show dev enp6s0`), hostname
-still `localhost.localdomain` (pre-config screen only asked for username/password this run,
-not hostname), rootfs on microSD `/dev/mmcblk0p1`.
+ran on it against workstation Gazebo, 2026-07-11). **Next: Part 9 (NVMe migration = FRESH
+INSTALL via Jetson ISO — Path C) via the "Execution sequence" checklist at the top of that
+Part** (re-decided 2026-07-12 evening: the SD→NVMe clone was retired unattempted — JetsonHacks
+scripts are JetPack-6-only vs this board's r39.2 PARTUUID/ESP 15-partition layout; the SD
+re-baseline at 25W was dropped with it, so the Part 7 table becomes an NVMe-only record.
+Happens before Session 16). Confirmed-for-this-board state, not guesses: username `Mike`
+(capital M — SDK Manager pre-config accident; **becomes lowercase `mike` after the Part 9
+fresh install**), IP `10.42.0.217` (DHCP lease from the shared Ethernet connection, may
+change across reboots — re-check with `ip neigh show dev enp6s0`), hostname still
+`localhost.localdomain` (**becomes `jetson` after Part 9** — set at first-boot setup, or
+`hostnamectl` if the wizard skips it), rootfs on microSD `/dev/mmcblk0p1`; NVMe SSD seated
+and blank (`nvme0n1`, 465.8 G, verified 2026-07-12).
 - **Power mode: pinned to 25W (`sudo nvpmodel -m 1`) on 2026-07-12.** Orin Nano Super modes:
   0=15W (the out-of-box state we found), 1=25W, 2=MAXN_SUPER. `sudo nvpmodel -q` to query,
   `-p --verbose` to list, `-m <id>` to set; the chosen mode **persists across reboots** via
   `/var/lib/nvpmodel/status`. Session 14's original build baselines predate the pin (mode
-  unrecorded — why Part 9's sequence re-baselines the SD at 25W before cloning).
+  unrecorded — flag them historical; the planned 25W SD re-baseline was dropped 2026-07-12
+  with the clone→fresh-install switch, so NVMe-at-25W is the go-forward reference number).
+  The pin lives on the SD's rootfs, so **re-pin after the Part 9 fresh install**.
   `sudo jetson_clocks` additionally locks clocks at the mode's max but does NOT persist —
   suitable as a per-job CI step, not a set-and-forget.
 - **JetPack 7.2 removed the microSD card image.** The old "flash an SD image with Etcher and
