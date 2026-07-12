@@ -24,7 +24,7 @@
 | 12 | Reports + Dashboard: True End-to-End | ✅ |
 | 13 | Agentic Test Loop in Sim | ✅ |
 | 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | 🔄 (Parts 1–8 done — see `JetsonInstallSession14.md`; Part 9 NVMe pending SSD arrival, Part 10 closeout remaining) |
-| 15 | Isaac Sim + Real Jetson Hardware-in-the-Loop | ⬜ (promoted from Session 14's stretch goal, 2026-07-10) |
+| 15 | Gazebo + Real Jetson Hardware-in-the-Loop (Mission 1) | ✅ (2026-07-11 — Mission 1 PASS on x86 sim AND real-Jetson HIL, merged to main; CI stage designed but not yet implemented — see `Mission1HILSession15.md` + `docs/session15-hil-ci-stage-design.md`) |
 | 16 | Real Robot: Deploy + Sim-to-Real Comparison | ⬜ |
 | 17+ | Agentic Loop on Real Hardware + Advanced Missions | ⬜ |
 
@@ -3336,9 +3336,21 @@ sim" idea, refined through discussion:
 
 ---
 
-## Session 15 — Isaac Sim + Real Jetson Hardware-in-the-Loop
+## Session 15 — Gazebo + Real Jetson Hardware-in-the-Loop (Mission 1)
 
-> **Status: design approved (2026-07-10), implementation not started.** Promoted from Session
+> **Session title renamed 2026-07-12:** created as "Isaac Sim + Real Jetson HIL" on
+> 2026-07-10 *before* the design pass chose Gazebo over Isaac — the old title outlived the
+> decision it predated and caused real confusion on review. The prose below still says
+> "Isaac Sim" in places because it's the historical record of how the session was framed
+> when it was created; the decisions and the delivered system are Gazebo-based.
+>
+> **Status: COMPLETE (2026-07-11, merged to main 2026-07-12).** Designed 2026-07-10 (spec
+> approved); implemented and HIL-proven 2026-07-11 — Mission 1 (navigate → photograph →
+> return) PASS on x86 Gazebo and PASS on the real Jetson (Nav2 + mission executor on the
+> Orin, Gazebo on the workstation, first attempt, ~18 s — `Mission1HILSession15.md`
+> Results). The CI stage is **designed, not implemented**
+> (`docs/session15-hil-ci-stage-design.md` — `stage-4-hil` replaces `stage-4-isaac` when
+> built); until then CI's Stage 4 remains the existing Isaac check. Promoted from Session
 > 14's optional "Jetson-in-the-loop with sim" stretch goal (preserved as-written there,
 > including its original Gazebo-over-Isaac reasoning) into its own session, after a CI
 > pipeline-restructuring conversation surfaced a bigger version of the same idea: not just
