@@ -154,6 +154,23 @@ docker buildx build --platform linux/arm64 \
 - `gz sim` WITHOUT `-s` launches a GUI that crashes on this machine (snap/glibc libpthread conflict)
   and takes the Gazebo server down with it. Always use `gz sim -s -r <world>` (server only).
   To view the simulation separately: `gz sim -g` (GUI client only, connects to running server).
+- **The snap/glibc GUI crash is caused by snap-VS-Code environment pollution — and it hits the
+  separate `gz sim -g` client too when launched from a VS-Code/Claude-Code shell** (found
+  2026-07-12: `GTK_PATH`/`GTK_EXE_PREFIX`/etc. point into `/snap/code/...`, whose GTK modules
+  drag in snap core20's libpthread → `symbol lookup error: __libc_pthread_init`). Plain user
+  terminals are unaffected. Workaround from a polluted shell — scrubbed environment:
+  ```bash
+  env -i HOME=$HOME USER=$USER TERM=xterm PATH=/usr/local/bin:/usr/bin:/bin DISPLAY=:0 \
+    XAUTHORITY=${XAUTHORITY:-/run/user/1000/gdm/Xauthority} \
+    bash -c 'source /opt/ros/jazzy/setup.bash && gz sim -g'
+  ```
+- **Jetson powered off ⇒ local sim breaks (silently) unless `ROS_LOCALHOST_ONLY=1`.** With the
+  Jetson down, `enp6s0` goes `NO-CARRIER`/DOWN and CycloneDDS floods "Exception sending a
+  multicast message: Network is unreachable" — DDS discovery fails, so Nav2 never reaches
+  "Managed nodes are active" (found 2026-07-12). For any local-only session while the shared
+  link is down, prefix EVERY command (launch, mission runner, pytest) with
+  `ROS_LOCALHOST_ONLY=1`. All processes must agree — mixing localhost-only and normal
+  processes means they can't see each other. Unset it (or use fresh terminals) for HIL work.
 - The ros_gz_bridge must be delayed ~5s after Gazebo starts. If the bridge subscribes before
   Gazebo's gz-transport publishers are up, the GZ→ROS subscriptions silently fail (no reconnect).
 - Nav2 Jazzy requires `use_composition: 'True'` (capital F). 'False' launches ~16 separate
