@@ -13,7 +13,9 @@ Execute from Release1Todo.md (session plans); code from .superpowers/sdd/ specs.
 colcon build --symlink-install          # ~1s — build the ROS2 package
 source install/setup.bash
 python -m pytest tests/ -v \
-  --ignore=tests/test_ros2_contracts.py # seconds — run Python unit tests
+  --ignore=tests/test_ros2_contracts.py \
+  --ignore=tests/test_navigation.py \
+  --ignore=tests/test_mission_run.py    # seconds — run Python unit tests
 ros2 launch nav_fleet sim_launch.py    # Session 09+ — Gazebo + Nav2 locally
 # nav_runner, metrics_collector, drift check all run here
 ```
@@ -35,7 +37,11 @@ colcon build --symlink-install
 ros2 launch src/nav_fleet/launch/sim_launch.py   # Session 09+ — Gazebo locally
 
 # Run Python unit tests (venv auto-activated by .bashrc)
-python -m pytest tests/ -v --ignore=tests/test_ros2_contracts.py
+python -m pytest tests/ -v --ignore=tests/test_ros2_contracts.py \
+  --ignore=tests/test_navigation.py --ignore=tests/test_mission_run.py
+
+# Run a mission (repo root; sim must be up — see launch commands above)
+python -m nav_fleet.mission_runner mission1
 
 # Traceability gate
 python tools/check_traceability.py requirements/traceability.yaml tests/ \
@@ -51,7 +57,18 @@ docker buildx build --platform linux/arm64 \
 
 ## Directory Layout
 - `src/nav_fleet/`         — ROS2 colcon package (nav runner, metrics collector)
-  - `launch/sim_launch.py` — main launch file (Gazebo + bridge)
+  - `launch/sim_launch.py` — main launch file (Gazebo + bridge); Session 15 split it into
+    `launch/sim_only_launch.py` (Gazebo + bridge) and `launch/nav2_only_launch.py` (Nav2 +
+    mission executor), which `sim_launch.py` now composes for Tier-1 — the same split lets
+    the two halves run on separate machines for HIL (Gazebo on x86, Nav2 on the Jetson).
+  - `nav_fleet/semantic_map.py` — Session 15: `SEMANTIC_MAP` waypoint registry (doorway_center,
+    home_base, ...) that missions reference by name
+  - `nav_fleet/missions.py` — Session 15: mission data model (`MissionStep(action, label,
+    location=None, yaw=None)`) — Mission 1 is navigate → take_picture → navigate
+  - `nav_fleet/mission_runner.py` — Session 15: mission executor CLI
+    (`python -m nav_fleet.mission_runner <mission_name>`)
+  - `nav_fleet/image_io.py` — Session 15: `take_picture` action primitive support
+    (`image_msg_to_png`), backed by pillow
   - `urdf/ugv_pt.urdf.xacro` — 4-wheel UGV robot URDF (diff-drive, lidar, camera)
   - `worlds/bedroom_simple.sdf` — real bedroom geometry from BC/isaac_project measurements
   - `maps/`                — pre-built Nav2 occupancy grid from BC project (0.05 m/px)
@@ -77,6 +94,8 @@ docker buildx build --platform linux/arm64 \
   `stage-4-isaac`; if older docs/notes say `stage-2-arm64`/`stage-3-gazebo`, that's the
   pre-2026-07-10 naming)
 - `GazeboCommands.md` — Gazebo viewer navigation cheat sheet
+- `Mission1HILSession15.md` — Session 15 Mission 1 hardware-in-the-loop runbook (Jetson +
+  Gazebo terminal procedure) and the first real HIL run's Results (2026-07-11, PASS)
 - `docs/superpowers/specs/` — dated design specs from `/superpowers:brainstorming` sessions
   (e.g. `2026-07-10-session15-gazebo-hil-mission1-design.md`) — read before continuing any
   session that has one; it's the source of truth over any summary in `Release1Todo.md`
