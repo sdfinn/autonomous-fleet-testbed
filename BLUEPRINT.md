@@ -657,3 +657,19 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   manuals, kept separate from the session plan by deliberate choice; root stays clean) and
   Session 15's stale "Isaac Sim" title/status in `Release1Todo.md` corrected to Gazebo/
   COMPLETE (the title predated the sim-engine decision and outlived it).
+- **2026-07-12 (later) — Sequencing: NVMe migration (Session 14 Part 9) runs BEFORE Session
+  16, via the 5-step sequence recorded at the top of
+  `docs/runbooks/JetsonInstallSession14.md` Part 9.** Rationale: (1) Session 16's
+  deliverables are *records* — build-cache benchmarks and a ≥3-consecutive-green
+  `stage-4-hil` reproducibility run — and records taken on microSD go stale the moment
+  storage changes; take them once, on the final configuration. (2) HIL mission timing is
+  Nav2/CPU/network-bound, so SD-era HIL numbers would add noise, not signal — the
+  storage-sensitive metrics are exactly Part 7's build/pull table, which the migration
+  fills. (3) Migrating first avoids confounding new-CI-stage flakiness with new-storage
+  behavior. (4) The SD column gets re-baselined at 25W first: the Jetson was found in 15W
+  mode and pinned to 25W on 2026-07-12 (`nvpmodel -m 1`, persists), and Session 14's
+  original numbers were taken at an unrecorded mode — re-measuring makes the SD-vs-NVMe
+  A/B power-consistent. Also this date: root-caused the 18-minute `stage-3-arm64` build
+  (BuildKit evicted the apt layer's cache → fully cold build, vs the 9m45s baseline that
+  kept apt cached) — fixes (GHCR registry-backed build cache, BuildKit GC budget, pinned
+  power mode, post-NVMe re-benchmark) are Session 16 Piece 1 checkboxes.
