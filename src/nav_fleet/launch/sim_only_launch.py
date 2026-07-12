@@ -18,7 +18,9 @@ hardware-in-the-loop; see Mission1HILSession15.md). sim_launch.py composes both 
 classic single-machine run.
 
 Path resolution uses pathlib.Path(__file__) instead of get_package_share_directory
-because colcon-ament-python is not installed on this system (see sim_launch.py).
+because colcon-ament-python is not installed on this system (see CLAUDE.md's
+launch-file gotcha: colcon-ament-python is not installed, so AMENT_PREFIX_PATH is
+not populated for workspace Python packages).
 """
 import pathlib
 

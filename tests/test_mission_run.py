@@ -17,17 +17,16 @@ imports rclpy at module level, and that runner has no ROS2 (see CLAUDE.md Gotcha
 import pathlib
 
 import pytest
-import rclpy
+import rclpy  # noqa: F401 — module-level import ensures collection fails without ROS2
 from PIL import Image as PILImage
 
 from nav_fleet.mission_runner import MissionRunner
 
 
 @pytest.fixture(scope='session', autouse=True)
-def ros_context():
-    rclpy.init()
+def _module_ros(ros_context):
+    """Activate the shared session ros_context for this module."""
     yield
-    rclpy.shutdown()
 
 
 @pytest.fixture(scope='session')

@@ -3,14 +3,21 @@
 import json
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 import anthropic
 
 from tools.baseline_monitor import check_run
 # Canonical map lives in the nav_fleet package (Session 15) — the workspace overlay
-# (auto-sourced by .bashrc) makes it importable here.
-from nav_fleet.semantic_map import SEMANTIC_MAP
+# (auto-sourced by .bashrc) normally makes it importable here. Fall back to importing
+# from source when the overlay isn't inherited (e.g. a non-interactive shell — see
+# CLAUDE.md's ANTHROPIC_API_KEY gotcha for why .bashrc sourcing can't be relied on there).
+try:
+    from nav_fleet.semantic_map import SEMANTIC_MAP
+except ModuleNotFoundError:  # no colcon overlay (non-interactive shell) — import from source
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src' / 'nav_fleet'))
+    from nav_fleet.semantic_map import SEMANTIC_MAP
 
 client = anthropic.Anthropic()
 

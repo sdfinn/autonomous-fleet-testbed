@@ -10,6 +10,20 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / 'src' / 'nav_fleet'))
 
 
+@pytest.fixture(scope='session', autouse=False)
+def ros_context():
+    """Shared rclpy context for live-ROS2 test modules (test_navigation, test_mission_run).
+
+    Guarded so the two modules can share one pytest session; autouse stays module-side
+    so pure-Python test runs (stage-1, no rclpy installed) never touch this fixture.
+    """
+    import rclpy
+    if not rclpy.ok():
+        rclpy.init()
+    yield
+    rclpy.try_shutdown()
+
+
 @pytest.fixture
 def db_path(tmp_path):
     """In-memory SQLite DB for tests that need telemetry data."""
