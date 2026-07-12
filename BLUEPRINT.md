@@ -613,7 +613,8 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
     framework. New `take_picture` action primitive (`nav_fleet/image_io.py`, backed by
     pillow) writes a PNG from `/robot_001/camera/image_raw` mid-mission. The single-machine
     `sim_launch.py` was split into `sim_only_launch.py` (Gazebo + bridge) and
-    `nav2_only_launch.py` (Nav2 + mission executor), composed back together by
+    `nav2_only_launch.py` (Nav2 bringup only — the mission executor runs as a separate
+    third process), composed back together by
     `sim_launch.py` for Tier-1, so the same two halves can instead run on separate machines
     for HIL.
   - **Mission 1 Tier-1 (x86 Gazebo, single machine): PASS.** CLI exit 0, telemetry row
