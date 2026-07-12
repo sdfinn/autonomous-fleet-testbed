@@ -148,6 +148,10 @@ WHY margins this wide across the board: the manual run was a single warm-system 
 adds cold checkouts, build load, and unproven reboot/fresh-DDS reproducibility — the budgets
 are set to fail only on a genuine hang, not on the normal spread of a healthy run.
 
+Note on the Nav2-active budget: the ≤ 120 s figure **deliberately tightens the 180 s working
+budget used during the manual run** — the measured ~5 s bringup showed 180 s was far looser
+than needed, and 120 s still leaves ~24× the measured time.
+
 **Retry policy (decided).** The stage retries the mission **once** on a DDS-discovery-shaped
 failure (no topics / goal never accepted), after a full both-sides teardown and a ~5 s DDS
 settle. WHY: reproducibility across fresh DDS state is not yet established, and discovery is
@@ -164,6 +168,9 @@ cleans **both** sides:
 ssh Mike@$JETSON_IP \
   "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner' || true"
 ```
+(This pattern is generalized from — not byte-identical to — the one used in the manual run's
+teardown, which was `pkill -9 -f "[c]omponent_container|nav2_only_launch|ros2 launch"`; the CI
+form adds `mission_runner` and matches any nav2 process, not just the specific launch file.)
 
 **Workstation (local):** kill the sim launch process group, then an **unconditional
 `pkill -9` fallback**:
@@ -174,17 +181,21 @@ pkill -9 -f '[c]omponent_container' || true
 pkill -9 -f '[r]obot_state_publisher' || true
 ```
 
-**WHY the `pkill -9` fallback is unconditional (not "only if kill -INT failed").** In the
-manual runs, `kill -INT` on the launch PID left orphaned `gz sim` / `component_container` /
-`robot_state_publisher` processes in **2 of 3** runs — SIGINT to the process group was *not*
-reliably sufficient. In CI there is no human to press Ctrl+C on a foreground launch, so the
-scripted `pkill -9` is the one place a scripted force-kill is not only acceptable but required
+**WHY the `pkill -9` fallback is unconditional (not "only if kill -INT failed").** SIGINT
+teardown reliability was **mixed across Session 15's manual runs**: the single HIL run's
+teardown was clean (SIGINT to the launch process sufficed — recorded in
+`Mission1HILSession15.md`), but **both Tier-1 (single-machine x86 sim) verification teardowns**
+earlier in the session left orphaned `gz sim` / `component_container` /
+`robot_state_publisher` processes and needed `pkill -9` (observed during the session; not
+preserved in a committed artifact). Since a CI job has no human at a foreground terminal to
+Ctrl+C, the unconditional `pkill -9` fallback is **defense-in-depth, not an optional path** —
+the one place a scripted force-kill is not only acceptable but required
 (this mirrors the existing CI-cleanup note in `CLAUDE.md`: never chain `pkill` hopefully
 mid-session, but a job's final cleanup step is exactly where it belongs). Leftover processes
 would poison the *next* run's DDS state, so partial cleanup is worse than none.
 
 **WHY the `[g]z sim` bracket trick and `ps aux | grep "[r]os2 launch"` PID discovery.** Two
-traps the manual run exposed:
+traps this session's manual runs exposed:
 1. The bracket in `'[g]z sim'` stops the `pkill`/`grep` pattern from matching *itself* in the
    process table (the grep process contains the literal string otherwise).
 2. **`$!` after a compound backgrounded command captures the wrong PID** — it grabs the last
