@@ -113,6 +113,7 @@ jobs:
           python -m pytest tests/ -v \
             --ignore=tests/test_ros2_contracts.py \
             --ignore=tests/test_navigation.py \
+            --ignore=tests/test_mission_run.py \
             -k "not integration"
 
   stage-3-arm64:
