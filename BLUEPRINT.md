@@ -143,7 +143,7 @@ Two tiers, complementary — not competitors:
 > the whole Docker image build+push (`stage-3-arm64`), not the bare `colcon build` command,
 > which is a separate, much faster number on native hardware (Tier 3: 4.76s, in line with
 > Tier 1). Both Tier 3 numbers measured 2026-07-10 on the real Jetson Orin Nano Super,
-> microSD, JetPack 7.2 — see `JetsonInstallSession14.md` Part 7/8 for the full runs.
+> microSD, JetPack 7.2 — see `docs/runbooks/JetsonInstallSession14.md` Part 7/8 for the full runs.
 
 **Tier 1 full cycle** (once Gazebo is wired in Session 09):
 ```
@@ -160,7 +160,7 @@ Using the correct vocabulary makes the work immediately legible to hiring direct
 |---|---|---|
 | Nav2 AMCL + costmaps + behavior tree | **Probabilistic AI layer** | `src/nav_fleet/`, `nav2_params.yaml` |
 | Scan min-range assertion + collision check | **Deterministic safety layer** | `tests/test_navigation.py` |
-| Session 16 SLAM map build (drive once, auto after) | **Teach Run / Teach-and-Repeat** | `maps/bedroom_real.*` |
+| Session 17 SLAM map build (drive once, auto after) | **Teach Run / Teach-and-Repeat** | `maps/bedroom_real.*` |
 | Jetson + UGV-PT testing (Sessions 14–15) | **Hardware-in-the-Loop (HIL)** | Stage 6 CI |
 | Stage 6 SSH deploy + smoke test + rollback | **OTA update pipeline** | `.github/workflows/ci.yml` |
 | `telemetry_logger.py` + `baseline_monitor.py` | **Networked fleet learning loop** (1-robot scale) | `tools/` |
@@ -309,7 +309,7 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
     QEMU's emulation tax alone would get most of the way there, but a meaningful chunk of the
     23-minute baseline is genuinely CPU/IO-bound work (pip installs of pandas/numpy/scipy/etc.,
     `colcon build`) that doesn't disappear just because emulation does. Full run details:
-    `JetsonInstallSession14.md` Part 8.2 (PR #1, then a follow-up direct push to `main` for
+    `docs/runbooks/JetsonInstallSession14.md` Part 8.2 (PR #1, then a follow-up direct push to `main` for
     the non-cached remeasurement).
   - Decision: develop and debug on Tier 1 (x86 bare metal Gazebo, ~1s build, ~3–10 min full cycle) before committing to CI. x86 is not the target OS but finds 90% of bugs at 23× less wait time per iteration.
 - **2026-06-29 — Showcase strategy locked.** Video-first portfolio (sim + real robot, one per release). Code stays private; README + YouTube videos public; code on request only. Primary audience: AMR companies (Brain Corp-adjacent). Brain Corp architectural vocabulary added to BLUEPRINT.md. Session plan (10–16) fully expanded with code snippets. SEMANTIC_MAP added to Session 13 agentic loop for named-location mission planning. "What's Next (R3+)" section added to capture deferred ideas.
@@ -464,7 +464,7 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   convenient), and Target Components (CUDA/cuDNN/TensorRT) were intentionally skipped for a
   clean OS-only first flash (add later with `sudo apt install nvidia-jetpack` once on-device
   inference for navigation is actually needed — L4T apt sources are already present, no
-  re-flash required). **Session paused here — resume at `JetsonInstallSession14.md` Part 6**
+  re-flash required). **Session paused here — resume at `docs/runbooks/JetsonInstallSession14.md` Part 6**
   (ROS2 Jazzy install); Parts 7–10 (native build baseline, CI runner, NVMe migration, closeout)
   not yet attempted.
 - **2026-07-10 — Docker on the Jetson scoped to Stage 2 only; everything else native.**
@@ -630,7 +630,7 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
     `('mission1','PASS','hil_jetson','gazebo', 7.95, 0.21)` (`mean_time_to_goal`,
     `mean_position_error`); photo verified — bedroom from the doorway, camera pipeline crossed
     the network intact. Full record, including deviations from the runbook and the
-    single-run reproducibility caveat: `Mission1HILSession15.md` (Results section).
+    single-run reproducibility caveat: `docs/runbooks/Mission1HILSession15.md` (Results section).
   - **HIL CI stage design decided** (`docs/session15-hil-ci-stage-design.md`): one GitHub
     Actions job on the existing x86 GPU self-hosted runner, driving the Jetson entirely over
     SSH (Nav2 launch, mission run, DB read, photo retrieval, teardown) rather than
@@ -642,3 +642,18 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
     not touch `ci.yml`. Phase 2 (deferred, mechanism already decided) is what finally makes
     the existing `needs: stage-3-arm64` edge real: pulling the Stage 3 GHCR arm64 image onto
     the Jetson and running the mission executor inside it, instead of natively.
+- **2026-07-12 — Roadmap gap closed on Mike's review: new Session 16 ("Update HIL Stage with
+  Gazebo + Tidy Up E2E Simulation") inserted; prior 16/17+ renumbered to 17/18+ (second
+  renumbering — same convention as 2026-07-10: dated historical entries keep original
+  numbers).** Session 15 delivered the HIL *design* but no session owned *implementing*
+  `stage-4-hil` (replacing `stage-4-isaac`) — the plan jumped from design straight to Real
+  Robot. New Session 16 owns: the `stage-4-hil` CI job per
+  `docs/session15-hil-ci-stage-design.md` (retiring `stage-4-isaac` in the same change),
+  HIL reproducibility (≥3 consecutive green runs — Session 15's record is a single run),
+  the arm64-image-consumption phase, and the parked Session 15 follow-ups (FAIL-row metric
+  skew, mission validation, dead `headless` arg, photo freshness, constructor-in-try,
+  Jetson `actions-runner` relocation). Also this date: **runbooks moved to
+  `docs/runbooks/`** (`JetsonInstallSession14.md`, `Mission1HILSession15.md` — operator
+  manuals, kept separate from the session plan by deliberate choice; root stays clean) and
+  Session 15's stale "Isaac Sim" title/status in `Release1Todo.md` corrected to Gazebo/
+  COMPLETE (the title predated the sim-engine decision and outlived it).

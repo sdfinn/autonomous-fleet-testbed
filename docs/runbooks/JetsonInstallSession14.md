@@ -589,7 +589,7 @@ the CI runner swap (Part 8) on a shaky build.**
 > now an **on-device clone (Path A)**: same system, same data, only the storage changes. Why
 > that's better for us specifically: (1) it preserves everything Sessions 14–15 installed on
 > the SD — ROS2, the GitHub runner *registration*, the Session 15 HIL prerequisites
-> (`Mission1HILSession15.md` Part 1), the repo build, even the Jetson-side telemetry rows —
+> (`docs/runbooks/Mission1HILSession15.md` Part 1), the repo build, even the Jetson-side telemetry rows —
 > so there is no Part 4–8 redo; (2) it gives a true apples-to-apples SD-vs-NVMe baseline for
 > the Part 7 table (identical bits, only storage differs); (3) no host PC, no recovery mode.
 > Risk asymmetry favors trying it: if the clone won't boot, the SD is untouched — pull the
@@ -692,7 +692,7 @@ but it wipes everything — budget ~1–2 h of reinstalls afterwards.
       filling in the **NVMe column** of the baseline table.
 - [ ] Re-register / restart the **CI runner** (Part 8) on the NVMe install (fresh OS = fresh
       runner registration; remove the stale runner entry in GitHub if it lingers).
-- [ ] Re-run the **HIL prerequisites** (`Mission1HILSession15.md` Part 1):
+- [ ] Re-run the **HIL prerequisites** (`docs/runbooks/Mission1HILSession15.md` Part 1):
       `ros-jazzy-navigation2`, `ros-jazzy-nav2-bringup`, `ros-jazzy-rmw-cyclonedds-cpp`,
       `python3-pil`, repo on `main`, `colcon build --base-paths src`. The Session 15 HIL run
       was done on the microSD install, so a fresh NVMe flash loses all of it. (Path A
@@ -731,7 +731,7 @@ but it wipes everything — budget ~1–2 h of reinstalls afterwards.
       BLUEPRINT.md's decision log.
 - [ ] Commit the doc updates:
   ```bash
-  git add Release1Todo.md BLUEPRINT.md JetsonInstallSession14.md
+  git add Release1Todo.md BLUEPRINT.md docs/runbooks/JetsonInstallSession14.md
   git commit -m "docs(session-14): Jetson Orin Nano install runbook + baseline; correct JetPack 7.2 flash method"
   ```
 

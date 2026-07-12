@@ -82,7 +82,7 @@ Wait for `Managed nodes are active` and the AMCL initial-pose log.
 **Terminal 3 — Jetson (SSH), the mission:**
 ```bash
 cd ~/autonomous-fleet-testbed
-# python3 (not python) — matches the Session 14 Jetson env (JetsonInstallSession14.md Part 7).
+# python3 (not python) — matches the Session 14 Jetson env (docs/runbooks/JetsonInstallSession14.md Part 7).
 RUNNER_TYPE=hil_jetson python3 -m nav_fleet.mission_runner mission1
 ```
 

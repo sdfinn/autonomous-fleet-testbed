@@ -96,7 +96,7 @@ docker buildx build --platform linux/arm64 \
   `stage-4-isaac`; if older docs/notes say `stage-2-arm64`/`stage-3-gazebo`, that's the
   pre-2026-07-10 naming)
 - `GazeboCommands.md` — Gazebo viewer navigation cheat sheet
-- `Mission1HILSession15.md` — Session 15 Mission 1 hardware-in-the-loop runbook (Jetson +
+- `docs/runbooks/Mission1HILSession15.md` — Session 15 Mission 1 hardware-in-the-loop runbook (Jetson +
   Gazebo terminal procedure) and the first real HIL run's Results (2026-07-11, PASS)
 - `docs/superpowers/specs/` — dated design specs from `/superpowers:brainstorming` sessions
   (e.g. `2026-07-10-session15-gazebo-hil-mission1-design.md`) — read before continuing any
@@ -144,7 +144,7 @@ docker buildx build --platform linux/arm64 \
   matched `requirements/traceability.yaml`'s placeholder names (fixed in Session 11/12: BR-01/
   BR-10 → `test_navigation_succeeds`, BR-02 → `test_no_collision`). BR-03 (recovery behavior)
   has no test at all — recovery is genuinely broken (see "Recovery behaviors" in
-  `Release1Todo.md` Session 17+), so this isn't a naming fix, it's a real missing capability.
+  `Release1Todo.md` Session 18+), so this isn't a naming fix, it's a real missing capability.
   Remove `continue-on-error` only once BR-03 has an actual test. Until then: this gate silently
   went from "intentionally red" to "actually blocking every downstream CI stage" once someone
   removed `continue-on-error` without the underlying gaps being fixed — check `gh run list`
@@ -360,7 +360,7 @@ then wait 5s for DDS to clear before restarting.
 
 ## Jetson Orin Nano Gotchas (Session 14+)
 
-Full step-by-step runbook: `JetsonInstallSession14.md`. **In progress as of 2026-07-08** —
+Full step-by-step runbook: `docs/runbooks/JetsonInstallSession14.md`. **In progress as of 2026-07-08** —
 hardware flashed/networked/smoke-tested, paused before ROS2 install (resume at that doc's
 Part 6). Confirmed-for-this-board state, not guesses: username `Mike` (capital M — set during
 SDK Manager pre-config), IP `10.42.0.217` (DHCP lease from the shared Ethernet connection, may

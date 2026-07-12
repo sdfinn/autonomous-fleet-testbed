@@ -4,7 +4,7 @@ This document is the design the future CI-implementation session executes from. 
 **not** change `.github/workflows/ci.yml` — no workflow, launch, or code files were touched
 by the work that produced it. It records *decisions* (write these as decided, not as open
 options) plus the operational learnings from the manually-executed first HIL run
-(`Mission1HILSession15.md`, 2026-07-11) that the CI stage must account for.
+(`docs/runbooks/Mission1HILSession15.md`, 2026-07-11) that the CI stage must account for.
 
 **What "HIL" means here (for the reader learning the setup):** Hardware-in-the-Loop. The
 simulator (Gazebo — the bedroom world plus the robot's lidar/camera sensors) runs on the x86
@@ -184,7 +184,7 @@ pkill -9 -f '[r]obot_state_publisher' || true
 **WHY the `pkill -9` fallback is unconditional (not "only if kill -INT failed").** SIGINT
 teardown reliability was **mixed across Session 15's manual runs**: the single HIL run's
 teardown was clean (SIGINT to the launch process sufficed — recorded in
-`Mission1HILSession15.md`), but **both Tier-1 (single-machine x86 sim) verification teardowns**
+`docs/runbooks/Mission1HILSession15.md`), but **both Tier-1 (single-machine x86 sim) verification teardowns**
 earlier in the session left orphaned `gz sim` / `component_container` /
 `robot_state_publisher` processes and needed `pkill -9` (observed during the session; not
 preserved in a committed artifact). Since a CI job has no human at a foreground terminal to
