@@ -3600,6 +3600,23 @@ Nav2's own mechanisms — no custom BT).
       stop / re-route. Deliverables: the calibrated `hsv_realcam.yaml` profile + observed
       detection latency, both of which Session 18 (real robot) consumes directly.
       **Bill of materials: one UVC USB webcam.**
+- [ ] **Pin the real camera's auto-exposure and auto-white-balance before calibrating.**
+      Consumer webcams continuously shift exposure and color temperature, which moves a
+      croquet ball's hue frame to frame — HSV thresholding against floating white balance
+      is chasing a moving target. Disable/fix via `v4l2-ctl` controls (e.g.
+      `white_balance_automatic=0`, fixed `exposure_*`; exact control names vary — check
+      `v4l2-ctl -d /dev/video0 --list-ctrls`) and **record the pinned settings alongside
+      `hsv_realcam.yaml`** — the calibration is only valid for that camera configuration.
+- [ ] **Decide the clock-domain handling for real-camera frames in HIL (wall clock vs sim
+      time).** The HIL stack runs on Gazebo sim time (`use_sim_time`), but a real webcam
+      stamps frames with wall clock. This breaks two planned mechanisms: the
+      `take_picture` freshness gate (wall-clock stamp vs sim-time "now" is meaningless)
+      and the yellow-ball keepout (a stamped detection must transform into the map frame
+      via TF — wall-clock stamps against a sim-time TF buffer fail or grab garbage). The
+      red-ball stop is immune (binary trigger, no stamp needed). Decide deliberately —
+      e.g. detector re-stamps detections with its own node clock, or the real-camera tier
+      treats detections as stampless triggers only (stop yes, keepout sim-tier-only) —
+      don't discover it live mid-run.
 
 ### Piece 3 — E2E fixes that protect the new stage (kept from the old tidy-up list)
 
