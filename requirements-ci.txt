@@ -4,6 +4,8 @@
 # Editing this file invalidates the Dockerfile's pip-install and colcon-build layers (it's
 # COPYed in ahead of both) — the cheapest way to force a genuinely non-cached stage-2-arm64
 # timing when you need one for comparison.
+# Cold-build trigger 2026-07-13: prove the NVMe fresh-install runner registration end to
+# end and re-measure the cold arm64 build (SD-era reference: 585s, run 29135219100).
 pyyaml>=6.0
 pandera>=0.32
 pandas>=2.0
