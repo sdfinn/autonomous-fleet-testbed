@@ -3513,6 +3513,28 @@ Nav2's own mechanisms — no custom BT).
 > **Ordering rule (same reasoning the Session 15 spec used):** get `stage-4-hil` green 3×
 > with **Mission 1** — the proven mission — before Mission 2 enters the stage. Never debug
 > a new CI stage and a new mission at the same time.
+>
+> **▶ Execution started 2026-07-14 — Plan A:**
+> `docs/superpowers/plans/2026-07-14-session16-stage4-hil.md` (branch
+> `session-16-stage4-hil`; live task ledger: `.superpowers/sdd/progress.md`). The plan
+> sequences this session's pieces per the ordering rule above — **Piece 3 first** (its
+> fixes protect the stage), **then Piece 1, then Piece 2 as a separate Plan B** after the
+> 3×-green gate:
+> | Plan A task | Implements |
+> |---|---|
+> | 1 | Piece 1 power-policy item (b): `power_mode` telemetry column |
+> | 2 | Piece 3: FAIL-row metric skew policy |
+> | 3 | Piece 3: `MissionRunner()` constructor inside try |
+> | 4 | Piece 3: `test_mission_run.py` into stage-2 (found+fixed a real costmap-accumulation bug) |
+> | 5 | Piece 1 power-policy item (a): passwordless nvpmodel (already provisioned — no-op) |
+> | 6–7 | Piece 1: all stage logic as locally-runnable `scripts/hil_stage.sh` + local E2E proof at 15W |
+> | 8 | Piece 1: `stage-4-hil` job replaces `stage-4-isaac` + registry build cache + BuildKit GC |
+> | 9–10 | Piece 1: PR, then the ≥3×-consecutive-green reproducibility gate; closeout ticks the boxes below |
+> | 11 | Piece 3: return-leg corner-clip investigation |
+> | 12–13 | Piece 1 phase 2 (gated on 3×-green): containerized mission + HIL row into drift DB |
+> | Plan B | Piece 2: Mission 2 (written after the Task 10 gate) |
+> Power split decided 2026-07-14: Jetson builds at 25W, HIL mission at **15W** (deployment
+> budget), always-restore 25W. The boxes below are ticked at plan closeout, not per-task.
 
 ### Piece 1 — Implement `stage-4-hil` (replaces `stage-4-isaac`)
 
