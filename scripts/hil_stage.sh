@@ -9,6 +9,7 @@
 #   run               full HIL test: sim-up -> nav2-up -> mission -> verify (+1 retry on
 #                     a discovery-shaped failure, after full teardown + 5s DDS settle)
 #   teardown          kill both sides (safe to run any time; used by CI's if:always() step)
+#   restore-checkout  checkout main on the Jetson (run once at the very end, not mid-retry)
 set -euo pipefail
 
 JETSON_USER="${JETSON_USER:-mike}"
@@ -87,13 +88,16 @@ nav2_up() {
   jssh "$JENV && cd ${JETSON_REPO} && rm -f ${NAV2_LOG} && nohup ros2 launch src/nav_fleet/launch/nav2_only_launch.py > ${NAV2_LOG} 2>&1 & sleep 1; echo nav2-launched"
   local deadline=$((SECONDS + 120))
   # Two lifecycle managers report active (localization, then navigation) — gate on BOTH.
-  until [ "$(jssh "grep -c 'Managed nodes are active' ${NAV2_LOG} 2>/dev/null" || echo 0)" -ge 2 ]; do
+  local count
+  count=$(jssh "grep -c 'Managed nodes are active' ${NAV2_LOG} 2>/dev/null || true")
+  until [ "${count:-0}" -ge 2 ]; do
     if (( SECONDS >= deadline )); then
       echo 'FATAL: Nav2 not active within 120s — Jetson nav2 log tail:' >&2
       jssh "tail -n 40 ${NAV2_LOG}" >&2 || true
       return 1
     fi
     sleep 3
+    count=$(jssh "grep -c 'Managed nodes are active' ${NAV2_LOG} 2>/dev/null || true")
   done
   echo '=== [nav2-up] managed nodes active ==='
 }
@@ -103,11 +107,12 @@ mission() {
   require_ip
   local before_id
   before_id=$(jssh "python3 - <<'PY'
+import os
 import sqlite3
 try:
-    c = sqlite3.connect('autonomous-fleet-testbed/reports/fleet_runs.db')
+    c = sqlite3.connect(os.path.expanduser('~/autonomous-fleet-testbed/reports/fleet_runs.db'))
     print(c.execute('SELECT COALESCE(MAX(id),0) FROM runs').fetchone()[0])
-except Exception:
+except sqlite3.OperationalError:
     print(0)
 PY")
   echo "$before_id" > "$STATE_DIR/before_id"
@@ -128,8 +133,9 @@ verify() {
     || { echo "FATAL: photo ${photo} missing on the Jetson" >&2; return 1; }
   before_id=$(cat "$STATE_DIR/before_id")
   row=$(jssh "python3 - <<PY
+import os
 import sqlite3
-c = sqlite3.connect('autonomous-fleet-testbed/reports/fleet_runs.db')
+c = sqlite3.connect(os.path.expanduser('~/autonomous-fleet-testbed/reports/fleet_runs.db'))
 r = c.execute(\"SELECT id, scenario, result, runner_type, sim_engine, power_mode, \"
               \"mean_time_to_goal, mean_position_error FROM runs \"
               \"WHERE id > ${before_id} AND runner_type='hil_jetson' \"
@@ -148,6 +154,7 @@ run_once() {
 
 run() {
   mkdir -p "$STATE_DIR"
+  rm -f "$STATE_DIR/mission.out"
   if run_once; then return 0; fi
   # Retry-once policy (design doc §3): only for a discovery-shaped failure.
   if grep -qE 'Nav2 action server unavailable|Goal rejected after all retries|no camera frame' \
@@ -165,7 +172,7 @@ run() {
 teardown() {
   echo '=== [teardown] both sides ==='
   if [ -n "${JETSON_IP:-}" ]; then
-    jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner' || true; cd ${JETSON_REPO} && git checkout main >/dev/null 2>&1 || true" || true
+    jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner' || true" || true
   fi
   local launch_pid
   launch_pid=$(pgrep -f '[s]im_only_launch' | head -1 || true)
@@ -184,13 +191,20 @@ teardown() {
   return 0
 }
 
-cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|teardown}"
+restore_checkout() {
+  require_ip
+  jssh "cd ${JETSON_REPO} && git checkout main >/dev/null 2>&1 || true" || true
+  echo '=== [restore-checkout] Jetson repo back on main ==='
+}
+
+cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|teardown|restore-checkout}"
 shift || true
 case "$cmd" in
-  discover)   discover ;;
-  power-mode) power_mode ;;
-  sync)       sync "$@" ;;
-  run)        run ;;
-  teardown)   teardown ;;
+  discover)         discover ;;
+  power-mode)       power_mode ;;
+  sync)             sync "$@" ;;
+  run)              run ;;
+  teardown)         teardown ;;
+  restore-checkout) restore_checkout ;;
   *) echo "FATAL: unknown subcommand '$cmd'" >&2; exit 1 ;;
 esac
