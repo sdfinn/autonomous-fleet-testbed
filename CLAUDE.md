@@ -206,6 +206,22 @@ docker buildx build --platform linux/arm64 \
   and nav2 container processes persist. Correct approach: Ctrl+C on the `ros2 launch` foreground
   process (it sends SIGINT to the whole process group). For CI, the launch process is killed by
   the runner's job cleanup. Never chain `pkill` calls hoping to clean up mid-session.
+- **Orphaned `parameter_bridge`/`static_transform_publisher` processes poison EVERY later sim
+  run on their DDS domain — including CI (domain 0).** Found 2026-07-15: 13+ bridges had
+  accumulated across a debug day because every teardown pattern checked
+  `gz sim|component_container|robot_state_publisher|ros2 launch` and none matched
+  `parameter_bridge`, `static_transform_publisher`, or `ekf_node`. gz-transport has NO DDS
+  domain isolation, so an old bridge attaches to any NEW Gazebo server and re-publishes
+  /clock + TF into its OLD domain: two interleaved /clock publishers → out-of-order stamps →
+  tf2 "Detected jump back in time" floods (8,716 in one CI run) → AMCL can't anchor TF →
+  goals REJECTED, and the nav2 container can even SIGABRT on an uncaught
+  `tf2::NoDataForExtrapolationException`. The COMPLETE teardown/verify pattern is:
+  `pgrep -af "gz sim|component_container|robot_state_publisher|ros2 launch|parameter_bridge|static_transform|ekf_node"`.
+  stage-2 in ci.yml now sweeps this pattern before launch and after the job. Also: unique
+  `ROS_DOMAIN_ID` per local run only hides leftovers, it doesn't prevent them — and reusing a
+  domain number (or running on 0, like CI) collides with them. From a Claude Code shell,
+  subagent-spawned leftovers may not respond to sandboxed pkill — kill by explicit PID with
+  sandbox disabled if the pattern kill reports success but pgrep still shows them.
 - **nav_runner goal stamp:** Use `Time().to_msg()` (zero timestamp = "use latest TF") for the
   NavigateToPose goal header stamp. Wall-clock `get_clock().now()` will be rejected by Nav2
   which uses sim time (far-future wall timestamp has no TF data in Nav2's buffer).
