@@ -3535,6 +3535,17 @@ Nav2's own mechanisms — no custom BT).
 > | Plan B | Piece 2: Mission 2 (written after the Task 10 gate) |
 > Power split decided 2026-07-14: Jetson builds at 25W, HIL mission at **15W** (deployment
 > budget), always-restore 25W. The boxes below are ticked at plan closeout, not per-task.
+>
+> **Status at 2026-07-15 pause:** Plan A tasks 1–8 complete + review-approved (the local
+> E2E HIL run PASSED at 15W: mission ~19 s, photo + `hil_jetson`/`15W` telemetry row).
+> **PR #2 open; first pipeline run RED at stage-2** — diagnosed and reproduced: after the
+> combined test session's driving, accumulated global-costmap marks close the
+> hallway-arch corridor and the mission return leg fails to plan (`"Failed to create plan
+> with tolerance of: 0.300000"` → abort). This confirms the Piece-3 corner-clip item is
+> real costmap marginality at the arch. Full diagnosis + resume sequence:
+> `.superpowers/sdd/progress.md` ("SESSION PAUSED 2026-07-15"). Next session starts
+> there: confirm the clear-costmaps-per-leg mitigation, pick fix altitude, add the
+> stage-2 log artifact, re-run PR #2, then the 3×-green gate.
 
 ### Piece 1 — Implement `stage-4-hil` (replaces `stage-4-isaac`)
 
