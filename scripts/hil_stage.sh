@@ -64,8 +64,12 @@ sim_up() {
   echo '=== [sim-up] launching Gazebo sim half (budget 60s) ==='
   mkdir -p "$STATE_DIR"
   cd "$REPO_DIR"
+  # ROS2's setup.bash references unbound vars internally (e.g. AMENT_TRACE_SETUP_FILES) —
+  # incompatible with this script's `set -u`. Relax it only around the sourcing.
+  set +u
   source /opt/ros/jazzy/setup.bash
   source install/setup.bash
+  set -u
   export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0
   # setsid: own process group, so teardown's kill -INT -<pid> signals the whole launch tree.
   setsid ros2 launch src/nav_fleet/launch/sim_only_launch.py > "$SIM_LOG" 2>&1 &
@@ -85,7 +89,15 @@ sim_up() {
 nav2_up() {
   echo '=== [nav2-up] launching Nav2 on the Jetson (budget 120s) ==='
   require_ip
-  jssh "$JENV && cd ${JETSON_REPO} && rm -f ${NAV2_LOG} && nohup ros2 launch src/nav_fleet/launch/nav2_only_launch.py > ${NAV2_LOG} 2>&1 & sleep 1; echo nav2-launched"
+  # The (...) subshell + < /dev/null are BOTH required, or the local ssh call blocks
+  # forever and nav2_up never reaches its polling loop:
+  #  - bash's `&` binds to the ENTIRE preceding &&-list, so without the parens the
+  #    backgrounded job is a subshell running the whole chain — that subshell inherits
+  #    the SSH session's stdout/stderr pipes and holds the channel open indefinitely.
+  #  - < /dev/null stops ros2 launch inheriting the session's stdin.
+  # With the parens, only ros2 launch (all fds redirected) survives; the wrapper
+  # subshell exits immediately and sshd can close the channel.
+  jssh "$JENV && cd ${JETSON_REPO} && rm -f ${NAV2_LOG} && (nohup ros2 launch src/nav_fleet/launch/nav2_only_launch.py > ${NAV2_LOG} 2>&1 < /dev/null &) && sleep 1 && echo nav2-launched"
   local deadline=$((SECONDS + 120))
   # Two lifecycle managers report active (localization, then navigation) — gate on BOTH.
   local count
