@@ -216,7 +216,12 @@ jobs:
         run: |
           source /opt/ros/jazzy/setup.bash
           source install/setup.bash
-          ros2 launch src/nav_fleet/launch/sim_launch.py headless:=true &
+          # Capture launch output to a file: the backgrounded step's stdout is otherwise
+          # lost once the step ends, so a failure window has zero Nav2 output to diagnose
+          # (Session 16 — the first red run had no planner_server lines at all).
+          : > /tmp/stage2_sim.log
+          ros2 launch src/nav_fleet/launch/sim_launch.py headless:=true \
+            > /tmp/stage2_sim.log 2>&1 &
           sleep 20
 
       - name: Run navigation + mission integration tests
@@ -235,6 +240,18 @@ jobs:
           GAZEBO_S=$((END - GAZEBO_START))
           echo "Stage 2 Gazebo (headless, cold start through 3 tests): ${GAZEBO_S}s"
           echo "### Stage 2 Gazebo wall time: ${GAZEBO_S}s" >> $GITHUB_STEP_SUMMARY
+
+      - name: Show sim log tail on failure
+        if: failure()
+        run: tail -n 60 /tmp/stage2_sim.log 2>/dev/null || true
+
+      - name: Upload sim launch log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage2-sim-log-${{ github.run_number }}
+          path: /tmp/stage2_sim.log
+          if-no-files-found: warn
 
       - name: Shutdown Gazebo
         if: always()
@@ -300,12 +317,15 @@ jobs:
           echo "Stage 4 HIL wall time: ${HIL_S}s"
           echo "### Stage 4 HIL wall time: ${HIL_S}s" >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload mission photo artifact
+      - name: Upload mission evidence artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hil-mission-photo-${{ github.run_number }}
-          path: /tmp/hil_stage/*.png
+          name: hil-mission-evidence-${{ github.run_number }}
+          path: |
+            /tmp/hil_stage/*.png
+            /tmp/hil_stage/sim.log
+            /tmp/hil_stage/mission.out
           if-no-files-found: warn
 
       - name: Show sim log tail on failure
