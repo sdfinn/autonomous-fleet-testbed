@@ -3827,6 +3827,17 @@ This is the last cheap chance to find them at a desk.
 > FOV mask before the costmap sees phantom obstacles, and the low mount sees bed legs, not
 > mattresses (fine — this session builds its own SLAM map).
 >
+> **Open decision for this session — brain from container or bare (raised 2026-07-14):**
+> CI compiles/tests via Docker either way (stage-3 image; stage-4-hil phase 2 runs the
+> mission inside it). For the rover: **leaning containerized brain + bare vendor driver**,
+> talking over DDS on the host network. Container pros: the deployed artifact is
+> bit-identical to what stage-4-hil tested (the project's core thesis), SHA-tagged rollback,
+> host OS stays clean, fleet-scale story. Bare pros: simpler `/dev` access (motor serial,
+> D500 lidar, OAK-D — container needs explicit `--device` passthroughs), simpler on-robot
+> debugging, no nvidia-container-runtime complexity if GPU inference ever lands. Session 16
+> phase 2 is the deliberate de-risk of the container path before the rover exists; decide
+> here with that evidence in hand.
+>
 > **Waveshare UGV-PT dimensions note (carry-over from Session 10):** Before running real
 > nav missions, measure the actual robot and update `urdf/ugv_pt.urdf.xacro` to match:
 > body dimensions, wheel_radius, wheel_separation. Reference:
