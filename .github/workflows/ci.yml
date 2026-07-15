@@ -209,6 +209,18 @@ jobs:
           colcon build --symlink-install
           source install/setup.bash
 
+      - name: Sweep stale sim processes (self-hosted runner shares the workstation)
+        # Orphaned parameter_bridge / static TF / nav2 processes from crashed or killed
+        # local debug runs attach to ANY new Gazebo via gz-transport (which has no DDS
+        # domain isolation) and re-publish /clock + TF into this job's domain 0 — the
+        # 2026-07-15 red run had 8,716 "jump back in time" warnings from exactly this,
+        # presenting as "Goal rejected after all retries". Sweep before launch.
+        run: |
+          pkill -9 -f "parameter_bridge|component_container_isolated|ekf_node" || true
+          pkill -9 -f "static_transform_publisher|robot_state_publisher" || true
+          pkill -f "gz sim" || true
+          sleep 3
+
       - name: Record start time
         run: echo "GAZEBO_START=$(date +%s)" >> $GITHUB_ENV
 
@@ -253,9 +265,12 @@ jobs:
           path: /tmp/stage2_sim.log
           if-no-files-found: warn
 
-      - name: Shutdown Gazebo
+      - name: Shutdown sim (full pattern — a bare "gz sim" pkill leaves bridge/TF orphans)
         if: always()
-        run: pkill -f "gz sim" || true
+        run: |
+          pkill -9 -f "parameter_bridge|component_container_isolated|ekf_node" || true
+          pkill -9 -f "static_transform_publisher|robot_state_publisher" || true
+          pkill -f "gz sim" || true
 
   stage-4-hil:
     name: "Stage 4 — HIL: Gazebo (x86) ↔ Nav2 + Mission 1 (real Jetson)"
