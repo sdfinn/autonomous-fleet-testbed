@@ -40,7 +40,10 @@ MISSIONS = {
         MissionStep('navigate', 'drive to bedroom doorway centre', 'doorway_center',
                     math.pi / 2),
         MissionStep('take_picture', 'photograph the bedroom'),
-        MissionStep('navigate', 'return to start', 'home_base'),
+        # yaw: return to the start POSE, not just the position — without it the goal
+        # defaults to yaw=0 (east) and the robot ends with an arbitrary-looking left
+        # turn at the arch (observed eyes-on 2026-07-15). Spawn faces north (pi/2).
+        MissionStep('navigate', 'return to start', 'home_base', math.pi / 2),
     ),
 }
 
