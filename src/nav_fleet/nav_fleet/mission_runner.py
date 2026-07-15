@@ -111,6 +111,7 @@ def _log_mission(name, ok, runner):
         nav_success_rate=1.0 if ok else 0.0,
         mean_position_error=_mean(runner.nav_errors),
         mean_time_to_goal=_mean(runner.nav_durations),
+        power_mode=os.environ.get('POWER_MODE'),
     )
 
 
