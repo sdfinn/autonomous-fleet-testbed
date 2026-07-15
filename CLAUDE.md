@@ -377,30 +377,33 @@ then wait 5s for DDS to clear before restarting.
 
 ## Jetson Orin Nano Gotchas (Session 14+)
 
-Full step-by-step runbook: `docs/runbooks/JetsonInstallSession14.md`. **Parts 1–8 done as of
-2026-07-11** — flashed (JetPack 7.2), networked, ROS2 Jazzy installed, full pytest suite
-native, registered as the arm64 self-hosted CI runner, and HIL-proven (Session 15's Mission 1
-ran on it against workstation Gazebo, 2026-07-11). **Next: Part 9 (NVMe migration = headless
-FRESH INSTALL via SDK Manager recovery flash; Jetson ISO USB = monitor-attached fallback) —
-one start-to-finish checklist, "The migration", in that Part** (re-decided 2026-07-12
-evening: the SD→NVMe clone was retired unattempted — JetsonHacks scripts are JetPack-6-only
-vs this board's r39.2 PARTUUID/ESP 15-partition layout; the SD re-baseline at 25W was
-dropped with it, so the Part 7 table becomes an NVMe-only record. GUI will be disabled on
-the new install — boot to `multi-user.target`. Happens before Session 16).
-Confirmed-for-this-board state, not guesses: username `Mike` (capital M — SDK Manager
-pre-config accident; **becomes lowercase `mike` after the Part 9 fresh install**), IP
-`10.42.0.217` (DHCP lease from the shared Ethernet connection, may change across reboots —
-re-check with `ip neigh show dev enp6s0`), hostname still `localhost.localdomain` (**becomes
-`jetson` after Part 9** — via pre-config if the field appears, else `hostnamectl`), rootfs
-on microSD `/dev/mmcblk0p1`; NVMe SSD seated and blank (`nvme0n1`, 465.8 G, verified
-2026-07-12).
+Full step-by-step runbook: `docs/runbooks/JetsonInstallSession14.md`. **Parts 1–9 done as
+of 2026-07-13** — Part 9's NVMe FRESH INSTALL executed: headless SDK Manager recovery
+flash to NVMe (~12 min), re-provisioned end-to-end from the runbook (Part 9 step 11
+inlines all of it), NVMe-at-25W baselines recorded (Part 7 table: colcon 5.312s ≈ SD tie;
+docker pull 1m40s = 2.5× vs SD; cold arm64 CI build 568s ≈ SD 585s), runner re-registered
+and **proven by a full 8-job-green CI cycle (run 29301726080)**. **Session 14 is COMPLETE
+(2026-07-14):** step 14's closeout + `Mike@`→`mike@` doc sweep done, and step 13c — the
+manual HIL run on the NVMe install — **passed first-attempt 2026-07-14** (multicast DDS
+across the link, mission PASS, photo + `hil_jetson` telemetry row on the Jetson; results
+in the runbook at 13c). Next: Session 16 (`stage-4-hil` + Mission 2).
+Confirmed-for-this-board state, not guesses: username **`mike`** (lowercase, matches the
+workstation — the SD era's capital-M `Mike` is gone; old docs saying `Mike@` predate
+2026-07-13), hostname **`jetson`** — **`ssh mike@jetson.local` works via mDNS** (needed
+the post-hostname reboot; fresh installs also ship NO `127.0.1.1` line in `/etc/hosts` —
+one was added; don't put a static entry on the workstation, the DHCP lease moves). IP
+still `10.42.0.217` (lease — re-check with `ip neigh show dev enp6s0`), rootfs on NVMe
+`/dev/nvme0n1p1` (456G, 421G free), GUI off (`multi-user.target`, idle RAM 433 MB), CUDA
+still intentionally absent (OS-only flash). The microSD is the untouched rollback — stored
+until Session 16's `stage-4-hil` is 3× green. GHCR pulls on the Jetson need
+`gh auth refresh -s read:packages` then `gh auth token | docker login ghcr.io -u sdfinn
+--password-stdin` (the image is private; gh's default scopes lack packages).
 - **Power mode: pinned to 25W (`sudo nvpmodel -m 1`) on 2026-07-12.** Orin Nano Super modes:
   0=15W (the out-of-box state we found), 1=25W, 2=MAXN_SUPER. `sudo nvpmodel -q` to query,
   `-p --verbose` to list, `-m <id>` to set; the chosen mode **persists across reboots** via
-  `/var/lib/nvpmodel/status`. Session 14's original build baselines predate the pin (mode
-  unrecorded — flag them historical; the planned 25W SD re-baseline was dropped 2026-07-12
-  with the clone→fresh-install switch, so NVMe-at-25W is the go-forward reference number).
-  The pin lives on the SD's rootfs, so **re-pin after the Part 9 fresh install**.
+  `/var/lib/nvpmodel/status`. The SD-era build baselines predate the pin (mode unrecorded
+  — flagged historical in the Part 7 table); **NVMe-at-25W is the go-forward reference,
+  recorded 2026-07-13**. The pin was re-applied on the NVMe install (Part 9 step 10 ✅).
   `sudo jetson_clocks` additionally locks clocks at the mode's max but does NOT persist —
   suitable as a per-job CI step, not a set-and-forget.
 - **JetPack 7.2 removed the microSD card image.** The old "flash an SD image with Etcher and

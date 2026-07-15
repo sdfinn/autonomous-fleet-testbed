@@ -7,7 +7,8 @@ docs/superpowers/specs/2026-07-10-session15-gazebo-hil-mission1-design.md.
 
 ## Part 1 — One-time Jetson setup
 
-SSH in (`ssh Mike@10.42.0.217` — if the DHCP lease moved, find it with
+SSH in (`ssh mike@jetson.local` — mDNS works since the 2026-07-13 NVMe fresh install; if it
+doesn't resolve, fall back to the lease IP, `ssh mike@10.42.0.217`, found with
 `ip neigh show dev enp6s0` on the workstation), then:
 
 ```bash
