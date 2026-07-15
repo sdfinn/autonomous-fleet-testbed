@@ -21,6 +21,7 @@ Requires a live sim (sim_launch.py, or sim_only + nav2_only for HIL). Logs one t
 row per mission to FLEET_DB via tools.telemetry_logger.
 """
 import argparse
+import math
 import os
 import pathlib
 import time
@@ -31,6 +32,7 @@ from nav2_msgs.srv import ClearEntireCostmap
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 
+from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.image_io import image_msg_to_png
 from nav_fleet.missions import MISSIONS, validate_mission
 from nav_fleet.nav_runner import NavRunner
@@ -173,6 +175,16 @@ def main():
     _log_mission(args.mission, ok, runner)
 
     print(f"Mission {args.mission}: {'PASS' if ok else 'FAIL'}")
+    # Sim-only honesty readout (None on the real robot — no Gazebo there): where the
+    # robot PHYSICALLY ended vs the final navigate goal. The verdict above trusts
+    # Nav2/AMCL; a large miss here means a false PASS (see tests/test_mission_run.py).
+    truth = get_ground_truth_xy()
+    nav_steps = [s for s in MISSIONS[args.mission] if s.action == 'navigate']
+    if truth is not None and nav_steps:
+        gx, gy = SEMANTIC_MAP[nav_steps[-1].location]
+        miss = math.hypot(truth[0] - gx, truth[1] - gy)
+        print(f'  ground truth: ({truth[0]:.2f}, {truth[1]:.2f}) — '
+              f'{miss:.2f} m from final goal ({gx}, {gy})')
     for p in (runner.photo_paths if runner is not None else []):
         print(f'  photo: {p}')
     raise SystemExit(0 if ok else 1)
