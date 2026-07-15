@@ -30,27 +30,10 @@ def _module_ros(ros_context):
 
 
 @pytest.fixture(scope='session')
-def _clear_costmaps(ros_context):
-    """test_navigation's driving leaves accumulated obstacle marks in Nav2's costmaps;
-    clear them so the mission plans against the static map + live scan only
-    (Session 16 Task 4: combined-invocation return leg failed to plan otherwise)."""
-    from rclpy.node import Node
-    from nav2_msgs.srv import ClearEntireCostmap
-    node = Node('costmap_clearer')
-    try:
-        for srv in ('/robot_001/global_costmap/clear_entirely_global_costmap',
-                    '/robot_001/local_costmap/clear_entirely_local_costmap'):
-            client = node.create_client(ClearEntireCostmap, srv)
-            assert client.wait_for_service(timeout_sec=10.0), f'{srv} unavailable'
-            fut = client.call_async(ClearEntireCostmap.Request())
-            rclpy.spin_until_future_complete(node, fut, timeout_sec=10.0)
-            assert fut.done(), f'{srv} call did not complete'
-    finally:
-        node.destroy_node()
-
-
-@pytest.fixture(scope='session')
-def runner(ros_context, _clear_costmaps):
+def runner(ros_context):
+    # No session-scoped costmap-clear fixture: the mission runner now clears both costmaps
+    # before every navigate leg (Session 16 leg-3 fix). A fixture that cleared once up front
+    # would mask a regression of exactly the per-leg behavior the tests must exercise.
     node = MissionRunner()
     yield node
     node.nav.destroy_node()
@@ -86,6 +69,29 @@ def test_failed_leg_metrics_excluded(runner, monkeypatch):
     assert runner.run_mission('mission1') is False
     assert runner.nav_durations == []
     assert runner.nav_errors == []
+
+
+class _StubNavOk:
+    """Mimics NavRunner after a successful goal, with no metric side effects."""
+    last_duration_s = None
+    last_position_error = None
+    last_final_x = 0.0
+    last_final_y = 0.0
+
+    def send_goal(self, x, y, timeout=90.0, yaw=None):
+        return True
+
+
+def test_costmaps_cleared_before_each_navigate_leg(runner, monkeypatch):
+    """Regression guard for the Session 16 leg-3 fix: the runner must clear costmaps once
+    per navigate step so accumulated obstacle marks can't close the marginal hallway arch.
+    Fails if the per-leg clear is dropped. mission1 has exactly two navigate steps."""
+    calls = []
+    monkeypatch.setattr(runner, '_clear_costmaps', lambda *a, **k: calls.append(1))
+    monkeypatch.setattr(runner, 'nav', _StubNavOk())
+    monkeypatch.setattr(runner, 'take_picture', lambda label: True)
+    assert runner.run_mission('mission1') is True
+    assert len(calls) == 2
 
 
 def test_log_mission_tolerates_none_runner(monkeypatch):
