@@ -97,7 +97,14 @@ def generate_launch_description():
                 '/robot_001/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
                 '/robot_001/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
                 '/robot_001/camera/image_raw@sensor_msgs/msg/Image[gz.msgs.Image',
-                '/robot_001/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
+                # NOTE: the Gazebo diff-drive plugin's odom→base_footprint TF is
+                # deliberately NOT bridged here anymore (Session 16 Task 9e). That
+                # wheel-odom TF over-reports in-place rotation ~30% (measured; see
+                # config/ekf.yaml). The robot_localization EKF in nav2_only_launch.py
+                # now owns odom→base_footprint by fusing IMU yaw-rate + wheel-odom
+                # translation. The plugin's tf_topic is redirected to a dead gz topic
+                # in urdf/ugv_pt.urdf.xacro so it can never re-enter /robot_001/tf.
+                # The odom MESSAGE above is still bridged — the EKF consumes it.
                 '/robot_001/imu/data@sensor_msgs/msg/Imu[gz.msgs.IMU',
                 '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
             ],
@@ -121,6 +128,27 @@ def generate_launch_description():
         ],
     )
 
+    # Same Gazebo-Harmonic frame-naming issue as the lidar (Session 16 Task 9e): the IMU
+    # sensor publishes /robot_001/imu/data stamped with frame_id
+    # robot_001/base_footprint/imu (a Gazebo entity path), which is NOT in RSP's TF tree.
+    # The robot_localization EKF must transform the IMU angular velocity into
+    # base_footprint; without this the frame lookup fails and every IMU sample is dropped
+    # (measured — fused yaw stayed 0 while the body turned ~145°). Zero-offset static TF
+    # from imu_link (URDF name) to the Gazebo sensor frame — same physical frame, and the
+    # imu_joint is rpy 0 0 0 so no rotation is introduced into the gyro vector.
+    imu_frame_bridge = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='imu_frame_bridge',
+        arguments=['0', '0', '0', '0', '0', '0',
+                   'imu_link',
+                   'robot_001/base_footprint/imu'],
+        parameters=[{'use_sim_time': True}],
+        remappings=[
+            ('/tf_static', '/robot_001/tf_static'),
+        ],
+    )
+
     return LaunchDescription([
         headless_arg,
         robot_state_publisher,
@@ -128,4 +156,5 @@ def generate_launch_description():
         spawn_robot,
         bridge,
         lidar_frame_bridge,
+        imu_frame_bridge,
     ])

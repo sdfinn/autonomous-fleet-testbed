@@ -82,7 +82,10 @@ bt_navigator:
     use_sim_time: true
     global_frame: map
     robot_base_frame: base_link
-    odom_topic: /robot_001/odom
+    # EKF-fused odometry (Session 16 Task 9e) — not the raw wheel odom, whose yaw-rate
+    # over-reports in-place rotation ~30% (measured; see config/ekf.yaml). The fused
+    # estimate uses IMU gyro for the honest body-rotation rate.
+    odom_topic: /robot_001/odometry/filtered
     navigators: ["navigate_to_pose"]
     navigate_to_pose:
       plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
@@ -97,6 +100,11 @@ bt_navigator:
 controller_server:
   ros__parameters:
     use_sim_time: true
+    # EKF-fused odometry (Session 16 Task 9e) — the controller's velocity feedback (used
+    # by RPP's regulated/rotate-to-heading logic) must read the honest body yaw-rate, not
+    # the raw wheel odom that over-reports in-place rotation ~30% (see config/ekf.yaml).
+    # Default would be /robot_001/odom (raw). Keep in sync with bt_navigator odom_topic.
+    odom_topic: /robot_001/odometry/filtered
     controller_frequency: 20.0
     costmap_update_timeout: 0.30
     min_x_velocity_threshold: 0.001
