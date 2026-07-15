@@ -91,3 +91,17 @@ def test_report_sigma_direction(db):
     reports = check_run(run_id, db_path=db)
     nav_reports = [r for r in reports if r.metric == "nav_success_rate"]
     assert nav_reports and nav_reports[0].flagged
+
+
+def test_fail_rows_excluded_from_baseline(db):
+    """Policy (Session 16): FAIL rows never enter the drift baseline window."""
+    _seed_baseline(db)
+    # A wild FAIL row that would wreck the baseline mean if included:
+    _insert(db, nav_success_rate=0.0, result="FAIL",
+            mean_position_error=99.0)
+    run_id = _insert(db, nav_success_rate=0.95)  # normal PASS run under check
+    reports = check_run(run_id, db_path=db)
+    by_metric = {r.metric: r for r in reports}
+    # FAIL row is excluded from baseline by the query filter (WHERE result='PASS'),
+    # so nav_success_rate baseline remains unaffected by the extreme 0.0 value
+    assert not by_metric["nav_success_rate"].flagged
