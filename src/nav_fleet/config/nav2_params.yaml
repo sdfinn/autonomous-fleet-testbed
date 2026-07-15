@@ -145,6 +145,12 @@ controller_server:
                                             # the accurate footprint + SmacPlannerHybrid path.
       use_rotate_to_heading: true
       rotate_to_heading_min_angle: 0.3     # 17° — triggers in-place rotation for the initial NNE heading error (~30°)
+      # Slower in-place rotation (Session 16 Task 9e; default is 1.8 rad/s). A slower spin
+      # means less wheel skid per radian AND more lidar scans per radian for AMCL to correct
+      # against during the ~180° return-leg rotation. Also a first step toward "slow down
+      # when uncertain" behavior (Mike, 2026-07-15). Sequenced after the EKF fix and measured
+      # separately: EKF alone gave 0.14–0.15 m ground-truth misses; this held/improved them.
+      rotate_to_heading_angular_vel: 0.5
 
 planner_server:
   ros__parameters:
