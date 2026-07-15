@@ -14,13 +14,23 @@
 """Integration test for the Mission 1 executor. Requires live Gazebo + Nav2
 (ros2 launch src/nav_fleet/launch/sim_launch.py). Ignored in stage-1-quality —
 imports rclpy at module level, and that runner has no ROS2 (see CLAUDE.md Gotchas)."""
+import math
 import pathlib
 
 import pytest
 import rclpy  # noqa: F401 — module-level import ensures collection fails without ROS2
 from PIL import Image as PILImage
 
+from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.mission_runner import MissionRunner
+from nav_fleet.missions import MISSIONS
+from nav_fleet.semantic_map import SEMANTIC_MAP
+
+# Physical arrival tolerance for the ground-truth check: Nav2's xy_goal_tolerance (0.15)
+# plus a 0.10 localization-error budget — AMCL steers the robot, so a correctly behaving
+# robot can physically stop up to its localization error beyond the believed tolerance.
+# The 2026-07-15 false PASS this check exists to catch missed by 0.38 m.
+GROUND_TRUTH_TOLERANCE_M = 0.25
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -48,6 +58,17 @@ def test_mission1_completes(runner):
     assert photo.exists()
     with PILImage.open(photo) as img:
         assert img.size[0] > 0 and img.size[1] > 0
+    # The goal checker trusts AMCL's belief — verify PHYSICAL arrival against Gazebo
+    # ground truth (world coords == map coords: spawn pose == AMCL initial pose).
+    # Guards the 2026-07-15 false-PASS mode: wheel slip during an obstacle contact
+    # walked the believed pose into tolerance while the robot was wedged at the arch.
+    truth = get_ground_truth_xy()
+    assert truth is not None, 'no Gazebo ground truth — is the sim up on this host?'
+    goal = SEMANTIC_MAP[MISSIONS['mission1'][-1].location]
+    miss = math.dist(truth, goal)
+    assert miss <= GROUND_TRUTH_TOLERANCE_M, (
+        f'false PASS: mission reported success but ground truth {truth} is '
+        f'{miss:.2f} m from goal {goal} (tolerance {GROUND_TRUTH_TOLERANCE_M} m)')
 
 
 class _StubNav:
