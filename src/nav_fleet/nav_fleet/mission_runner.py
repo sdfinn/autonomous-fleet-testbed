@@ -27,6 +27,7 @@ import time
 import traceback
 
 import rclpy
+from nav2_msgs.srv import ClearEntireCostmap
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 
@@ -38,6 +39,12 @@ from tools.telemetry_logger import log_run
 
 PHOTO_DIR = pathlib.Path('reports/photos')
 NAV_TIMEOUT_S = 90.0
+
+# Cleared before every navigate leg (see MissionRunner._clear_costmaps for the why).
+CLEAR_COSTMAP_SERVICES = (
+    '/robot_001/global_costmap/clear_entirely_global_costmap',
+    '/robot_001/local_costmap/clear_entirely_local_costmap',
+)
 
 
 class MissionRunner(Node):
@@ -52,9 +59,34 @@ class MissionRunner(Node):
         self.create_subscription(
             Image, '/robot_001/camera/image_raw', self._image_cb, 10
         )
+        self._costmap_clearers = {
+            srv: self.create_client(ClearEntireCostmap, srv)
+            for srv in CLEAR_COSTMAP_SERVICES
+        }
 
     def _image_cb(self, msg):
         self._latest_image = msg
+
+    def _clear_costmaps(self, wait_s=3.0, call_s=3.0):
+        """Clear both Nav2 costmaps before a navigate leg. Best-effort by design.
+
+        Why: obstacle marks from live lidar accumulate across a long-lived session (the
+        driving of a prior test, plus an earlier leg of the same mission) and can close a
+        marginal corridor — here the hallway arch. Session 16 diagnosed exactly this as the
+        cause of Mission 1's leg-3 planner failure ("Failed to create plan with tolerance").
+
+        Best-effort: on service unavailability or a call timeout we log a warning and
+        continue. A clear that doesn't land is not a mission failure — the navigate leg's
+        own result is the real signal. The node is not being spun by an executor here, so we
+        drive the future with spin_until_future_complete (same pattern as take_picture)."""
+        for srv, client in self._costmap_clearers.items():
+            if not client.wait_for_service(timeout_sec=wait_s):
+                self.get_logger().warning(f'{srv} unavailable — skipping costmap clear')
+                continue
+            fut = client.call_async(ClearEntireCostmap.Request())
+            rclpy.spin_until_future_complete(self, fut, timeout_sec=call_s)
+            if not fut.done():
+                self.get_logger().warning(f'{srv} clear timed out — continuing')
 
     def take_picture(self, label, timeout=15.0):
         """Capture one fresh camera frame and save it as a PNG under reports/photos/."""
@@ -78,6 +110,7 @@ class MissionRunner(Node):
         for i, step in enumerate(steps, start=1):
             self.get_logger().info(f'[{name}] step {i}/{len(steps)}: {step.label}')
             if step.action == 'navigate':
+                self._clear_costmaps()  # marks accumulate across the session — clear per leg
                 x, y = SEMANTIC_MAP[step.location]
                 ok = self.nav.send_goal(x, y, timeout=NAV_TIMEOUT_S, yaw=step.yaw)
                 # FAIL-leg policy (Session 16): a failed/timed-out leg's duration measures
