@@ -30,6 +30,7 @@ from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
                             TimerAction)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 
 PKG = pathlib.Path(__file__).parent.parent
 
@@ -38,6 +39,30 @@ def generate_launch_description():
     start_delay_arg = DeclareLaunchArgument(
         'start_delay', default_value='0.0',
         description='Seconds to wait before Nav2 bringup (sim_launch.py uses 13.0)',
+    )
+
+    # robot_localization EKF — fuses IMU yaw-rate + wheel-odom translation and owns the
+    # odom→base_footprint transform (Session 16 Task 9e; see config/ekf.yaml for the
+    # measured ~30% wheel-odom rotation over-report this fixes). This lives on the robot
+    # side (nav2_only) because odometry fusion belongs on the robot: in HIL it runs on the
+    # Jetson while /robot_001/odom, /robot_001/imu/data and RSP's TF arrive over DDS.
+    # Started with no delay so it is already publishing odom→base_footprint before Nav2
+    # comes up at start_delay; it simply waits for the first odom/imu message.
+    # NOT namespaced — per-robot isolation is applied purely via explicit absolute
+    # remappings (a namespaced node's params silently fall through to defaults, a
+    # documented failure in CLAUDE.md). /tf + /tf_static → /robot_001/*; filtered output
+    # → /robot_001/odometry/filtered (what Nav2's odom_topic now points at).
+    ekf_node = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        output='screen',
+        parameters=[str(PKG / 'config' / 'ekf.yaml'), {'use_sim_time': True}],
+        remappings=[
+            ('/tf', '/robot_001/tf'),
+            ('/tf_static', '/robot_001/tf_static'),
+            ('odometry/filtered', '/robot_001/odometry/filtered'),
+        ],
     )
 
     nav2_bringup_dir = get_package_share_directory('nav2_bringup')
@@ -61,5 +86,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         start_delay_arg,
+        ekf_node,
         nav2,
     ])
