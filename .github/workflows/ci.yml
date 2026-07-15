@@ -211,14 +211,14 @@ jobs:
           ros2 launch src/nav_fleet/launch/sim_launch.py headless:=true &
           sleep 20
 
-      - name: Run navigation integration tests
+      - name: Run navigation + mission integration tests
         run: |
           source /opt/ros/jazzy/setup.bash
           source install/setup.bash
           source ~/fleet-env/bin/activate   # pinned pytest 8.3.2 — GHA steps don't source
                                              # .bashrc, so this runner falls back to apt's
                                              # pytest 7.4.4 (owned by colcon-core) otherwise
-          python -m pytest tests/test_navigation.py -v --timeout=120
+          python -m pytest tests/test_navigation.py tests/test_mission_run.py -v --timeout=120
 
       - name: Record Gazebo timing
         if: always()

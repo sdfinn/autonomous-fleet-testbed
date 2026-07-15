@@ -30,7 +30,27 @@ def _module_ros(ros_context):
 
 
 @pytest.fixture(scope='session')
-def runner(ros_context):
+def _clear_costmaps(ros_context):
+    """test_navigation's driving leaves accumulated obstacle marks in Nav2's costmaps;
+    clear them so the mission plans against the static map + live scan only
+    (Session 16 Task 4: combined-invocation return leg failed to plan otherwise)."""
+    from rclpy.node import Node
+    from nav2_msgs.srv import ClearEntireCostmap
+    node = Node('costmap_clearer')
+    try:
+        for srv in ('/robot_001/global_costmap/clear_entirely_global_costmap',
+                    '/robot_001/local_costmap/clear_entirely_local_costmap'):
+            client = node.create_client(ClearEntireCostmap, srv)
+            assert client.wait_for_service(timeout_sec=10.0), f'{srv} unavailable'
+            fut = client.call_async(ClearEntireCostmap.Request())
+            rclpy.spin_until_future_complete(node, fut, timeout_sec=10.0)
+            assert fut.done(), f'{srv} call did not complete'
+    finally:
+        node.destroy_node()
+
+
+@pytest.fixture(scope='session')
+def runner(ros_context, _clear_costmaps):
     node = MissionRunner()
     yield node
     node.nav.destroy_node()
