@@ -23,7 +23,7 @@
 | 11 | Isaac Sim: Install + First Nav Test | ✅ |
 | 12 | Reports + Dashboard: True End-to-End | ✅ |
 | 13 | Agentic Test Loop in Sim | ✅ |
-| 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | 🔄 (Parts 1–8 done — see `docs/runbooks/JetsonInstallSession14.md`; Part 9 NVMe pending SSD arrival, Part 10 closeout remaining) |
+| 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | ✅ (2026-07-14 — NVMe fresh install executed 2026-07-13, runner re-registered, full 8-job CI cycle green (run 29301726080), manual HIL run on the NVMe install PASS first-attempt 2026-07-14; see `docs/runbooks/JetsonInstallSession14.md`) |
 | 15 | Gazebo + Real Jetson Hardware-in-the-Loop (Mission 1) | ✅ (2026-07-11 — Mission 1 PASS on x86 sim AND real-Jetson HIL, merged to main; CI stage designed but not yet implemented — see `docs/runbooks/Mission1HILSession15.md` + `docs/session15-hil-ci-stage-design.md`) |
 | 16 | HIL CI Stage with Gazebo + Mission 2 | ⬜ (created 2026-07-12, rescoped same evening — implement `stage-4-hil` from `docs/session15-hil-ci-stage-design.md`, retire `stage-4-isaac`; + Mission 2 camera-reactive incl. real USB camera manual tier; tidy-up review work moved to Session 17) |
 | 17 | Harden, Stabilize & Review (pre-robot gate) | ⬜ (created 2026-07-12 evening — code review, perf, reuse, robot-debuggable logging, report UX, drift/AI review; gate: "robot good to go out of the gate?") |
@@ -3041,23 +3041,29 @@ ros2 topic echo /robot_001/amcl_pose
 
 ## Session 14 — Jetson Orin Nano: Flash + ROS2 + CI Runner (~3 hrs)
 
-> **🔄 In progress (updated 2026-07-10).** Parts 1–8 done — real hardware flashed, networked,
-> ROS2 Jazzy installed, native `colcon build` (4.76s), full pytest suite native (40 passed,
-> 1.49s), Jetson registered as a self-hosted GitHub Actions runner, and `stage-2-arm64`
-> confirmed running natively on it (585s/9m45s non-cached build+push vs. the 23m43s–24m31s
-> QEMU baseline, ~2.4x faster — see BLUEPRINT.md's decision log for the full numbers and why
-> the original 3–5 min estimate undershot). Two real CI permissions bugs were hit and fixed
-> along the way (PR #1) — see `docs/runbooks/JetsonInstallSession14.md` Part 8.2 for the story. **Resume at
-> `docs/runbooks/JetsonInstallSession14.md` Part 9 (NVMe migration)** — SSD arrived and is
-> seated (`nvme0n1` blank, verified 2026-07-12); method re-decided 2026-07-12: **headless
-> fresh install via SDK Manager recovery flash** (Jetson ISO USB kept as the
-> monitor-attached fallback; the clone path retired unattempted — JetPack-6-era scripts vs
-> this board's r39.2 boot layout, evidence in the runbook's Part 9 decision notes). GUI
-> will be disabled on the new install (`multi-user.target`). Part 10 (closeout) remains
-> after that. State to know: username `Mike` (capital M; becomes lowercase `mike` at the
-> Part 9 fresh install), IP `10.42.0.217` (DHCP, may shift), hostname still
-> `localhost.localdomain` (becomes `jetson` at Part 9), CUDA/TensorRT intentionally not
-> installed.
+> **✅ COMPLETE (2026-07-14).** The final proof — step 13c, one manual HIL run on the NVMe
+> install — **passed first-attempt 2026-07-14**: multicast DDS crossed the shared link
+> (scan 9.96 Hz on the Jetson), Nav2 active, mission nav → photo → return in ~10 s, exit 0,
+> photo + `('mission1', 'PASS', 'hil_jetson', 'gazebo')` telemetry row on the Jetson.
+> History below.
+> SD era (Parts 1–8, done 2026-07-10): real hardware flashed, networked, ROS2 Jazzy
+> installed, native `colcon build` (4.76s), full pytest suite native, Jetson registered as
+> a self-hosted GitHub Actions runner, and the native arm64 build stage confirmed on it
+> (~2.4x faster than the QEMU baseline — see BLUEPRINT.md's decision log). Two real CI
+> permissions bugs were hit and fixed along the way (PR #1) — see
+> `docs/runbooks/JetsonInstallSession14.md` Part 8.2 for the story. **Part 9 executed
+> 2026-07-13:** headless NVMe **fresh install** via SDK Manager recovery flash (~12 min;
+> the clone path was retired unattempted — JetPack-6-era scripts vs this board's r39.2
+> boot layout, evidence in the runbook's Part 9 decision notes), re-provisioned end-to-end
+> from the runbook, NVMe-at-25W baselines recorded (colcon 5.31s ≈ SD tie; docker pull
+> 2.5× faster; cold arm64 CI build 568s ≈ SD 585s — Part 7 table), runner re-registered
+> and **proven by a full 8-job-green CI cycle (run 29301726080)**. Part 10 closeout items
+> done except marking this session ✅, which waits on 13c. State to know: username **`mike`**
+> (lowercase — the SD era's capital-M `Mike` is gone), hostname **`jetson`**
+> (`ssh mike@jetson.local` works via mDNS), IP `10.42.0.217` (DHCP lease, may shift —
+> re-check with `ip neigh show dev enp6s0`), rootfs on NVMe, GUI off (`multi-user.target`),
+> power pinned 25W, CUDA/TensorRT intentionally not installed. The microSD is the untouched
+> rollback — stored until Session 16's `stage-4-hil` is 3× green.
 >
 > **CI pipeline rewiring done in parallel tonight (2026-07-10), not part of this session's
 > original scope:** `stage-3-arm64` now fails fast behind `stage-2-gazebo` passing, and
@@ -3786,10 +3792,47 @@ This is the last cheap chance to find them at a desk.
 > (or a second Jetson module purchased). The Jetson from Session 14 can be transferred;
 > buy a second module if you want to keep the Dev Kit as the CI runner.
 >
+> **Purchase decision (researched 2026-07-13):** the robot is the **Waveshare UGV Rover PT
+> Jetson Orin ROS2 Kit, ACCE variant — SKU 29227, $539.99 direct**:
+> <https://www.waveshare.com/ugv-rover-pt-jetson-orin-ros2-kit.htm?sku=29227>
+> - **Must be the ROS2 Kit, not the "AI Kit"** — only the ROS2 Kit includes the **D500
+>   lidar + OAK-D-Lite depth camera** (no lidar = no `/scan` = no Nav2). The cheaper AI-Kit
+>   ACCE (SKU 27772) looks like a deal precisely because those sensors are missing.
+> - **ACCE = bring your own Jetson "module including its baseboard"** — SKU 29224 is the
+>   same kit + a Jetson Orin Nano **4GB** for $976.99; pointless given our 8GB Super.
+> - Amazon equivalent [B0DM4KBWT7](https://www.amazon.com/dp/B0DM4KBWT7) runs ~$140 more
+>   than Waveshare direct — Prime shipping/returns is all you'd be buying.
+> - **⚠️ Unverified before ordering: whether the official Orin Nano Dev Kit (with stock
+>   fan, 103×90.5×34.8 mm) fits the Jetson bay.** The Jetson mounts in an ENCLOSED bay
+>   under the top deck (only the port edge is exposed at the rear), and Waveshare's bundled
+>   option is a bare 4GB SoM + their low-profile base board — the bay may be too shallow
+>   for the dev-kit fan stack. **The official ACCE assembly video answers this — watch
+>   before ordering: <https://www.youtube.com/watch?v=R0-QG33DznY>** (linked from the
+>   [product wiki](https://www.waveshare.com/wiki/UGV_Rover_Jetson_Orin_ROS2) as the
+>   assembly tutorial; explicitly covers the ACCE Jetson/OAK/lidar install). Fallback if
+>   the dev kit doesn't fit: Waveshare's Orin Nano/NX Base Board (low-profile, has M.2) —
+>   module + NVMe transfer, install boots unchanged (QSPI firmware lives on the module).
+> - **Add 3× 18650 lithium cells to the order** (2200 mAh+, 4C discharge) — not included,
+>   robot won't run without them. Chassis has built-in active cooling + external wifi
+>   antennas (SSH-over-wifi per Prerequisites works inside the aluminum body).
+>
+> **Sim-vs-real fidelity deltas (recorded 2026-07-13, feeds the URDF/tuning steps below):**
+> the real rover is **6-wheel 4WD skid-steer** vs our 4-wheel diff-drive sim URDF —
+> kinematically equivalent at the `cmd_vel` level (nothing above the driver layer changes),
+> but expect (1) more rotation-scrub odometry error than sim showed, (2) the **camera on a
+> 2-axis pan-tilt** vs sim's body-fixed camera — decide consciously: simplest is commanding
+> the gimbal to a fixed forward/level pose so take_picture's camera-heading==robot-yaw
+> assumption holds, (3) the **lidar mounted low/front on the deck** (sim: top-mounted,
+> clean 360°) — the pan-tilt tower sits inside the real scan's rear sector, so add a scan
+> FOV mask before the costmap sees phantom obstacles, and the low mount sees bed legs, not
+> mattresses (fine — this session builds its own SLAM map).
+>
 > **Waveshare UGV-PT dimensions note (carry-over from Session 10):** Before running real
 > nav missions, measure the actual robot and update `urdf/ugv_pt.urdf.xacro` to match:
 > body dimensions, wheel_radius, wheel_separation. Reference:
-> [Waveshare UGV-PT spec sheet](https://www.waveshare.com/ugv-pt.htm).
+> [UGV Rover PT product page](https://www.waveshare.com/ugv-rover-pt-jetson-orin-ros2-kit.htm)
+> (the plan's old `ugv-pt.htm` link now redirects into marketing; the
+> [wiki](https://www.waveshare.com/wiki/UGV_Rover_Jetson_Orin_ROS2) has the spec detail).
 >
 > **Same code, same topics — but expect a param-tuning pass (2026-07-03):** "the brain code
 > doesn't change" is true for *code*, not *parameters*. `nav2_params.yaml` was tuned against
