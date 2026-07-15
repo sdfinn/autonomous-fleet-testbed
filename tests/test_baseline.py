@@ -95,7 +95,11 @@ def test_report_sigma_direction(db):
 
 def test_fail_rows_excluded_from_baseline(db):
     """Policy (Session 16): FAIL rows never enter the drift baseline window."""
-    _seed_baseline(db)
+    # Seed baseline with variance in both nav_success_rate AND mean_position_error
+    # so both metrics appear in reports (zero-variance metrics are skipped).
+    for rate, err in zip(_BASELINE_NAV_SUCCESS_RATES,
+                         [0.10, 0.12, 0.14, 0.11, 0.13, 0.10, 0.12, 0.14, 0.11, 0.13]):
+        _insert(db, nav_success_rate=rate, mean_position_error=err)
     # A wild FAIL row that would wreck the baseline mean if included:
     _insert(db, nav_success_rate=0.0, result="FAIL",
             mean_position_error=99.0)
@@ -105,3 +109,4 @@ def test_fail_rows_excluded_from_baseline(db):
     # FAIL row is excluded from baseline by the query filter (WHERE result='PASS'),
     # so nav_success_rate baseline remains unaffected by the extreme 0.0 value
     assert not by_metric["nav_success_rate"].flagged
+    assert not by_metric["mean_position_error"].flagged
