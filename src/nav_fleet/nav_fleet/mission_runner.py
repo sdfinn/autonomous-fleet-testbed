@@ -100,11 +100,12 @@ def _mean(values):
 
 
 def _log_mission(name, ok, runner):
+    nav = runner.nav if runner is not None else None
     log_run(
         scenario=name,
         steps=len(MISSIONS[name]),
-        final_x=runner.nav.last_final_x if runner.nav.last_final_x is not None else 0.0,
-        final_y=runner.nav.last_final_y if runner.nav.last_final_y is not None else 0.0,
+        final_x=nav.last_final_x if nav is not None and nav.last_final_x is not None else 0.0,
+        final_y=nav.last_final_y if nav is not None and nav.last_final_y is not None else 0.0,
         result='PASS' if ok else 'FAIL',
         step_log=[],
         robot_id=os.environ.get('ROBOT_ID', 'robot_001'),
@@ -112,8 +113,8 @@ def _log_mission(name, ok, runner):
         runner_type=os.environ.get('RUNNER_TYPE', 'local'),
         sim_engine=os.environ.get('SIM_ENGINE', 'gazebo'),
         nav_success_rate=1.0 if ok else 0.0,
-        mean_position_error=_mean(runner.nav_errors),
-        mean_time_to_goal=_mean(runner.nav_durations),
+        mean_position_error=_mean(runner.nav_errors) if runner is not None else None,
+        mean_time_to_goal=_mean(runner.nav_durations) if runner is not None else None,
         power_mode=os.environ.get('POWER_MODE'),
     )
 
@@ -124,19 +125,22 @@ def main():
     args = parser.parse_args()
 
     rclpy.init()
-    runner = MissionRunner()
+    runner = None
     ok = False
     try:
+        # Constructed INSIDE the try: a constructor crash (e.g. rclpy/DDS failure) must
+        # still produce the FAIL telemetry row that stage-4-hil's verdict depends on.
+        runner = MissionRunner()
         ok = runner.run_mission(args.mission)
     except Exception as exc:  # still log a FAIL row on crash — docstring contract
         traceback.print_exc()
-        runner.get_logger().error(f'mission {args.mission} crashed: {exc!r}')
+        print(f'mission {args.mission} crashed: {exc!r}')
     finally:
         rclpy.try_shutdown()
     _log_mission(args.mission, ok, runner)
 
     print(f"Mission {args.mission}: {'PASS' if ok else 'FAIL'}")
-    for p in runner.photo_paths:
+    for p in (runner.photo_paths if runner is not None else []):
         print(f'  photo: {p}')
     raise SystemExit(0 if ok else 1)
 

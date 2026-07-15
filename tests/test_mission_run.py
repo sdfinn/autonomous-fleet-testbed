@@ -66,3 +66,15 @@ def test_failed_leg_metrics_excluded(runner, monkeypatch):
     assert runner.run_mission('mission1') is False
     assert runner.nav_durations == []
     assert runner.nav_errors == []
+
+
+def test_log_mission_tolerates_none_runner(monkeypatch):
+    """Constructor crash path: _log_mission(runner=None) must still log a FAIL row."""
+    from nav_fleet import mission_runner as mr
+    recorded = {}
+    monkeypatch.setattr(mr, 'log_run', lambda **kw: recorded.update(kw))
+    mr._log_mission('mission1', False, None)
+    assert recorded['result'] == 'FAIL'
+    assert recorded['scenario'] == 'mission1'
+    assert recorded['final_x'] == 0.0 and recorded['final_y'] == 0.0
+    assert recorded['mean_time_to_goal'] is None
