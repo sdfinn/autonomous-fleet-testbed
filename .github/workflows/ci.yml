@@ -251,7 +251,10 @@ jobs:
     # accepted behavior the retired Isaac job had.
     runs-on: [self-hosted, x86, gpu, rtx5080]
     needs: stage-3-arm64
-    timeout-minutes: 15
+    # 20, not the design doc's 15: the retry-once path re-runs the full phase budget
+    # (60+120+300s ≈ 8 min per attempt), so a retried run can legitimately need ~16-17
+    # min — a generic GHA timeout there would mask the script's own diagnostics.
+    timeout-minutes: 20
     env:
       RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
       ROS_DOMAIN_ID: "0"
