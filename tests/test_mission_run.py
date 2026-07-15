@@ -45,3 +45,24 @@ def test_mission1_completes(runner):
     assert photo.exists()
     with PILImage.open(photo) as img:
         assert img.size[0] > 0 and img.size[1] > 0
+
+
+class _StubNav:
+    """Mimics NavRunner's metric attributes after a timed-out (failed) goal."""
+    last_duration_s = 90.0        # the timeout value, not robot performance
+    last_position_error = 3.2
+    last_final_x = 0.0
+    last_final_y = 0.0
+
+    def send_goal(self, x, y, timeout=90.0, yaw=None):
+        return False
+
+
+def test_failed_leg_metrics_excluded(runner, monkeypatch):
+    """A failed navigate leg must not feed nav_durations/nav_errors (FAIL-leg policy)."""
+    monkeypatch.setattr(runner, 'nav', _StubNav())
+    runner.nav_durations.clear()
+    runner.nav_errors.clear()
+    assert runner.run_mission('mission1') is False
+    assert runner.nav_durations == []
+    assert runner.nav_errors == []

@@ -80,10 +80,13 @@ class MissionRunner(Node):
             if step.action == 'navigate':
                 x, y = SEMANTIC_MAP[step.location]
                 ok = self.nav.send_goal(x, y, timeout=NAV_TIMEOUT_S, yaw=step.yaw)
-                if self.nav.last_duration_s is not None:
-                    self.nav_durations.append(self.nav.last_duration_s)
-                if self.nav.last_position_error is not None:
-                    self.nav_errors.append(self.nav.last_position_error)
+                # FAIL-leg policy (Session 16): a failed/timed-out leg's duration measures
+                # the timeout, not the robot — keep it out of the row's aggregate metrics.
+                if ok:
+                    if self.nav.last_duration_s is not None:
+                        self.nav_durations.append(self.nav.last_duration_s)
+                    if self.nav.last_position_error is not None:
+                        self.nav_errors.append(self.nav.last_position_error)
             else:  # take_picture — validate_mission guarantees the action set
                 ok = self.take_picture(f'{name}_step{i}')
             if not ok:
