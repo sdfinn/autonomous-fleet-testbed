@@ -28,11 +28,19 @@ amcl:
     odom_frame_id: "odom"
     global_frame_id: "map"
     scan_topic: /robot_001/scan
-    # Motion model noise — conservative for a wheeled UGV
-    alpha1: 0.2
-    alpha2: 0.2
-    alpha3: 0.2
-    alpha4: 0.2
+    # Motion model noise — sim-grade odometry (Session 16 Task 9c diagnosis).
+    # Gazebo diff-drive odom is computed from wheel joint positions with minimal
+    # slip in this world, far better than the 0.2 defaults (which model sloppy
+    # physical wheel odometry). The excess injected rotation noise spread the
+    # particle cloud during Mission 1's ~180° return-leg spin at the symmetric
+    # corridor mouth, letting the hallway's east-west symmetry spawn a false
+    # hypothesis (2.7–2.8 m flip) → AMCL delocalization → RPP "0 poses" abort.
+    # Reduced to 0.05 to match this world's odometry quality. Do not raise
+    # without re-verifying Mission 1 leg 3 (5× green stage-2).
+    alpha1: 0.05
+    alpha2: 0.05
+    alpha3: 0.05
+    alpha4: 0.05
     alpha5: 0.2
     laser_model_type: "likelihood_field"
     laser_likelihood_max_dist: 2.0
