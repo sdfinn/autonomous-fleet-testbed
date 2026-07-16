@@ -1029,6 +1029,8 @@ Decisions baked into the steps (full rationale: BLUEPRINT.md decision log, 2026-
       `Release1Todo.md` Session 14's "state to know" line. Leave dated files in
       `docs/superpowers/plans/` and `docs/superpowers/specs/` alone — historical records.
       Store the microSD untouched until `stage-4-hil` is 3× green; wipe or repurpose after.
+      **Met 2026-07-15:** run 29457812843 green 3× (all 8 jobs incl the real-Jetson HIL
+      mission each time) — microSD released.
 - [x] **15. If the flash or first boot fails:** microSD back in, boot — you're exactly
       where you started. Retry from step 3, or switch to the monitor-attached fallback
       below.

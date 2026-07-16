@@ -3063,7 +3063,9 @@ ros2 topic echo /robot_001/amcl_pose
 > (`ssh mike@jetson.local` works via mDNS), IP `10.42.0.217` (DHCP lease, may shift —
 > re-check with `ip neigh show dev enp6s0`), rootfs on NVMe, GUI off (`multi-user.target`),
 > power pinned 25W, CUDA/TensorRT intentionally not installed. The microSD is the untouched
-> rollback — stored until Session 16's `stage-4-hil` is 3× green.
+> rollback — stored until Session 16's `stage-4-hil` is 3× green. **Condition met
+> 2026-07-15** (run 29457812843 green 3×, all 8 jobs incl HIL) — microSD released for
+> wipe/repurpose.
 >
 > **CI pipeline rewiring done in parallel tonight (2026-07-10), not part of this session's
 > original scope:** `stage-3-arm64` now fails fast behind `stage-2-gazebo` passing, and
@@ -3553,36 +3555,68 @@ Nav2's own mechanisms — no custom BT).
 > `.superpowers/sdd/progress.md` ("SESSION PAUSED 2026-07-15"). Next session starts
 > there: confirm the clear-costmaps-per-leg mitigation, pick fix altitude, add the
 > stage-2 log artifact, re-run PR #2, then the 3×-green gate.
+>
+> **✅ MERGED 2026-07-15 evening — PR #2 → main (`af9c769`), Tasks 9–11 closed.** The
+> stage-2 red became a five-layer debugging arc, executed live with Mike at the GUI
+> (full record: `.superpowers/sdd/progress.md`, briefs/reports `task-9b`–`task-9e`,
+> `final-review-session16.md`):
+> 1. **Costmap accumulation** (pre-diagnosed) → mission_runner clears both costmaps
+>    before every navigate leg.
+> 2. **AMCL delocalization** on the return leg (multi-modal flips in the symmetric
+>    hallway) → traced past alphas to the real source:
+> 3. **Skid-steer odometry lies ~30% about in-place rotation** (measured:
+>    `.superpowers/sdd/spin_experiment.py` — body 146.5° vs odom ~192°) → **EKF fusion**
+>    (`config/ekf.yaml`: IMU yaw-rate + wheel-odom translation; the URDF's IMU had never
+>    actually published — world SDF lacked `gz-sim-imu-system`), asymmetric AMCL alphas,
+>    slower rotate-to-heading. Fused yaw now tracks body <1°; misses 0.38–0.70 m → 0.08–0.20 m.
+> 4. **False-PASS hole Mike caught eyes-on** (mission PASSed while the robot was
+>    physically stuck): stage-2 now asserts **Gazebo ground-truth arrival** (0.25 m);
+>    mission_runner prints the ground-truth miss every sim run. "Return to start" ends
+>    at the start POSE (explicit yaw).
+> 5. **Orphaned bridge processes poison DDS domain 0** (root cause of the CI
+>    goal-rejection red — 8,716 "jump back in time" lines in the new stage-2 log
+>    artifact): stage-2 sweeps the full process pattern before launch + after job;
+>    CLAUDE.md gotcha added.
+> **Task 10 gate: run 29457812843 green 3× (all 8 jobs incl real-Jetson HIL each time)**;
+> final whole-branch review: 0 Critical / 4 Important — all fixed (`92359f5`).
+> **Task 11 (corner-clip) closed by this arc:** root cause was the odometry rotation lie
+> driving the controller east of a clean plan — not inflation-vs-arch-width; verified
+> eyes-on with Mike (step-4 alignment pass) + ground-truth meter. Inflation tuning not
+> needed. **Remaining in this session's scope: Tasks 12–13 (phase 2, gate now open —
+> note the hard `power_mode` precondition on 13 above) and Plan B (Mission 2).**
+> Future capability noted (Mike): uncertainty-aware speed — "slow down when unsure,
+> speed up when the risk is low" (rotate-to-heading slowdown is its first crumb; pairs
+> with Session 19+ recovery work).
 
 ### Piece 1 — Implement `stage-4-hil` (replaces `stage-4-isaac`)
 
-- [ ] New CI job `stage-4-hil` per the design doc: x86 runner launches
+- [x] New CI job `stage-4-hil` per the design doc: x86 runner launches
       `sim_only_launch.py`, drives the Jetson over SSH (explicit ROS+overlay sourcing +
       `RMW_IMPLEMENTATION` export in every SSH command), runs
       `RUNNER_TYPE=hil_jetson python3 -m nav_fleet.mission_runner mission1`, scps the photo
       back as a workflow artifact, prints the Jetson's telemetry row to the job log.
-- [ ] Timeouts and teardown exactly per design doc §3 — job `timeout-minutes: 15`; phase
+- [x] Timeouts and teardown exactly per design doc §3 — job `timeout-minutes: 15`; phase
       budgets 60/120/300 s; `if: always()` teardown with unconditional `pkill -9` on BOTH
       sides (SIGINT alone left orphans in 2 of 3 Session 15 manual Tier-1 teardowns).
-- [ ] **Retire `stage-4-isaac` in the SAME change** (slot swap — keep `needs: stage-3-arm64`
+- [x] **Retire `stage-4-isaac` in the SAME change** (slot swap — keep `needs: stage-3-arm64`
       and `stage-5-reports-hw`'s shape; Isaac scripts stay in git history, not deleted from
       disk preemptively).
-- [ ] Jetson-side prerequisites: resolve the DHCP lease at job start
+- [x] Jetson-side prerequisites: resolve the DHCP lease at job start
       (`ip neigh show dev enp6s0`); deal with the nested `actions-runner/` checkout inside
       the repo (relocate it, or standardize `colcon build --base-paths src` — it's a latent
       colcon trap either way).
-- [ ] **Reproducibility:** ≥3 consecutive green `stage-4-hil` runs. Session 15's HIL record
+- [x] **Reproducibility:** ≥3 consecutive green `stage-4-hil` runs. Session 15's HIL record
       is a single successful run — this is the open risk the CI stage exists to close.
 - [ ] Phase 2 (this session or explicitly re-deferred): the job pulls the `stage-3-arm64`
       GHCR arm64 image onto the Jetson and runs the mission executor *inside that
       container* — finally making the arm64→Stage-4 edge consume something real.
-- [ ] **Registry-backed Docker build cache** for `stage-3-arm64`: add
+- [x] **Registry-backed Docker build cache** for `stage-3-arm64`: add
       `cache-from`/`cache-to: type=registry,ref=ghcr.io/sdfinn/autonomous-fleet-testbed:buildcache,mode=max`
       to the build-push step so layer cache survives BuildKit GC, builder recreation, and
       Jetson reboots. (Root cause of the 2026-07-12 18-minute build: the apt layer's cache
       was evicted, so the build ran fully cold — vs Session 14's 9m45s baseline which kept
       apt cached and only rebuilt pip+colcon.)
-- [ ] **Per-job power-mode policy (decided 2026-07-12): build fast, test at deployment
+- [x] **Per-job power-mode policy (decided 2026-07-12): build fast, test at deployment
       power.** Modes on the Orin Nano Super: 0=15W, 1=25W, 2=MAXN_SUPER
       (`sudo nvpmodel -p --verbose` to list, `-q` to query, `-m <id>` to set). `nvpmodel`
       is **global, persistent state** (`/var/lib/nvpmodel/status` — board pinned to 25W on
@@ -3598,10 +3632,10 @@ Nav2's own mechanisms — no custom BT).
       budgets (60/120/300 s) at whatever mode HIL runs at before trusting them — 15W
       changes Nav2 timing. `sudo jetson_clocks` as a per-job step additionally locks
       clocks to the mode's max (not persistent — suits CI, not set-and-forget).
-- [ ] **Raise BuildKit's GC budget** on the Jetson builder (`buildkitd.toml` `keepBytes` —
+- [x] **Raise BuildKit's GC budget** on the Jetson builder (`buildkitd.toml` `keepBytes` —
       the SD/NVMe has ~90 GB free; the default budget evicts the ~1–2 GB apt layer first).
       Belt-and-braces alongside the registry cache.
-- [ ] **Re-benchmark the arm64 build after the NVMe migration** (runbook Part 9) at the
+- [x] **Re-benchmark the arm64 build after the NVMe migration** (runbook Part 9) at the
       pinned power mode — one fully-cold and one cached timing, recorded in the Part 7
       baseline table, so future "is CI slow?" questions have honest reference numbers.
 
