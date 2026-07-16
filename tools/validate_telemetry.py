@@ -21,7 +21,10 @@ class RunsModel(DataFrameModel):
     final_x: Series[float] = pa.Field(in_range=(-150.0, 150.0))
     final_y: Series[float] = pa.Field(in_range=(-150.0, 150.0))
     result: Series[str] = pa.Field(isin=["PASS", "FAIL", "STOPPED", "TIMEOUT"])
-    runner_type: Series[str] = pa.Field(isin=["qemu", "jetson", "local"], nullable=True)
+    # hil_jetson: Session 16 Task 13 ships the Jetson's HIL row into this DB — the
+    # workstation schema first met that runner_type on the first shipped row (CI red).
+    runner_type: Series[str] = pa.Field(
+        isin=["qemu", "jetson", "local", "hil_jetson"], nullable=True)
     robot_type: Series[str] = pa.Field(nullable=True)
     robot_id: Series[str] = pa.Field(nullable=True)
     sim_engine: Series[str] = pa.Field(isin=["gazebo", "isaac", "real"], nullable=True)
