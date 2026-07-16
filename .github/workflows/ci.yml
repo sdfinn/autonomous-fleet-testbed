@@ -9,7 +9,7 @@ on:
 jobs:
   changes:
     # Detects whether this push touches anything that actually affects the arm64 Docker image
-    # (see Dockerfile — it only ever COPYs Dockerfile itself, requirements-ci.txt, and src/).
+    # (see Dockerfile — it only ever COPYs Dockerfile itself, requirements-ci.txt, src/, and tools/).
     # A docs-only push (BLUEPRINT.md, Release1Todo.md, CLAUDE.md, etc.) has no reason to pay
     # stage-3-arm64's build cost at all (it's skipped outright via the `if:` below) — or the
     # ~15 min stage-4-hil now inherits by needing stage-3-arm64 (2026-07-10 renumber; HIL
@@ -32,6 +32,7 @@ jobs:
               - 'Dockerfile'
               - 'requirements-ci.txt'
               - 'src/**'
+              - 'tools/**'
               - '.github/workflows/ci.yml'
 
   stage-0-requirements:
@@ -287,6 +288,11 @@ jobs:
     # (60+120+300s ≈ 8 min per attempt), so a retried run can legitimately need ~16-17
     # min — a generic GHA timeout there would mask the script's own diagnostics.
     timeout-minutes: 20
+    # phase 2: the mission runs inside the stage-3 arm64 GHCR image (private) — the Jetson
+    # needs to pull it, so GITHUB_TOKEN needs read:packages.
+    permissions:
+      contents: read
+      packages: read
     env:
       RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
       ROS_DOMAIN_ID: "0"
@@ -295,8 +301,20 @@ jobs:
                                   # power budget (Mike, 2026-07-14); builds run at 25W
                                   # (explicit override below); restored to 25W at the end.
       STATE_DIR: /tmp/hil_stage
+      # phase 2 (Task 12): run the mission executor inside the arm64 image stage-3 built,
+      # consuming the arm64→HIL pipeline edge for real (see scripts/hil_stage.sh mission()).
+      HIL_CONTAINER: "1"
+      HIL_IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
+      # Ship the HIL telemetry row into the shared workstation drift DB (Task 13) so
+      # baseline_monitor tracks HIL trends and stage-5-reports-hw is genuinely hardware-fed.
+      # Same persistent path stage-2/5 use — history accumulates across runs outside the job
+      # workspace. hil_stage.sh verify() only ships when FLEET_DB is set.
+      FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
     steps:
       - uses: actions/checkout@v4
+
+      - name: Ensure persistent telemetry dir exists
+        run: mkdir -p /home/mike/fleet-ci-data
 
       - name: Discover Jetson (DHCP lease — never hard-coded)
         run: |
@@ -309,6 +327,12 @@ jobs:
 
       - name: Sync + build the commit under test on the Jetson
         run: scripts/hil_stage.sh sync ${{ github.sha }}
+
+      - name: Pull the stage-3 arm64 image onto the Jetson (phase 2 — mission runs in-container)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            ssh -o BatchMode=yes ${JETSON_USER}@${JETSON_IP} \
+              "docker login ghcr.io -u ${{ github.actor }} --password-stdin && docker pull ${HIL_IMAGE}"
 
       - name: Build x86 workspace
         run: |

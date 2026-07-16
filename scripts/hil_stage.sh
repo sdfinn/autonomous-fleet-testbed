@@ -128,9 +128,26 @@ except sqlite3.OperationalError:
     print(0)
 PY")
   echo "$before_id" > "$STATE_DIR/before_id"
+  # HIL_CONTAINER=1 (stage-4-hil phase 2): run the mission executor INSIDE the stage-3
+  # arm64 GHCR image on the Jetson instead of the Jetson's bare-metal workspace — this is
+  # what finally makes the arm64→HIL pipeline edge consume the image it built. The reports
+  # dir is bind-mounted so the photo + telemetry row still land on the host exactly as the
+  # bare-metal path leaves them (verify()/before_id read the host DB either way). DDS is
+  # host-networked (--network host --ipc host) so the container sees Gazebo over enp6s0.
+  local mission_cmd
+  if [ "${HIL_CONTAINER:-0}" = "1" ]; then
+    echo "=== [mission] in-container execution: ${HIL_IMAGE:?HIL_CONTAINER=1 requires HIL_IMAGE} ==="
+    mission_cmd="docker run --rm --name hil_mission --network host --ipc host \
+      -v \$HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
+      -e RUNNER_TYPE=hil_jetson -e POWER_MODE=${POWER_MODE_LABEL} \
+      -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp -e ROS_DOMAIN_ID=0 \
+      ${HIL_IMAGE} \
+      bash -c 'source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && python3 -m nav_fleet.mission_runner mission1'"
+  else
+    mission_cmd="$JENV && cd ${JETSON_REPO} && RUNNER_TYPE=hil_jetson POWER_MODE=${POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner mission1"
+  fi
   local rc=0
-  timeout 300 ssh -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}" \
-    "$JENV && cd ${JETSON_REPO} && RUNNER_TYPE=hil_jetson POWER_MODE=${POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner mission1" \
+  timeout 300 ssh -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}" "$mission_cmd" \
     2>&1 | tee "$STATE_DIR/mission.out" || rc=$?
   return "$rc"
 }
@@ -158,6 +175,48 @@ PY")
   [ "$row" != "MISSING" ] || { echo 'FATAL: no new hil_jetson telemetry row' >&2; return 1; }
   echo "$row" | grep -q "'PASS'" || { echo 'FATAL: telemetry row is not PASS' >&2; return 1; }
   echo '=== [verify] OK ==='
+
+  # Ship the row (design §2): SELECT the just-logged hil_jetson row over SSH → INSERT it
+  # into the workstation drift DB. We ship the ROW, never the DB file — the Jetson and the
+  # workstation keep independent histories and schema authority stays on the workstation.
+  # Only runs when FLEET_DB is set (CI + the local scratch-DB test); a bare local run skips
+  # shipping. Placed after the OK gate above, so a PASS hil_jetson row is known to exist —
+  # the remote SELECT can never hit a None row (keeps set -e safe).
+  if [ -n "${FLEET_DB:-}" ]; then
+    echo '=== [verify] shipping HIL row to workstation drift DB ==='
+    # before_id was read from the state file above; quoting mirrors the SELECT just above
+    # (escaped double-quotes wrap the SQL, plain single-quotes inside — proven pattern).
+    jssh "python3 - <<PY
+import json, os, sqlite3
+c = sqlite3.connect(os.path.expanduser('~/autonomous-fleet-testbed/reports/fleet_runs.db'))
+c.row_factory = sqlite3.Row
+r = c.execute(\"SELECT * FROM runs WHERE id > ${before_id} AND runner_type='hil_jetson' \"
+              \"ORDER BY id DESC LIMIT 1\").fetchone()
+print(json.dumps({k: r[k] for k in r.keys() if k != 'id'}))
+PY" > "$STATE_DIR/hil_row.json"
+    # Local INSERT into FLEET_DB. Subshell cd's to the repo so `tools.telemetry_logger`
+    # imports; init_db creates/migrates the schema; we keep only columns present locally so
+    # power_mode (and every other shipped field) survives intact into the workstation DB.
+    ( cd "$REPO_DIR"
+      STATE_DIR="$STATE_DIR" FLEET_DB="$FLEET_DB" python3 - <<'PY'
+import json, os, sqlite3, sys
+row = json.load(open(os.path.join(os.environ['STATE_DIR'], 'hil_row.json')))
+sys.path.insert(0, '.')
+from tools.telemetry_logger import init_db
+db = os.environ['FLEET_DB']
+init_db(db)
+conn = sqlite3.connect(db)
+cols = {r[1] for r in conn.execute('PRAGMA table_info(runs)')}
+row = {k: v for k, v in row.items() if k in cols}
+conn.execute("INSERT INTO runs ({}) VALUES ({})".format(
+    ','.join(row), ','.join('?' * len(row))), list(row.values()))
+conn.commit()
+print('shipped HIL row into %s — runner_type=%r power_mode=%r'
+      % (db, row.get('runner_type'), row.get('power_mode')))
+PY
+    )
+    echo '=== [verify] shipped ==='
+  fi
 }
 
 run_once() {
@@ -195,6 +254,11 @@ teardown() {
   echo '=== [teardown] both sides ==='
   if [ -n "${JETSON_IP:-}" ]; then
     jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner' || true" || true
+    # HIL_CONTAINER=1's mission() process runs inside the container's own PID namespace —
+    # invisible to the host-side pkill above. A fixed --name (hil_mission) lets teardown
+    # reach it directly. Best-effort: no-op when docker is absent or nothing is running,
+    # and must never fail teardown itself.
+    jssh "command -v docker >/dev/null 2>&1 && docker rm -f hil_mission >/dev/null 2>&1 || true" || true
   fi
   local launch_pid
   launch_pid=$(pgrep -f '[s]im_only_launch' | head -1 || true)
