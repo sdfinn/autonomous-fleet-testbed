@@ -305,8 +305,16 @@ jobs:
       # consuming the arm64→HIL pipeline edge for real (see scripts/hil_stage.sh mission()).
       HIL_CONTAINER: "1"
       HIL_IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
+      # Ship the HIL telemetry row into the shared workstation drift DB (Task 13) so
+      # baseline_monitor tracks HIL trends and stage-5-reports-hw is genuinely hardware-fed.
+      # Same persistent path stage-2/5 use — history accumulates across runs outside the job
+      # workspace. hil_stage.sh verify() only ships when FLEET_DB is set.
+      FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
     steps:
       - uses: actions/checkout@v4
+
+      - name: Ensure persistent telemetry dir exists
+        run: mkdir -p /home/mike/fleet-ci-data
 
       - name: Discover Jetson (DHCP lease — never hard-coded)
         run: |

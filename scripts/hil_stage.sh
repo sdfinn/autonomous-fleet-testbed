@@ -175,6 +175,48 @@ PY")
   [ "$row" != "MISSING" ] || { echo 'FATAL: no new hil_jetson telemetry row' >&2; return 1; }
   echo "$row" | grep -q "'PASS'" || { echo 'FATAL: telemetry row is not PASS' >&2; return 1; }
   echo '=== [verify] OK ==='
+
+  # Ship the row (design §2): SELECT the just-logged hil_jetson row over SSH → INSERT it
+  # into the workstation drift DB. We ship the ROW, never the DB file — the Jetson and the
+  # workstation keep independent histories and schema authority stays on the workstation.
+  # Only runs when FLEET_DB is set (CI + the local scratch-DB test); a bare local run skips
+  # shipping. Placed after the OK gate above, so a PASS hil_jetson row is known to exist —
+  # the remote SELECT can never hit a None row (keeps set -e safe).
+  if [ -n "${FLEET_DB:-}" ]; then
+    echo '=== [verify] shipping HIL row to workstation drift DB ==='
+    # before_id was read from the state file above; quoting mirrors the SELECT just above
+    # (escaped double-quotes wrap the SQL, plain single-quotes inside — proven pattern).
+    jssh "python3 - <<PY
+import json, os, sqlite3
+c = sqlite3.connect(os.path.expanduser('~/autonomous-fleet-testbed/reports/fleet_runs.db'))
+c.row_factory = sqlite3.Row
+r = c.execute(\"SELECT * FROM runs WHERE id > ${before_id} AND runner_type='hil_jetson' \"
+              \"ORDER BY id DESC LIMIT 1\").fetchone()
+print(json.dumps({k: r[k] for k in r.keys() if k != 'id'}))
+PY" > "$STATE_DIR/hil_row.json"
+    # Local INSERT into FLEET_DB. Subshell cd's to the repo so `tools.telemetry_logger`
+    # imports; init_db creates/migrates the schema; we keep only columns present locally so
+    # power_mode (and every other shipped field) survives intact into the workstation DB.
+    ( cd "$REPO_DIR"
+      STATE_DIR="$STATE_DIR" FLEET_DB="$FLEET_DB" python3 - <<'PY'
+import json, os, sqlite3, sys
+row = json.load(open(os.path.join(os.environ['STATE_DIR'], 'hil_row.json')))
+sys.path.insert(0, '.')
+from tools.telemetry_logger import init_db
+db = os.environ['FLEET_DB']
+init_db(db)
+conn = sqlite3.connect(db)
+cols = {r[1] for r in conn.execute('PRAGMA table_info(runs)')}
+row = {k: v for k, v in row.items() if k in cols}
+conn.execute("INSERT INTO runs ({}) VALUES ({})".format(
+    ','.join(row), ','.join('?' * len(row))), list(row.values()))
+conn.commit()
+print('shipped HIL row into %s — runner_type=%r power_mode=%r'
+      % (db, row.get('runner_type'), row.get('power_mode')))
+PY
+    )
+    echo '=== [verify] shipped ==='
+  fi
 }
 
 run_once() {
