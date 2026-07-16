@@ -3533,6 +3533,13 @@ Nav2's own mechanisms — no custom BT).
 > | 11 | Piece 3: return-leg corner-clip investigation |
 > | 12–13 | Piece 1 phase 2 (gated on 3×-green): containerized mission + HIL row into drift DB |
 > | Plan B | Piece 2: Mission 2 (written after the Task 10 gate) |
+> **Hard precondition on Task 13 (phase 2b — ship HIL row to drift DB):** `baseline_monitor`
+> MUST partition/filter by `power_mode` before HIL rows enter the shared baseline. Task 1's
+> `power_mode` telemetry field exists but nothing enforces never-compare-15W-vs-25W today —
+> Task 13 inserting `hil_jetson` rows into the shared workstation `FLEET_DB` unpartitioned
+> would land 15W HIL timings in the same baseline as 25W sim timings, exactly the silent
+> cross-mode comparison Task 1 was meant to prevent (final review 2026-07-15, I4). Do not
+> start Task 13 until this partition/filter is in place.
 > Power split decided 2026-07-14: Jetson builds at 25W, HIL mission at **15W** (deployment
 > budget), always-restore 25W. The boxes below are ticked at plan closeout, not per-task.
 >

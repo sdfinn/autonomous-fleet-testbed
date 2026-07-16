@@ -171,7 +171,17 @@ run() {
   # Retry-once policy (design doc §3): only for a discovery-shaped failure.
   if grep -qE 'Nav2 action server unavailable|Goal rejected after all retries|no camera frame' \
        "$STATE_DIR/mission.out" 2>/dev/null; then
+    local reason_line
+    reason_line=$(grep -oE 'Nav2 action server unavailable|Goal rejected after all retries|no camera frame' \
+        "$STATE_DIR/mission.out" 2>/dev/null | head -1 || true)
+    echo "HIL RETRY: first attempt failed (${reason_line}) — retrying once"
     echo '=== discovery-shaped failure: full both-sides teardown, 5s settle, ONE retry ==='
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+      {
+        echo '### HIL retry occurred'
+        echo "First attempt failed (${reason_line}) — retried once after full teardown + 5s DDS settle."
+      } >> "$GITHUB_STEP_SUMMARY"
+    fi
     teardown
     sleep 5
     run_once

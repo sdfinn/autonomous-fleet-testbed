@@ -31,13 +31,17 @@ amcl:
     # Motion model noise — ASYMMETRIC, from measurement (Session 16, 2026-07-15).
     # This 4-wheel skid-steer chassis over-reports rotation ~30% during in-place
     # spins (controlled experiment: body turned 146.5° while wheel odom claimed
-    # ~192° — lateral friction resists body rotation, wheels slip). Translation
-    # odometry is sim-grade good. So: rotation-related noise (alpha1: rot-from-rot,
-    # alpha4: trans-from-rot) stays HIGH to let scan matching correct the yaw lie;
-    # translation-related noise (alpha2, alpha3) is LOW to keep the particle cloud
-    # tight in the symmetric hallway (uniform 0.2 everywhere caused multi-modal
-    # delocalization — Task 9c; uniform 0.05 made AMCL trust the rotation lie).
-    # Real fix for the source: IMU+wheel-odom EKF fusion (IMU already in the URDF).
+    # ~192° — lateral friction resists body rotation, wheels slip). Originally
+    # authored (Task 9d) as a workaround for that live odometry lie. Since Task 9e,
+    # config/ekf.yaml fuses wheel + IMU and feeds AMCL an honest odom→base_footprint
+    # transform — the systematic over-report is corrected upstream of AMCL, not by
+    # this asymmetry. The alphas now run ON TOP OF the EKF, not instead of it: kept
+    # HIGH on rotation (alpha1: rot-from-rot, alpha4: trans-from-rot) as a deliberate
+    # conservative margin for the residual, per-run rotation error real skid still
+    # leaves after fusion (surface-dependent, not fully systematic); translation
+    # noise (alpha2, alpha3) stays LOW to keep the particle cloud tight in the
+    # symmetric hallway (uniform 0.2 everywhere caused multi-modal delocalization —
+    # Task 9c; uniform 0.05 made AMCL trust the rotation lie, pre-EKF).
     alpha1: 0.2
     alpha2: 0.05
     alpha3: 0.05
