@@ -76,19 +76,35 @@ def check_run(
         conn.close()
         return []
 
+    # Compare like with like (Session 16, review finding I4): the baseline window must
+    # only contain runs from the SAME execution context as the run under check —
+    # otherwise a 15W hil_jetson row would drift-compare against 25W sim history (or
+    # vice versa) and every metric would flag on the platform delta, not on real drift.
+    # Slice on (runner_type, power_mode). power_mode is NULL on all pre-Session-16 sim
+    # rows, so a NULL-power run must baseline against NULL-power history: use `IS ?`
+    # (NULL-safe equality in SQLite) rather than `= ?` (which never matches NULL).
+    slice_cols = [c for c in ("runner_type", "power_mode") if c in available]
+
     col_list = ", ".join(metrics)
+    select_list = ", ".join(metrics + slice_cols)
     current_row = conn.execute(
-        f"SELECT {col_list} FROM runs WHERE id = ?", (run_id,)
+        f"SELECT {select_list} FROM runs WHERE id = ?", (run_id,)
     ).fetchone()
     if current_row is None:
         conn.close()
         raise ValueError(f"Run {run_id} not found in {db_path}")
 
+    where = ["result = 'PASS'", "id != ?"]
+    params = [run_id]
+    for col in slice_cols:
+        where.append(f"{col} IS ?")
+        params.append(current_row[col])
+    params.append(n)
     baseline_rows = conn.execute(
         f"SELECT {col_list} FROM runs "
-        f"WHERE result = 'PASS' AND id != ? "
+        f"WHERE {' AND '.join(where)} "
         f"ORDER BY id DESC LIMIT ?",
-        (run_id, n),
+        params,
     ).fetchall()
     conn.close()
 
