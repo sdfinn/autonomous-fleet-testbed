@@ -28,6 +28,8 @@ Commit to CI only when the x86 pipeline is clean. See BLUEPRINT.md "Tiered devel
 - ROS2 Jazzy + Gazebo Harmonic + CycloneDDS
 - Python virtualenv: ~/fleet-env (activate before running Python tools)
 - Colcon workspace: ~/autonomous-fleet-testbed/ (build from here)
+- `ros-jazzy-robot-localization` (ekf_node) required on BOTH machines since Session 16 —
+  workstation + Jetson (`sudo apt install ros-jazzy-robot-localization` on a rebuilt Jetson)
 
 ## Key Commands
 ```bash
