@@ -128,9 +128,26 @@ except sqlite3.OperationalError:
     print(0)
 PY")
   echo "$before_id" > "$STATE_DIR/before_id"
+  # HIL_CONTAINER=1 (stage-4-hil phase 2): run the mission executor INSIDE the stage-3
+  # arm64 GHCR image on the Jetson instead of the Jetson's bare-metal workspace — this is
+  # what finally makes the arm64→HIL pipeline edge consume the image it built. The reports
+  # dir is bind-mounted so the photo + telemetry row still land on the host exactly as the
+  # bare-metal path leaves them (verify()/before_id read the host DB either way). DDS is
+  # host-networked (--network host --ipc host) so the container sees Gazebo over enp6s0.
+  local mission_cmd
+  if [ "${HIL_CONTAINER:-0}" = "1" ]; then
+    echo "=== [mission] in-container execution: ${HIL_IMAGE:?HIL_CONTAINER=1 requires HIL_IMAGE} ==="
+    mission_cmd="docker run --rm --network host --ipc host \
+      -v \$HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
+      -e RUNNER_TYPE=hil_jetson -e POWER_MODE=${POWER_MODE_LABEL} \
+      -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp -e ROS_DOMAIN_ID=0 \
+      ${HIL_IMAGE} \
+      bash -c 'source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && python3 -m nav_fleet.mission_runner mission1'"
+  else
+    mission_cmd="$JENV && cd ${JETSON_REPO} && RUNNER_TYPE=hil_jetson POWER_MODE=${POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner mission1"
+  fi
   local rc=0
-  timeout 300 ssh -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}" \
-    "$JENV && cd ${JETSON_REPO} && RUNNER_TYPE=hil_jetson POWER_MODE=${POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner mission1" \
+  timeout 300 ssh -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}" "$mission_cmd" \
     2>&1 | tee "$STATE_DIR/mission.out" || rc=$?
   return "$rc"
 }

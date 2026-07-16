@@ -287,6 +287,11 @@ jobs:
     # (60+120+300s ≈ 8 min per attempt), so a retried run can legitimately need ~16-17
     # min — a generic GHA timeout there would mask the script's own diagnostics.
     timeout-minutes: 20
+    # phase 2: the mission runs inside the stage-3 arm64 GHCR image (private) — the Jetson
+    # needs to pull it, so GITHUB_TOKEN needs read:packages.
+    permissions:
+      contents: read
+      packages: read
     env:
       RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
       ROS_DOMAIN_ID: "0"
@@ -295,6 +300,10 @@ jobs:
                                   # power budget (Mike, 2026-07-14); builds run at 25W
                                   # (explicit override below); restored to 25W at the end.
       STATE_DIR: /tmp/hil_stage
+      # phase 2 (Task 12): run the mission executor inside the arm64 image stage-3 built,
+      # consuming the arm64→HIL pipeline edge for real (see scripts/hil_stage.sh mission()).
+      HIL_CONTAINER: "1"
+      HIL_IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -309,6 +318,12 @@ jobs:
 
       - name: Sync + build the commit under test on the Jetson
         run: scripts/hil_stage.sh sync ${{ github.sha }}
+
+      - name: Pull the stage-3 arm64 image onto the Jetson (phase 2 — mission runs in-container)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            ssh -o BatchMode=yes ${JETSON_USER}@${JETSON_IP} \
+              "docker login ghcr.io -u ${{ github.actor }} --password-stdin && docker pull ${HIL_IMAGE}"
 
       - name: Build x86 workspace
         run: |
