@@ -137,7 +137,7 @@ PY")
   local mission_cmd
   if [ "${HIL_CONTAINER:-0}" = "1" ]; then
     echo "=== [mission] in-container execution: ${HIL_IMAGE:?HIL_CONTAINER=1 requires HIL_IMAGE} ==="
-    mission_cmd="docker run --rm --network host --ipc host \
+    mission_cmd="docker run --rm --name hil_mission --network host --ipc host \
       -v \$HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
       -e RUNNER_TYPE=hil_jetson -e POWER_MODE=${POWER_MODE_LABEL} \
       -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp -e ROS_DOMAIN_ID=0 \
@@ -212,6 +212,11 @@ teardown() {
   echo '=== [teardown] both sides ==='
   if [ -n "${JETSON_IP:-}" ]; then
     jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner' || true" || true
+    # HIL_CONTAINER=1's mission() process runs inside the container's own PID namespace —
+    # invisible to the host-side pkill above. A fixed --name (hil_mission) lets teardown
+    # reach it directly. Best-effort: no-op when docker is absent or nothing is running,
+    # and must never fail teardown itself.
+    jssh "command -v docker >/dev/null 2>&1 && docker rm -f hil_mission >/dev/null 2>&1 || true" || true
   fi
   local launch_pid
   launch_pid=$(pgrep -f '[s]im_only_launch' | head -1 || true)
