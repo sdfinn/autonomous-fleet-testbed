@@ -7,6 +7,14 @@ from tools.telemetry_logger import init_db, log_run
 # 2σ range is narrow enough that a clear outlier should be flagged.
 _BASELINE_NAV_SUCCESS_RATES = [0.94, 0.95, 0.96, 0.95, 0.96, 0.94, 0.95, 0.96, 0.95, 0.94]
 
+# Two tight, well-separated cohorts for context-slicing tests (Session 16 finding I4).
+# Each has small non-zero variance (so nav_success_rate isn't a zero-variance skip) but
+# the two means (~0.95 vs ~0.50) are far enough apart that a mixed baseline has ~1σ span
+# — a value from one cohort would NOT flag against the mixed pool but WILL flag against
+# its own cohort's tight baseline. That gap is what makes these tests decisive.
+_COHORT_HI = [0.94, 0.95, 0.96, 0.95, 0.96, 0.94, 0.95, 0.96, 0.95, 0.94]  # mean ~0.95
+_COHORT_LO = [0.49, 0.50, 0.51, 0.50, 0.51, 0.49, 0.50, 0.51, 0.50, 0.49]  # mean ~0.50
+
 
 @pytest.fixture()
 def db(tmp_path):
@@ -24,6 +32,8 @@ def _insert(
     collision_rate=0.0,
     odom_hz_mean=50.0,
     camera_hz_mean=20.0,
+    runner_type=None,
+    power_mode=None,
 ):
     return log_run(
         scenario="baseline_test",
@@ -38,6 +48,8 @@ def _insert(
         collision_rate=collision_rate,
         odom_hz_mean=odom_hz_mean,
         camera_hz_mean=camera_hz_mean,
+        runner_type=runner_type,
+        power_mode=power_mode,
     )
 
 
@@ -110,3 +122,47 @@ def test_fail_rows_excluded_from_baseline(db):
     # so nav_success_rate baseline remains unaffected by the extreme 0.0 value
     assert not by_metric["nav_success_rate"].flagged
     assert not by_metric["mean_position_error"].flagged
+
+
+def test_baseline_sliced_by_runner_and_power(db):
+    """Finding I4 (Session 16): drift compares like with like. A 15W hil_jetson run must
+    baseline only against 15W hil_jetson history — never against 25W sim rows, and vice
+    versa. Two well-separated cohorts share the same DB; a value drawn from cohort B must
+    flag when checked in cohort A, proving the other cohort was excluded from its baseline.
+    (If slicing were absent, the mixed 0.95/0.50 pool spans ~1σ and neither would flag.)
+    """
+    for rate in _COHORT_HI:
+        _insert(db, nav_success_rate=rate, runner_type="hil_jetson", power_mode="15W")
+    for rate in _COHORT_LO:
+        _insert(db, nav_success_rate=rate, runner_type="local", power_mode="25W")
+
+    # A 15W HIL run at 0.50 (the *sim* cohort's value) is a huge outlier vs the 15W
+    # baseline (~0.95) — flagged only if the 25W rows were correctly excluded.
+    hil_run = _insert(db, nav_success_rate=0.50, runner_type="hil_jetson", power_mode="15W")
+    hil_reports = {r.metric: r for r in check_run(hil_run, db_path=db)}
+    assert hil_reports["nav_success_rate"].flagged
+
+    # Symmetric: a 25W local run at 0.95 (the *HIL* cohort's value) flags only if the
+    # 15W hil_jetson rows were correctly excluded from the 25W baseline.
+    sim_run = _insert(db, nav_success_rate=0.95, runner_type="local", power_mode="25W")
+    sim_reports = {r.metric: r for r in check_run(sim_run, db_path=db)}
+    assert sim_reports["nav_success_rate"].flagged
+
+
+def test_null_power_rows_baseline_against_each_other(db):
+    """Finding I4 corollary: pre-Session-16 sim rows have power_mode=NULL. A NULL-power
+    run must baseline against NULL-power history via NULL-safe `IS ?` (a plain `= ?` would
+    match no NULL row → empty baseline → no report). Non-NULL rows must not pollute it.
+    """
+    for rate in _COHORT_HI:
+        _insert(db, nav_success_rate=rate)  # runner_type/power_mode default to NULL
+    for rate in _COHORT_LO:
+        _insert(db, nav_success_rate=rate, runner_type="hil_jetson", power_mode="15W")
+
+    # NULL-power run at 0.50: outlier vs the NULL baseline (~0.95). A report existing AND
+    # flagged proves (a) the NULL rows matched each other via `IS NULL`, and (b) the 15W
+    # rows were excluded (else the mixed pool would not flag it).
+    null_run = _insert(db, nav_success_rate=0.50)
+    reports = {r.metric: r for r in check_run(null_run, db_path=db)}
+    assert "nav_success_rate" in reports, "NULL-power baseline produced no report"
+    assert reports["nav_success_rate"].flagged
