@@ -9,7 +9,7 @@ on:
 jobs:
   changes:
     # Detects whether this push touches anything that actually affects the arm64 Docker image
-    # (see Dockerfile — it only ever COPYs Dockerfile itself, requirements-ci.txt, and src/).
+    # (see Dockerfile — it only ever COPYs Dockerfile itself, requirements-ci.txt, src/, and tools/).
     # A docs-only push (BLUEPRINT.md, Release1Todo.md, CLAUDE.md, etc.) has no reason to pay
     # stage-3-arm64's build cost at all (it's skipped outright via the `if:` below) — or the
     # ~15 min stage-4-hil now inherits by needing stage-3-arm64 (2026-07-10 renumber; HIL
@@ -32,6 +32,7 @@ jobs:
               - 'Dockerfile'
               - 'requirements-ci.txt'
               - 'src/**'
+              - 'tools/**'
               - '.github/workflows/ci.yml'
 
   stage-0-requirements:
