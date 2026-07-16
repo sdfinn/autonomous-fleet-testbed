@@ -265,11 +265,13 @@ port into a tiny DHCP server + NAT router. The Jetson gets an address in `10.42.
   > `10.42.0.217` is a DHCP lease from the shared connection, not a static assignment — it'll
   > likely persist across reboots (same MAC → same lease) but re-check with `ip neigh` /
   > `nmap` if SSH ever stops connecting.
-- [x] SSH in. **Confirmed for this board:** username is `Mike` (capital M — set during SDK
-      Manager's OEM pre-config), IP is `10.42.0.217`. Hostname pre-config was skipped, so the
-      Jetson is still `localhost.localdomain` — `.local` mDNS will **not** resolve; use the IP:
+- [x] SSH in. **SD-era record (superseded 2026-07-13 by the Part 9 fresh install — now
+      `ssh mike@jetson.local`):** username was `Mike` (capital M — set during SDK
+      Manager's OEM pre-config), IP `10.42.0.217`. Hostname pre-config was skipped, so the
+      Jetson was still `localhost.localdomain` — `.local` mDNS did **not** resolve; the IP
+      was required:
   ```bash
-  ssh Mike@10.42.0.217
+  ssh Mike@10.42.0.217   # SD era — today: ssh mike@jetson.local
   ```
 - [x] Once in, confirm the Jetson has **internet through the shared link**:
   ```bash
@@ -374,12 +376,14 @@ Record anything odd here before continuing.
 > 2. On the **workstation**, bring the shared Ethernet connection back up (skip if you never
 >    tore it down): `nmcli connection up jetson-share`.
 > 3. Re-cable Jetson Ethernet → workstation Ethernet if it got disconnected.
-> 4. Confirm you can still reach it: `ping -c3 10.42.0.217` (DHCP lease from Part 4 — re-check
->    with `ip neigh show dev enp6s0` if that IP doesn't answer after some elapsed time/reboots).
-> 5. SSH in: `ssh Mike@10.42.0.217` (capital `M` — see Part 4). Passwordless if `ssh-copy-id`
->    was completed; password prompt otherwise.
-> 6. You're back where Part 5 left off — hostname is still `localhost.localdomain`, CUDA is
->    still intentionally not installed (see Part 5 note and Part 10 follow-ups). Proceed below.
+> 4. Confirm you can still reach it: `ping -c3 jetson.local` (or the lease IP `10.42.0.217` —
+>    re-check with `ip neigh show dev enp6s0` if it doesn't answer after some elapsed
+>    time/reboots).
+> 5. SSH in: `ssh mike@jetson.local` (post-2026-07-13 NVMe fresh install — the SD era's
+>    `Mike@10.42.0.217` identity is gone). Passwordless if `ssh-copy-id` was completed;
+>    password prompt otherwise.
+> 6. You're back where Part 5 left off — CUDA is still intentionally not installed (see
+>    Part 5 note and Part 10 follow-ups). Proceed below.
 
 **Why Jazzy:** matches the workstation and the stage-2 Docker image exactly — one distro across
 sim, CI, and hardware. Run on the Jetson over SSH.
@@ -479,19 +483,34 @@ the CI runner swap (Part 8) on a shaky build.**
 - [x] Run the Python unit tests natively (same command the x86 loop uses):
   ```bash
   python3 -m pytest tests/ -v \
-    --ignore=tests/test_ros2_contracts.py --ignore=tests/test_navigation.py
+    --ignore=tests/test_ros2_contracts.py --ignore=tests/test_navigation.py \
+    --ignore=tests/test_mission_run.py
   ```
-  > Both `test_ros2_contracts.py` and `test_navigation.py` import `rclpy` / need a live
-  > Gazebo+Nav2 stack — same `--ignore` treatment as the x86 dev loop (see CLAUDE.md).
+  > All three ignored files need a live Gazebo+Nav2 stack — same `--ignore` treatment as
+  > the x86 dev loop (see CLAUDE.md). `test_mission_run.py` was added in Session 15,
+  > *after* the SD-era run of this step — found stale 2026-07-13 during the Part 9
+  > re-provision, when the two-ignore version failed with `Nav2 action server unavailable`.
 - [ ] **Log the baseline numbers.** Create a small record so Part 9 can compare apples to
       apples. Suggested table to fill in (paste into your session notes or a scratch file):
 
   | Metric | microSD (Part 7) | NVMe (Part 9) |
   |---|---|---|
-  | `apt install ros-jazzy-ros-base` wall time | (not recorded) | |
-  | `colcon build --symlink-install` (`real`) | 4.759s | |
-  | first `docker pull` of stage-2 image | 4m15.202s | |
-  | `df -h /` free space | | |
+  | `apt install ros-jazzy-ros-base` wall time | (not recorded) | 3m39.6s ¹ |
+  | `colcon build --symlink-install` (`real`) | 4.759s ² | 5.312s ³ |
+  | first `docker pull` of stage-2 image | 4m15.202s ² | 1m40.441s ⁴ |
+  | `df -h /` free space | (not recorded) | 421G free / 456G (13G used) |
+
+  ¹ 2026-07-13, Part 9 step 11c — a **larger** install than this row's title: ros-base +
+    ros-dev-tools + CycloneDDS **+ navigation2 + nav2-bringup + python3-pil** in one apt
+    pass. Reference number only (no SD-side measurement to compare against).
+  ² SD numbers are historical: taken 2026-07-10 at an **unrecorded power mode** (the 25W
+    pin came later, 2026-07-12). NVMe column is at pinned 25W, unlocked clocks.
+  ³ 2026-07-13. Effectively a tie with the SD — a one-package Python build is ~5s of
+    colcon startup + CPU, so disk barely participates. The NVMe win shows in the
+    I/O-bound rows (apt, docker pull), not here.
+  ⁴ 2026-07-13, **2.5× faster than SD** — same shared-Ethernet network, so the gain is
+    layer extraction hitting NVMe instead of SD. Pulled `:latest` (the SD run used a SHA
+    tag because `:latest` didn't exist yet — this also closes that re-check).
 
 ---
 
@@ -643,7 +662,7 @@ Decisions baked into the steps (full rationale: BLUEPRINT.md decision log, 2026-
 
 ### The migration — start to finish
 
-- [ ] **1. Targeted backup off the SD (minutes — Jetson still up on the SD).** No full
+- [x] **1. Targeted backup off the SD (minutes — Jetson still up on the SD).** No full
       `dd` image needed: the SD itself is the backup, since it's never written again.
       Copy off the only things that exist nowhere else (inventoried over SSH 2026-07-12:
       `git status` on the Jetson repo shows nothing untracked except `reports/photos/`;
@@ -665,10 +684,10 @@ Decisions baked into the steps (full rationale: BLUEPRINT.md decision log, 2026-
       no partitions. (For future boards: the **M.2 Key-M 2280** slot is on the underside
       of the carrier board; the short 2230 Key-E slot next to it is for wifi cards. Power
       off and unplug before seating; secure with the standoff screw.)
-- [ ] **3. Power off and pull the microSD.** `sudo shutdown -h now` over SSH, unplug DC
+- [x] **3. Power off and pull the microSD.** `sudo shutdown -h now` over SSH, unplug DC
       power, eject the microSD and set it aside. Out of the machine it physically cannot
       be touched by the flash — it stays a complete, bootable, known-good system.
-- [ ] **4. Recovery mode.** Short `FC REC`↔`GND` on the J14 header while applying DC
+- [x] **4. Recovery mode.** Short `FC REC`↔`GND` on the J14 header while applying DC
       power, hold ~2–3 s after power comes on, release. Connect USB-C to the workstation
       (a **data** cable — charge-only cables are the #1 cause of no detection). Verify:
 
@@ -677,43 +696,98 @@ Decisions baked into the steps (full rationale: BLUEPRINT.md decision log, 2026-
   ```
 
   Full pin-numbering detail and photos: **Part 3.1**.
-- [ ] **5. Flash with SDK Manager — target = NVMe.** Launch `sdkmanager` on the
-      workstation (installed in Part 2) and follow **Part 3.2** with three differences:
-      - **Storage device: NVMe** — the critical dropdown (SD card was chosen last time).
-      - **OEM pre-config:** username **`mike`** (lowercase), password, runtime setup. If a
+- [x] **5. Flash with SDK Manager — target = NVMe.** Launch `sdkmanager` on the
+      workstation (installed in Part 2). Full procedure — the SD flash's process with the
+      NVMe differences baked in:
+      - **Ignore the "New versions available" nag (Video Codec / Holoscan / similar).**
+        Those are optional add-on SDKs this project doesn't use; "Do Not Notify for These
+        Versions" is fine. JetPack 7.2 itself is selected directly below regardless.
+      - **Target hardware:** SDK Manager should auto-detect the recovery-mode board.
+        Select **Jetson Orin Nano [8GB Developer Kit]** (module **P3767-0005** / carrier
+        **P3768-0000** if it asks).
+      - **SDK version: JetPack 7.2.** If 7.2 isn't offered, SDK Manager itself is stale —
+        close it, `sudo apt update && sudo apt install --only-upgrade sdkmanager`, relaunch.
+      - **Uncheck "Host Components"** — those are x86-side cross-dev tools + a host CUDA
+        we never need for flashing, and the workstation's existing driver-595/CUDA setup
+        (Isaac Sim depends on it) shouldn't be touched.
+      - **Target Components — three groups; keep only the first:**
+        - **Jetson Linux: KEEP** — this is the OS image itself (bootloader + rootfs);
+          unchecking it means nothing gets flashed.
+        - **Jetson Runtime Components: uncheck** (CUDA runtime, cuDNN/TensorRT runtimes,
+          multimedia API, container runtime — nothing here uses the Jetson GPU, and these
+          install post-boot over SSH, a second phase that can fail independently).
+        - **Jetson SDK Components: uncheck** (CUDA toolkit, CUDA-X AI, computer vision,
+          developer tools).
+
+        Same OS-only result as the SD flash (`nvcc` missing + empty `dpkg-query --show
+        nvidia-jetpack` are expected, not a problem). Everything unchecked is apt-able
+        later — `sudo apt install nvidia-jetpack` (or `nvidia-jetpack-runtime` for just
+        the runtime half) if on-device GPU inference is ever needed; L4T apt sources are
+        present post-flash, no re-flash required.
+      - **Storage device: NVMe** — the critical dropdown (microSD was chosen last time).
+      - **OEM pre-config (this is what makes first boot headless):** username **`mike`**
+        (lowercase this time), password, "runtime" setup, timezone/locale if offered. If a
         hostname field appears, enter **`jetson`** — but don't count on it appearing (it
         silently didn't on the SD flash); step 7 verifies either way.
-      - **Target Components (CUDA/cuDNN/TensorRT): skip**, same as the SD flash —
-        OS-only. Add later with `sudo apt install nvidia-jetpack` if ever needed.
-
-      ~20 min; the board reboots itself into first boot when the flash completes.
-- [ ] **6. First contact over SSH.** The shared-Ethernet recipe (Part 4) is unchanged and
+      - Start the flash — **OS-only ≈ 20 min.** Don't disturb the USB-C cable or DC power
+        while it runs.
+      - On success: **disconnect the USB-C cable.** The board reboots itself into first
+        boot; if it hasn't appeared on the network after ~90 s (step 6), power-cycle
+        without the recovery jumper (unplug DC, wait 10 s, plug back in).
+- [x] **6. First contact over SSH.** The shared-Ethernet recipe (Part 4) is unchanged and
       the board's MAC is the same, so the DHCP lease will likely still be `10.42.0.x`:
 
   ```bash
   ip neigh show dev enp6s0     # find the Jetson's IP
-  ssh mike@10.42.0.217         # lowercase user now (adjust IP if the lease moved)
+  # The old install's host key is still in known_hosts — SSH will refuse with
+  # "REMOTE HOST IDENTIFICATION HAS CHANGED" until it's cleared (expected after
+  # any reinstall; the fresh OS generated new host keys):
+  ssh-keygen -f ~/.ssh/known_hosts -R '10.42.0.217'
+  ssh mike@10.42.0.217         # lowercase user now (adjust IP if the lease moved);
+                               # accept the new fingerprint when prompted
   ```
-- [ ] **7. Set the hostname + confirm identity:**
+  *(Observed 2026-07-13: the NVMe OS-only flash took ~12 min, under the ~20 min estimate —
+  NVMe writes faster than SD.)*
+- [x] **7. Set the hostname + confirm identity:**
 
   ```bash
   hostname                     # if it's not "jetson":
   sudo hostnamectl set-hostname jetson
-  grep -n localhost /etc/hosts # point the 127.0.1.1 line at "jetson" if a stale name is there
+  # Fresh install has NO 127.0.1.1 line at all (observed 2026-07-13) — add one so
+  # sudo/local tools can resolve the machine's own name without the network:
+  echo "127.0.1.1 jetson" | sudo tee -a /etc/hosts
+  sudo true                    # should print no "unable to resolve host" warning
   whoami && hostname           # expect: mike / jetson
   ```
 
-  From the workstation, `ssh mike@jetson.local` should now resolve via mDNS.
-- [ ] **8. Turn the GUI off (boot to console from now on):**
+  From the workstation, `ssh mike@jetson.local` should now resolve via mDNS — but likely
+  **only after the step 8 reboot**: avahi (the mDNS daemon on the Jetson) has been
+  advertising the boot-time hostname since startup, so a mid-session rename isn't
+  broadcast yet (observed 2026-07-13 — `jetson.local: Name or service not known` until
+  the reboot). If it still fails post-reboot: `systemctl status avahi-daemon` on the
+  Jetson (`sudo apt install avahi-daemon` if absent). A bare `ping jetson` (no `.local`)
+  failing is expected and fine — that would need DNS or a static hosts entry. Do **not**
+  add a static `jetson` entry to the *workstation's* `/etc/hosts` — the Jetson's IP is a
+  DHCP lease that can move across reboots; mDNS resolves it live, a hardcoded line goes
+  stale silently.
+- [x] **8. Turn the GUI off (boot to console from now on).** This is the first
+      deliberate connection loss — pre-flight check that SSH and networking will come
+      back on their own (they're part of `multi-user.target`; only the desktop layer is
+      being dropped):
 
   ```bash
+  systemctl is-enabled ssh              # expect: enabled
+  systemctl is-enabled NetworkManager   # expect: enabled
   sudo systemctl set-default multi-user.target
   sudo reboot
   ```
 
   The desktop stays installed but never starts — RAM and GPU stay free for the CI runner
   and Nav2. (Revert anytime: `sudo systemctl set-default graphical.target` + reboot.)
-- [ ] **9. Verify the storage and OS state:**
+  If the board doesn't come back: DisplayPort + keyboard still gives a **text login
+  console** (multi-user kills the desktop, not the display), and the microSD rollback
+  (step 15) remains untouched.
+- [x] **9. Verify the storage and OS state:**
 
   ```bash
   findmnt /                    # rootfs on /dev/nvme0n1p1 (or the installer's rootfs partition)
@@ -721,48 +795,241 @@ Decisions baked into the steps (full rationale: BLUEPRINT.md decision log, 2026-
   cat /etc/nv_tegra_release    # R39 (release), REVISION: 2.0
   systemctl get-default        # multi-user.target
   ```
-- [ ] **10. Re-pin the power mode** (the 25W pin died with the SD rootfs):
+- [x] **10. Re-pin the power mode** (the 25W pin died with the SD rootfs):
 
   ```bash
   sudo nvpmodel -m 1 && sudo nvpmodel -q    # expect mode 1 / 25W
   ```
-- [ ] **11. Re-provision from this runbook — and log every gap, stale step, or surprise
-      you hit; that's a deliverable of this migration, not an interruption.** In order:
-      - **Part 4**: `ssh-copy-id mike@<ip>` (fresh home dir = fresh `authorized_keys`).
-      - **Part 5**: smoke tests — rootfs on `nvme0n1p1` this time.
-      - **Part 6**: ROS2 Jazzy.
-      - **Part 7**: the timed `colcon build --base-paths src`, native pytest, and
-        `docker pull` — **these ARE the NVMe-at-25W baseline numbers**; enter them in the
-        Part 7 table and BLUEPRINT.md's comparison, with the old SD column flagged
-        historical.
-      - **Part 8**: CI runner — **first remove the old `jetson-orin` runner entry** in
-        GitHub → Settings → Actions → Runners (its registration died with the SD install),
-        then register fresh with a new token, same `jetson-orin` name and labels so
-        `ci.yml` needs no changes.
-      - **HIL prerequisites**: `docs/runbooks/Mission1HILSession15.md` Part 1
-        (`ros-jazzy-navigation2`, `ros-jazzy-nav2-bringup`, `ros-jazzy-rmw-cyclonedds-cpp`,
-        `python3-pil`, repo on `main`, `colcon build --base-paths src`).
-- [ ] **12. Restore the backed-up data:**
+- [ ] **11. Re-provision — everything inline, in order. Log every gap, stale step, or
+      surprise you hit; that's a deliverable of this migration, not an interruption.**
+      (This inlines Parts 4–8 + the Mission-1 HIL prerequisites, adapted to the new
+      `mike`@`jetson` identity — the original Parts stand as the SD-era record.)
+
+  - [x] **11a. Passwordless SSH** (the only Part 4 remnant — the shared-Ethernet link is
+        already proven by steps 6–8). On the **workstation** (the ed25519 keypair from
+        Session 14 already exists — no `ssh-keygen` needed):
+
+    ```bash
+    ssh-copy-id mike@jetson.local
+    ssh mike@jetson.local true && echo OK   # no password prompt = done
+    ```
+  - [x] **11b. Internet + health snapshot** (Part 5, minus what steps 6–10 already
+        proved). On the **Jetson**:
+
+    ```bash
+    curl -sI http://nvidia.com | head -1   # NOT ping — this network drops outbound ICMP
+    head -2 /etc/os-release && uname -m    # 24.04 noble / aarch64
+    sudo tegrastats                        # one glance: temps tens-of-°C at idle; Ctrl-C
+    ```
+
+    `nvcc: command not found` + empty `dpkg-query --show nvidia-jetpack` remain expected
+    (OS-only flash, by design).
+  - [x] **11c. ROS2 Jazzy + Nav2 + HIL deps — one apt pass** (Part 6 plus
+        `Mission1HILSession15.md` Part 1's packages folded in). On the **Jetson**:
+
+    ```bash
+    sudo apt update && sudo apt install -y software-properties-common curl
+    sudo add-apt-repository universe -y
+    export ROS_APT_SOURCE_VERSION=$(curl -s https://api.github.com/repos/ros-infrastructure/ros-apt-source/releases/latest \
+      | grep -F "tag_name" | awk -F\" '{print $4}')
+    curl -L -o /tmp/ros2-apt-source.deb \
+      "https://github.com/ros-infrastructure/ros-apt-source/releases/download/${ROS_APT_SOURCE_VERSION}/ros2-apt-source_${ROS_APT_SOURCE_VERSION}.$(. /etc/os-release && echo $VERSION_CODENAME)_all.deb"
+    sudo apt install -y /tmp/ros2-apt-source.deb && sudo apt update
+    time sudo apt install -y ros-jazzy-ros-base ros-dev-tools ros-jazzy-rmw-cyclonedds-cpp \
+      ros-jazzy-navigation2 ros-jazzy-nav2-bringup python3-pil   # optional RECORD — fills
+      # the Part 7 table's "(not recorded)" apt row; reference only, no SD number to compare
+    echo 'source /opt/ros/jazzy/setup.bash' >> ~/.bashrc
+    echo 'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp' >> ~/.bashrc
+    source ~/.bashrc
+    printenv ROS_DISTRO RMW_IMPLEMENTATION   # jazzy / rmw_cyclonedds_cpp
+    ```
+
+    `ros-base`, not `desktop` — headless board, no RViz/Gazebo GUI stacks. Nav2 +
+    `python3-pil` are the HIL prerequisites (apt, not pip — Ubuntu 24.04 is PEP-668
+    externally-managed; bare `pip install pillow` is refused).
+  - [x] **11d. Repo + timed build + tests — these ARE the NVMe-at-25W baselines**
+        (Part 7). Conditions: 25W already pinned (step 10); do **not** run
+        `sudo jetson_clocks` before these — the SD numbers were taken without locked
+        clocks, so locking now would flatter NVMe unfairly. On the **Jetson**:
+
+    ```bash
+    sudo apt install -y gh python3-colcon-common-extensions python3-pip
+    gh auth login   # GitHub.com → HTTPS → Yes (authenticate Git) → "Login with a web
+                    # browser"; enter the printed code at github.com/login/device from
+                    # the workstation or phone
+    gh repo clone sdfinn/autonomous-fleet-testbed ~/autonomous-fleet-testbed
+    cd ~/autonomous-fleet-testbed
+    sudo apt install -y python3-rosdep && sudo rosdep init 2>/dev/null; rosdep update
+    rosdep install --from-paths src --ignore-src -r -y || true
+    time colcon build --symlink-install --base-paths src   # RECORD → baseline #1
+    source install/setup.bash
+    python3 -m pytest tests/ -v \
+      --ignore=tests/test_ros2_contracts.py --ignore=tests/test_navigation.py \
+      --ignore=tests/test_mission_run.py   # all 3 ignores need live Nav2 — expect 52 passed
+    sudo apt install -y docker.io && sudo usermod -aG docker $USER
+    exit   # re-login so the docker group applies, then:
+    # The GHCR image is private (private repo) — an unauthenticated pull fails with
+    # "unauthorized" (gap found 2026-07-13; the SD-era login was ad hoc, never recorded).
+    # gh's default login lacks the packages scope, so add it, then feed the token to docker:
+    gh auth refresh -s read:packages
+    gh auth token | docker login ghcr.io -u sdfinn --password-stdin
+    time docker pull ghcr.io/sdfinn/autonomous-fleet-testbed:latest  # RECORD → baseline #2
+    df -h /                                                          # RECORD → baseline #3
+    ```
+
+    Enter the numbers in the Part 7 table's NVMe column and BLUEPRINT.md's comparison;
+    flag the SD column "unrecorded power mode, historical". (`--base-paths src` from day
+    one: once 11e nests the CI runner's checkout inside the repo, a bare `colcon build`
+    finds two `nav_fleet` packages and aborts with "Duplicate package names".)
+  - [x] **11e. CI runner** (Part 8). The GitHub runner page and this runbook each supply
+        part of the procedure — the split is: **GitHub page = the Download block + the
+        token; this runbook = the config command** (ours carries the custom labels/name
+        that the page's generic `./config.sh` line lacks — don't run the page's version).
+
+    1. **Browser:** GitHub → Settings → Actions → Runners → **remove the old
+       `jetson-orin` entry** (its registration died with the SD install) → **New
+       self-hosted runner** → select the **ARM64** tab (the page defaults to x64, whose
+       binaries won't run on the Jetson at all — grabbed the wrong one 2026-07-13).
+    2. **Jetson:** copy/paste the page's whole **Download** block (curl + optional
+       shasum + tar) into `~/actions-runner`:
+
+       ```bash
+       mkdir -p ~/actions-runner && cd ~/actions-runner
+       # ...run the page's Download block here; expect actions-runner-linux-arm64-<ver>.tar.gz
+       ls   # must show config.sh, run.sh, svc.sh, bin/
+       ```
+    3. **Jetson:** run THIS command (not the page's), substituting only the token from
+       the page's **Configure** block. **The token is the short ~29-char UPPERCASE
+       string starting with `A`** — NOT the 64-char lowercase hex string in the Download
+       block, which is the tarball's SHA-256 checksum (pasted as the token 2026-07-13 →
+       registration 404s). Tokens expire in ~1 h and must come from the New self-hosted
+       runner page (the "Remove runner" dialog shows a different token that also 404s on
+       registration). ONE line on purpose — a trailing space after a `\` silently breaks
+       continuation and drops the remaining flags (bit twice, 2026-07-13):
+
+       ```bash
+       ./config.sh --url https://github.com/sdfinn/autonomous-fleet-testbed --token <TOKEN_FROM_GITHUB> --labels self-hosted,arm64,jetson,orin-nano --name jetson-orin
+       ```
+
+       Accept the `Default` runner-group prompt.
+    4. **Jetson:** install as a service so it survives reboots:
+
+       ```bash
+       sudo ./svc.sh install && sudo ./svc.sh start && sudo ./svc.sh status
+       ```
+
+    Same name + labels ⇒ `ci.yml` needs no changes. The service runs as `mike` now
+    (was `Mike`). Confirm **Idle (green)** on the Runners page.
+- [x] **12. Restore the backed-up data:**
 
   ```bash
-  scp ~/jetson-backup-2026-07/fleet_runs.db mike@<ip>:autonomous-fleet-testbed/reports/
-  scp -r ~/jetson-backup-2026-07/photos     mike@<ip>:autonomous-fleet-testbed/reports/
+  scp ~/jetson-backup-2026-07/fleet_runs.db mike@jetson.local:autonomous-fleet-testbed/reports/
+  scp -r ~/jetson-backup-2026-07/photos     mike@jetson.local:autonomous-fleet-testbed/reports/
   ```
-- [ ] **13. Prove it end to end.** Runner shows **Idle (green)** in GitHub → Settings →
-      Actions → Runners; native pytest suite green (Part 7's command); then **one manual
-      HIL run** (`docs/runbooks/Mission1HILSession15.md` Parts 2–3, ~10 min) — Nav2, the
-      mission executor, and the fresh runner registration all proven on the new install.
-- [ ] **14. Close out.** Part 10 (publish the baseline numbers, mark Session 14 ✅ in
-      `Release1Todo.md`'s Session Index), plus the identity doc sweep: update `Mike@` →
+- [x] **13. Prove it end to end** — three proofs; the first two fall out of steps 11d/11e:
+  - [x] **13a. Runner:** shows **Idle (green)** in GitHub → Settings → Actions → Runners —
+        confirmed 2026-07-13, then proven under load by the 8-job-green CI cycle
+        (run 29301726080).
+  - [x] **13b. Native pytest:** green (11d's run — 52 passed, 2026-07-13).
+  - [x] **13c. One manual HIL run (~10 min)** — **PASS on the first attempt, 2026-07-14**
+        (first HIL run on the NVMe install): multicast DDS crossed the link with no unicast
+        fallback (`/robot_001/scan` at 9.96 Hz on the Jetson, `/clock` arriving), Nav2
+        active, mission ~10 s wall (nav → photo → return), exit 0, photo
+        `reports/photos/mission1_step2_20260714_182034.png` + DB row
+        `('mission1', 'PASS', 'hil_jetson', 'gazebo')` on the Jetson. Same procedure as the
+        SD-era 2026-07-11 run — the NVMe fresh install changed nothing HIL-visible.
+        Original procedure: Gazebo simulates the bedroom on the
+        **workstation**; Nav2 + the mission executor (the robot brain under test) run on
+        the **Jetson**; they talk over the shared-Ethernet link via CycloneDDS. This is
+        the only test that exercises everything at once — ROS2/Nav2 install, the build,
+        cross-machine DDS, the semantic map, image capture, and the restored telemetry
+        DB (step 12 first). Same procedure as `Mission1HILSession15.md` Parts 2–4,
+        inlined here:
+
+    **Environment — every terminal, BOTH machines** (the workstation `.bashrc` already
+    does this; on the Jetson export per-terminal to be certain):
+
+    ```bash
+    export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    export ROS_DOMAIN_ID=0
+    ```
+
+    **Terminal 1 — workstation, sim half:**
+
+    ```bash
+    cd ~/autonomous-fleet-testbed
+    ros2 launch src/nav_fleet/launch/sim_only_launch.py
+    ```
+
+    Wait ~5 s after Gazebo for the bridge node. Optional viewer: `gz sim -g` (from a
+    plain terminal, not a VS-Code/Claude-Code shell — snap GTK pollution crashes it;
+    see Nav2 Launch Gotchas in CLAUDE.md).
+
+    **Terminal 2 — Jetson (SSH), sanity check then Nav2:**
+
+    ```bash
+    cd ~/autonomous-fleet-testbed && source install/setup.bash
+    ros2 topic hz /robot_001/scan --window 20   # expect ~10 Hz — proves DDS crosses the link
+    ros2 topic echo /clock --once               # proves sim time arrives
+    ros2 launch src/nav_fleet/launch/nav2_only_launch.py
+    ```
+
+    Wait for `Managed nodes are active` and the AMCL initial-pose log.
+
+    **Terminal 3 — Jetson (SSH), the mission:**
+
+    ```bash
+    cd ~/autonomous-fleet-testbed && source install/setup.bash
+    RUNNER_TYPE=hil_jetson python3 -m nav_fleet.mission_runner mission1
+    ```
+
+    **Success =** `Mission mission1: PASS`, exit code 0, a new PNG under
+    `reports/photos/`, and a fresh `runs` row in the Jetson's `reports/fleet_runs.db`
+    (no `sqlite3` CLI on the Jetson — read it with python3):
+
+    ```bash
+    python3 -c "import sqlite3; c=sqlite3.connect('reports/fleet_runs.db'); \
+      print(*c.execute('SELECT scenario,result,runner_type,sim_engine FROM runs ORDER BY id DESC LIMIT 1'))"
+    # -> ('mission1', 'PASS', 'hil_jetson', 'gazebo')
+    ```
+
+    **Teardown:** Ctrl+C Terminal 2 (Nav2) first, then Terminal 1 (sim). Give DDS ~5 s
+    after both are down before any relaunch.
+
+    **If the Jetson sees no topics:** check `echo $RMW_IMPLEMENTATION` on both sides
+    (both must be cyclonedds). Do **not** use `ping` as the link test — this network
+    silently drops outbound ICMP; `ros2 topic hz` is the test. If multicast doesn't
+    traverse the shared link, fall back to unicast peers: on BOTH machines write
+    `~/cyclonedds-hil.xml` (re-check the Jetson lease IP) and
+    `export CYCLONEDDS_URI=file://$HOME/cyclonedds-hil.xml` in every terminal:
+
+    ```xml
+    <CycloneDDS>
+      <Domain>
+        <General><AllowMulticast>false</AllowMulticast></General>
+        <Discovery>
+          <Peers>
+            <Peer address="10.42.0.1"/>    <!-- workstation, shared-link gateway -->
+            <Peer address="10.42.0.217"/>  <!-- Jetson (re-check the lease) -->
+          </Peers>
+        </Discovery>
+      </Domain>
+    </CycloneDDS>
+    ```
+
+    (The 2026-07-11 SD-era run passed on the first attempt without this fallback.)
+- [x] **14. Close out.** Part 10 (publish the baseline numbers, mark Session 14 ✅ in
+      `Release1Todo.md`'s Session Index), plus the identity doc sweep (executed
+      2026-07-14): update `Mike@` →
       `mike@`, `localhost.localdomain` → `jetson`, and any leftover "SD→NVMe clone"
       phrasing in `CLAUDE.md` (Jetson state paragraph),
       `docs/runbooks/Mission1HILSession15.md` (SSH line),
-      `docs/session15-hil-ci-stage-design.md` (its SSH commands say `Mike@` — Session 16
-      implements `stage-4-hil` from that doc, so it must say `mike@` before then), and
+      `docs/session15-hil-ci-stage-design.md` (its SSH commands said `Mike@` — Session 16
+      implements `stage-4-hil` from that doc, so it had to say `mike@` before then), and
       `Release1Todo.md` Session 14's "state to know" line. Leave dated files in
       `docs/superpowers/plans/` and `docs/superpowers/specs/` alone — historical records.
       Store the microSD untouched until `stage-4-hil` is 3× green; wipe or repurpose after.
-- [ ] **15. If the flash or first boot fails:** microSD back in, boot — you're exactly
+- [x] **15. If the flash or first boot fails:** microSD back in, boot — you're exactly
       where you started. Retry from step 3, or switch to the monitor-attached fallback
       below.
 
@@ -809,13 +1076,17 @@ is keeping this runbook good enough that no install is ever too costly to reprod
 
 ## Part 10 — Close out Session 14
 
-- [ ] Fill in the NVMe-at-25W numbers in the baseline table (Part 7) and drop them into
+- [x] Fill in the NVMe-at-25W numbers in the baseline table (Part 7) and drop them into
       `BLUEPRINT.md` where the QEMU-vs-native / SD-vs-NVMe comparison lives. Flag the
       original SD column as historical ("unrecorded power mode, pre-25W-pin") — the
       planned 25W SD re-baseline was skipped when Part 9 switched from clone to fresh
       install (2026-07-12), so the table is a record, not a controlled A/B.
-- [ ] Mark **Session 14 ✅** in `Release1Todo.md`'s Session Index.
-- [ ] **Correct the stale assumptions** this runbook uncovered, so the plan matches reality:
+      *(Done 2026-07-14 — BLUEPRINT.md tiered-loop table + note updated.)*
+- [x] Mark **Session 14 ✅** in `Release1Todo.md`'s Session Index — done 2026-07-14,
+      immediately after step 13c passed. **Session 14 is complete.**
+- [x] **Correct the stale assumptions** this runbook uncovered, so the plan matches reality
+      *(satisfied by the ⚠️ 2026-07-08 correction block in `Release1Todo.md` Session 14 —
+      it covers both bullets and links here; verified 2026-07-14)*:
   - In `Release1Todo.md` Session 14, the "flash to MicroSD image" framing is obsolete —
     **JetPack 7.2 removed SD-card images**; the method is SDK Manager (USB-C recovery) or the
     Jetson ISO-on-USB installer. Update the flash step to reflect this.

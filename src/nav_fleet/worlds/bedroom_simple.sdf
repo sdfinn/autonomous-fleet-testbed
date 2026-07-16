@@ -30,6 +30,12 @@
             name="gz::sim::systems::SceneBroadcaster"/>
     <plugin filename="gz-sim-user-commands-system"
             name="gz::sim::systems::UserCommands"/>
+    <!-- IMU system (Session 16 Task 9e). In Gazebo Harmonic a <sensor type="imu">
+         declaration produces NO data unless this system plugin is loaded — the imu_link
+         sensor in ugv_pt.urdf.xacro was dormant until now. Required so /robot_001/imu/data
+         carries the gyro yaw-rate the robot_localization EKF fuses (see config/ekf.yaml). -->
+    <plugin filename="gz-sim-imu-system"
+            name="gz::sim::systems::Imu"/>
 
     <light name="sun" type="directional">
       <cast_shadows>true</cast_shadows>

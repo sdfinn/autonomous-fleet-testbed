@@ -21,15 +21,18 @@ Requires a live sim (sim_launch.py, or sim_only + nav2_only for HIL). Logs one t
 row per mission to FLEET_DB via tools.telemetry_logger.
 """
 import argparse
+import math
 import os
 import pathlib
 import time
 import traceback
 
 import rclpy
+from nav2_msgs.srv import ClearEntireCostmap
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 
+from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.image_io import image_msg_to_png
 from nav_fleet.missions import MISSIONS, validate_mission
 from nav_fleet.nav_runner import NavRunner
@@ -38,6 +41,12 @@ from tools.telemetry_logger import log_run
 
 PHOTO_DIR = pathlib.Path('reports/photos')
 NAV_TIMEOUT_S = 90.0
+
+# Cleared before every navigate leg (see MissionRunner._clear_costmaps for the why).
+CLEAR_COSTMAP_SERVICES = (
+    '/robot_001/global_costmap/clear_entirely_global_costmap',
+    '/robot_001/local_costmap/clear_entirely_local_costmap',
+)
 
 
 class MissionRunner(Node):
@@ -52,9 +61,34 @@ class MissionRunner(Node):
         self.create_subscription(
             Image, '/robot_001/camera/image_raw', self._image_cb, 10
         )
+        self._costmap_clearers = {
+            srv: self.create_client(ClearEntireCostmap, srv)
+            for srv in CLEAR_COSTMAP_SERVICES
+        }
 
     def _image_cb(self, msg):
         self._latest_image = msg
+
+    def _clear_costmaps(self, wait_s=3.0, call_s=3.0):
+        """Clear both Nav2 costmaps before a navigate leg. Best-effort by design.
+
+        Why: obstacle marks from live lidar accumulate across a long-lived session (the
+        driving of a prior test, plus an earlier leg of the same mission) and can close a
+        marginal corridor — here the hallway arch. Session 16 diagnosed exactly this as the
+        cause of Mission 1's leg-3 planner failure ("Failed to create plan with tolerance").
+
+        Best-effort: on service unavailability or a call timeout we log a warning and
+        continue. A clear that doesn't land is not a mission failure — the navigate leg's
+        own result is the real signal. The node is not being spun by an executor here, so we
+        drive the future with spin_until_future_complete (same pattern as take_picture)."""
+        for srv, client in self._costmap_clearers.items():
+            if not client.wait_for_service(timeout_sec=wait_s):
+                self.get_logger().warning(f'{srv} unavailable — skipping costmap clear')
+                continue
+            fut = client.call_async(ClearEntireCostmap.Request())
+            rclpy.spin_until_future_complete(self, fut, timeout_sec=call_s)
+            if not fut.done():
+                self.get_logger().warning(f'{srv} clear timed out — continuing')
 
     def take_picture(self, label, timeout=15.0):
         """Capture one fresh camera frame and save it as a PNG under reports/photos/."""
@@ -78,12 +112,16 @@ class MissionRunner(Node):
         for i, step in enumerate(steps, start=1):
             self.get_logger().info(f'[{name}] step {i}/{len(steps)}: {step.label}')
             if step.action == 'navigate':
+                self._clear_costmaps()  # marks accumulate across the session — clear per leg
                 x, y = SEMANTIC_MAP[step.location]
                 ok = self.nav.send_goal(x, y, timeout=NAV_TIMEOUT_S, yaw=step.yaw)
-                if self.nav.last_duration_s is not None:
-                    self.nav_durations.append(self.nav.last_duration_s)
-                if self.nav.last_position_error is not None:
-                    self.nav_errors.append(self.nav.last_position_error)
+                # FAIL-leg policy (Session 16): a failed/timed-out leg's duration measures
+                # the timeout, not the robot — keep it out of the row's aggregate metrics.
+                if ok:
+                    if self.nav.last_duration_s is not None:
+                        self.nav_durations.append(self.nav.last_duration_s)
+                    if self.nav.last_position_error is not None:
+                        self.nav_errors.append(self.nav.last_position_error)
             else:  # take_picture — validate_mission guarantees the action set
                 ok = self.take_picture(f'{name}_step{i}')
             if not ok:
@@ -97,11 +135,12 @@ def _mean(values):
 
 
 def _log_mission(name, ok, runner):
+    nav = runner.nav if runner is not None else None
     log_run(
         scenario=name,
         steps=len(MISSIONS[name]),
-        final_x=runner.nav.last_final_x if runner.nav.last_final_x is not None else 0.0,
-        final_y=runner.nav.last_final_y if runner.nav.last_final_y is not None else 0.0,
+        final_x=nav.last_final_x if nav is not None and nav.last_final_x is not None else 0.0,
+        final_y=nav.last_final_y if nav is not None and nav.last_final_y is not None else 0.0,
         result='PASS' if ok else 'FAIL',
         step_log=[],
         robot_id=os.environ.get('ROBOT_ID', 'robot_001'),
@@ -109,8 +148,9 @@ def _log_mission(name, ok, runner):
         runner_type=os.environ.get('RUNNER_TYPE', 'local'),
         sim_engine=os.environ.get('SIM_ENGINE', 'gazebo'),
         nav_success_rate=1.0 if ok else 0.0,
-        mean_position_error=_mean(runner.nav_errors),
-        mean_time_to_goal=_mean(runner.nav_durations),
+        mean_position_error=_mean(runner.nav_errors) if runner is not None else None,
+        mean_time_to_goal=_mean(runner.nav_durations) if runner is not None else None,
+        power_mode=os.environ.get('POWER_MODE'),
     )
 
 
@@ -120,19 +160,32 @@ def main():
     args = parser.parse_args()
 
     rclpy.init()
-    runner = MissionRunner()
+    runner = None
     ok = False
     try:
+        # Constructed INSIDE the try: a constructor crash (e.g. rclpy/DDS failure) must
+        # still produce the FAIL telemetry row that stage-4-hil's verdict depends on.
+        runner = MissionRunner()
         ok = runner.run_mission(args.mission)
     except Exception as exc:  # still log a FAIL row on crash — docstring contract
         traceback.print_exc()
-        runner.get_logger().error(f'mission {args.mission} crashed: {exc!r}')
+        print(f'mission {args.mission} crashed: {exc!r}')
     finally:
         rclpy.try_shutdown()
     _log_mission(args.mission, ok, runner)
 
     print(f"Mission {args.mission}: {'PASS' if ok else 'FAIL'}")
-    for p in runner.photo_paths:
+    # Sim-only honesty readout (None on the real robot — no Gazebo there): where the
+    # robot PHYSICALLY ended vs the final navigate goal. The verdict above trusts
+    # Nav2/AMCL; a large miss here means a false PASS (see tests/test_mission_run.py).
+    truth = get_ground_truth_xy()
+    nav_steps = [s for s in MISSIONS[args.mission] if s.action == 'navigate']
+    if truth is not None and nav_steps:
+        gx, gy = SEMANTIC_MAP[nav_steps[-1].location]
+        miss = math.hypot(truth[0] - gx, truth[1] - gy)
+        print(f'  ground truth: ({truth[0]:.2f}, {truth[1]:.2f}) — '
+              f'{miss:.2f} m from final goal ({gx}, {gy})')
+    for p in (runner.photo_paths if runner is not None else []):
         print(f'  photo: {p}')
     raise SystemExit(0 if ok else 1)
 

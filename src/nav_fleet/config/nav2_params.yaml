@@ -28,10 +28,23 @@ amcl:
     odom_frame_id: "odom"
     global_frame_id: "map"
     scan_topic: /robot_001/scan
-    # Motion model noise — conservative for a wheeled UGV
+    # Motion model noise — ASYMMETRIC, from measurement (Session 16, 2026-07-15).
+    # This 4-wheel skid-steer chassis over-reports rotation ~30% during in-place
+    # spins (controlled experiment: body turned 146.5° while wheel odom claimed
+    # ~192° — lateral friction resists body rotation, wheels slip). Originally
+    # authored (Task 9d) as a workaround for that live odometry lie. Since Task 9e,
+    # config/ekf.yaml fuses wheel + IMU and feeds AMCL an honest odom→base_footprint
+    # transform — the systematic over-report is corrected upstream of AMCL, not by
+    # this asymmetry. The alphas now run ON TOP OF the EKF, not instead of it: kept
+    # HIGH on rotation (alpha1: rot-from-rot, alpha4: trans-from-rot) as a deliberate
+    # conservative margin for the residual, per-run rotation error real skid still
+    # leaves after fusion (surface-dependent, not fully systematic); translation
+    # noise (alpha2, alpha3) stays LOW to keep the particle cloud tight in the
+    # symmetric hallway (uniform 0.2 everywhere caused multi-modal delocalization —
+    # Task 9c; uniform 0.05 made AMCL trust the rotation lie, pre-EKF).
     alpha1: 0.2
-    alpha2: 0.2
-    alpha3: 0.2
+    alpha2: 0.05
+    alpha3: 0.05
     alpha4: 0.2
     alpha5: 0.2
     laser_model_type: "likelihood_field"
@@ -74,7 +87,10 @@ bt_navigator:
     use_sim_time: true
     global_frame: map
     robot_base_frame: base_link
-    odom_topic: /robot_001/odom
+    # EKF-fused odometry (Session 16 Task 9e) — not the raw wheel odom, whose yaw-rate
+    # over-reports in-place rotation ~30% (measured; see config/ekf.yaml). The fused
+    # estimate uses IMU gyro for the honest body-rotation rate.
+    odom_topic: /robot_001/odometry/filtered
     navigators: ["navigate_to_pose"]
     navigate_to_pose:
       plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
@@ -89,6 +105,11 @@ bt_navigator:
 controller_server:
   ros__parameters:
     use_sim_time: true
+    # EKF-fused odometry (Session 16 Task 9e) — the controller's velocity feedback (used
+    # by RPP's regulated/rotate-to-heading logic) must read the honest body yaw-rate, not
+    # the raw wheel odom that over-reports in-place rotation ~30% (see config/ekf.yaml).
+    # Default would be /robot_001/odom (raw). Keep in sync with bt_navigator odom_topic.
+    odom_topic: /robot_001/odometry/filtered
     controller_frequency: 20.0
     costmap_update_timeout: 0.30
     min_x_velocity_threshold: 0.001
@@ -129,6 +150,12 @@ controller_server:
                                             # the accurate footprint + SmacPlannerHybrid path.
       use_rotate_to_heading: true
       rotate_to_heading_min_angle: 0.3     # 17° — triggers in-place rotation for the initial NNE heading error (~30°)
+      # Slower in-place rotation (Session 16 Task 9e; default is 1.8 rad/s). A slower spin
+      # means less wheel skid per radian AND more lidar scans per radian for AMCL to correct
+      # against during the ~180° return-leg rotation. Also a first step toward "slow down
+      # when uncertain" behavior (Mike, 2026-07-15). Sequenced after the EKF fix and measured
+      # separately: EKF alone gave 0.14–0.15 m ground-truth misses; this held/improved them.
+      rotate_to_heading_angular_vel: 0.5
 
 planner_server:
   ros__parameters:
