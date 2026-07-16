@@ -24,7 +24,7 @@ passed on the first attempt (single run — see the reproducibility caveat under
 
 **Decision.** The HIL stage is a **single GitHub Actions job**, running on the existing x86
 GPU self-hosted runner (`[self-hosted, x86, gpu, rtx5080]`), which drives the Jetson entirely
-over `ssh Mike@<jetson>`: Nav2 launch, mission run, DB read, photo retrieval, and teardown all
+over `ssh mike@<jetson>`: Nav2 launch, mission run, DB read, photo retrieval, and teardown all
 happen as SSH commands issued from the x86 job. The workstation hosts Gazebo (the sim half)
 locally in that same job.
 
@@ -165,7 +165,7 @@ cleans **both** sides:
 
 **Jetson (over SSH):**
 ```bash
-ssh Mike@$JETSON_IP \
+ssh mike@$JETSON_IP \
   "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner' || true"
 ```
 (This pattern is generalized from — not byte-identical to — the one used in the manual run's

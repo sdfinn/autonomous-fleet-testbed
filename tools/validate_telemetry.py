@@ -56,6 +56,7 @@ KNOWN_RUNS_COLS = {
     "odom_hz_mean", "lidar_hz_mean", "camera_hz_mean", "firmware_test_pass_rate",
     "stage_timings_sec",
     "lidar_min_range", "lidar_max_range", "num_obstacles_detected",
+    "power_mode",  # Session 16 Task 1 — Jetson nvpmodel mode the mission ran at (HIL)
 }
 
 

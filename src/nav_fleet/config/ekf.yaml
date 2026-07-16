@@ -1,0 +1,65 @@
+# ekf.yaml — robot_localization EKF for ugv_pt (Session 16 Task 9e)
+#
+# WHY THIS EXISTS (measured root cause, not theory):
+# This 4-wheel skid-steer chassis over-reports rotation ~30% during in-place spins.
+# Controlled experiment 2026-07-15 (.superpowers/sdd/spin_experiment.py): the body
+# physically turned 146.5° while wheel odometry claimed ~192°. Lateral wheel friction
+# resists body rotation, so the wheels slip and the odometry integrates the slipping
+# wheels as extra yaw. Downstream, after Mission 1's ~180° doorway spin the robot drove
+# east of its plan → arch-corner clips + AMCL delocalization + false PASSes.
+#
+# THE FIX: the IMU gyro measures ACTUAL body rotation. Fuse the honest signal from each
+# sensor and let the EKF own the odom→base_footprint transform, so the TF stops lying.
+#
+# The node is launched un-namespaced with name 'ekf_filter_node' (see nav2_only_launch.py)
+# — this top-level key MUST equal that exact unqualified node name, or every param below
+# silently falls through to compiled-in defaults (CLAUDE.md launch-file gotcha). Per-robot
+# TF isolation is at the TOPIC level: /tf and /tf_static are remapped to /robot_001/* in
+# the launch file, frame names stay UNPREFIXED (odom, base_footprint) to match RSP/AMCL.
+ekf_filter_node:
+  ros__parameters:
+    use_sim_time: true
+    frequency: 30.0
+    sensor_timeout: 0.1
+    # 2D planar robot: zero out z/roll/pitch and their rates so ground-plane noise and
+    # any IMU tilt can't leak into the estimate.
+    two_d_mode: true
+    publish_tf: true
+    # world_frame == odom_frame: this EKF fuses only continuous (odom + gyro) data and
+    # publishes the continuous odom→base_footprint transform. AMCL still owns map→odom.
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_footprint
+    world_frame: odom
+
+    # ── odom0: wheel odometry — TRANSLATION ONLY ────────────────────────────────────
+    # The wheel odom's translation (vx) is sim-grade good; its yaw / yaw-rate is exactly
+    # the ~30% over-report lie we are fixing, so we DO NOT fuse it. Config vector order is
+    # [x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az].
+    # Only vx (index 6) is true — forward speed from the wheels.
+    odom0: /robot_001/odom
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  false, false,
+                   false, false, false,
+                   false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+
+    # ── imu0: IMU — YAW RATE ONLY ───────────────────────────────────────────────────
+    # Only vyaw (index 11) is true — the gyro rate, the honest measurement of actual body
+    # rotation. We deliberately DO NOT fuse the IMU orientation: Gazebo's IMU orientation
+    # is ground-truth-perfect, so fusing it would be sim-only cheating that hides the real
+    # robot's behavior. The gyro rate is the transferable signal a real IMU also provides.
+    # We fuse no linear acceleration either (translation comes from the wheels).
+    imu0: /robot_001/imu/data
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 10
+    imu0_remove_gravitational_acceleration: true

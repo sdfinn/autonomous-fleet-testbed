@@ -136,14 +136,21 @@ Two tiers, complementary — not competitors:
 |---|---|---|---|---|
 | **1 — primary dev loop** | x86 bare metal + Gazebo local | **~1s** | ~3–10 min | Flush common bugs fast |
 | 2 — arm64 compat check | GHA ubuntu-latest QEMU | 23m43s (Docker build+push, cold) | +sim stub | Validate arm64 cross-compile |
-| 3 — target platform | Jetson native arm64 (Phase B) | 4.76s (bare `colcon build`) / 9m45s (Docker build+push, non-cached) | +real hw | Validate actual deploy target |
+| 3 — target platform | Jetson native arm64 (Phase B) | 5.31s (bare `colcon build`, NVMe 25W) / 9m28s (Docker build+push, non-cached, NVMe 25W) | +real hw | Validate actual deploy target |
 | 4 — full HIL | Real rover + Jetson (Phase C) | SSH deploy | full loop | Final validation |
 
 > Tier 2/3's `colcon build` column really means "build-stage wall time" — for Tier 2/3 that's
 > the whole Docker image build+push (`stage-3-arm64`), not the bare `colcon build` command,
-> which is a separate, much faster number on native hardware (Tier 3: 4.76s, in line with
-> Tier 1). Both Tier 3 numbers measured 2026-07-10 on the real Jetson Orin Nano Super,
-> microSD, JetPack 7.2 — see `docs/runbooks/JetsonInstallSession14.md` Part 7/8 for the full runs.
+> which is a separate, much faster number on native hardware (Tier 3: 5.31s, in line with
+> Tier 1). **Re-baselined 2026-07-13 on the NVMe fresh install at pinned 25W** (the
+> go-forward reference): bare `colcon build` 5.31s (a tie with SD's 4.76s — one small
+> Python package is CPU-bound, disk doesn't participate); first `docker pull` of the
+> stage-2 image **1m40s vs 4m15s on SD — 2.5× faster**, the number that shows the NVMe
+> where I/O actually dominates. Cold Docker build+push re-measured same day (run
+> 29301726080, the migration's prove-out CI cycle — all 8 jobs green on the freshly
+> re-registered runner): **568s (9m28s) vs 585s SD-era** — a wash, as expected: that
+> stage is dominated by pip-over-network + colcon CPU, not disk. Full before/after
+> table: `docs/runbooks/JetsonInstallSession14.md` Part 7.
 
 **Tier 1 full cycle** (once Gazebo is wired in Session 09):
 ```

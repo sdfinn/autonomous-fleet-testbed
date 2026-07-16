@@ -232,7 +232,15 @@
       <odom_publish_frequency>50</odom_publish_frequency>
       <topic>/robot_001/cmd_vel</topic>
       <odom_topic>/robot_001/odom</odom_topic>
-      <tf_topic>/robot_001/tf</tf_topic>
+      <!-- odom→base_footprint TF is redirected to a dead gz-transport topic (NOT
+           /robot_001/tf, NOT bridged) on purpose (Session 16 Task 9e). This chassis's
+           wheel odometry over-reports in-place rotation ~30% (measured — see
+           config/ekf.yaml); the robot_localization EKF now owns odom→base_footprint
+           by fusing IMU yaw-rate + wheel-odom translation. The odom MESSAGE above is
+           still published and bridged — the EKF consumes it. Do NOT point this back at
+           /robot_001/tf: two publishers for one transform = the AMCL "jump back in
+           time" delocalization class of bug. -->
+      <tf_topic>/robot_001/wheel_odom_tf_unused</tf_topic>
       <frame_id>odom</frame_id>
       <child_frame_id>base_footprint</child_frame_id>
     </plugin>
