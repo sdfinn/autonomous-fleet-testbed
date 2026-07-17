@@ -226,6 +226,10 @@ docker buildx build --platform linux/arm64 \
   domain number (or running on 0, like CI) collides with them. From a Claude Code shell,
   subagent-spawned leftovers may not respond to sandboxed pkill — kill by explicit PID with
   sandbox disabled if the pattern kill reports success but pgrep still shows them.
+- **Headless Gazebo here renders via llvmpipe (software) — a newly spawned model takes up to
+  ~1.5 s to appear in camera frames.** Found 2026-07-17 (Mission 2 calibration): a fixed
+  `sleep(1.0)` after `gz service` spawn is flaky; poll-until-detected (≤5 s, 0.5 s steps) is
+  the pattern for any test/tool that spawns a model then expects the camera to see it.
 - **nav_runner goal stamp:** Use `Time().to_msg()` (zero timestamp = "use latest TF") for the
   NavigateToPose goal header stamp. Wall-clock `get_clock().now()` will be rejected by Nav2
   which uses sim time (far-future wall timestamp has no TF data in Nav2's buffer).

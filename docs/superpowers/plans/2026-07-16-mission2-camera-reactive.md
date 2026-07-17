@@ -22,6 +22,12 @@ pytest, SQLite/pandera telemetry.
 
 **Spec (source of truth):** `docs/superpowers/specs/2026-07-16-mission2-design.md`
 
+**Execution status (2026-07-17, paused):** Tasks 1–8 complete + review-approved on branch
+`mission2-camera-reactive` (HEAD `10dbb76`). Task 9 interrupted before any test run — an
+unverified `tests/test_mission2.py` sits untracked in the working tree. Per-task record,
+review findings carried forward, and resume instructions:
+`.superpowers/sdd/progress.md` → "SESSION PAUSED 2026-07-17". Resume: Task 9 → 10 → 11 → 12.
+
 ## Global Constraints
 
 - flake8 max line length is **99** (stage-1 gate; broke CI on 2026-07-16 — check before commit).
