@@ -1,0 +1,10 @@
+# HSV detection profile for the GAZEBO camera (spec §4, §6). A real webcam gets its own
+# profile (hsv_realcam.yaml) in the webcam follow-up plan — thresholds are per-camera
+# config data, never code, and the measured delta between profiles is itself a
+# sim-to-real data point.
+colors:
+  red:    {h: [345, 15], s_min: 0.5, v_min: 0.2}   # wraps through 0
+  yellow: {h: [40, 75],  s_min: 0.5, v_min: 0.2}   # green sphere is ~120 — outside band
+min_pixels: 40          # reject speckle; an 86 mm ball at 3 m is still ~200 px
+range_k: 47.7           # analytic pinhole estimate (f_px 554.3 x 0.086 m ball) —
+                        # REPLACED by the measured value in Task 9 calibration
