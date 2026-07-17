@@ -21,8 +21,8 @@ import numpy as np
 from PIL import Image as PILImage
 
 
-def image_msg_to_png(msg, path):
-    """Write one camera frame to `path` as PNG. Supports rgb8 and bgr8 encodings."""
+def image_msg_to_rgb(msg):
+    """Decode one sensor_msgs/Image (rgb8/bgr8, row padding OK) to an RGB uint8 array."""
     if msg.encoding not in ('rgb8', 'bgr8'):
         raise ValueError(f'unsupported image encoding: {msg.encoding}')
     # `step` is the stride in bytes per row (may exceed width*3 due to padding).
@@ -30,4 +30,9 @@ def image_msg_to_png(msg, path):
     arr = arr[:, : msg.width * 3].reshape(msg.height, msg.width, 3)
     if msg.encoding == 'bgr8':
         arr = arr[:, :, ::-1]
-    PILImage.fromarray(arr, 'RGB').save(path)
+    return arr
+
+
+def image_msg_to_png(msg, path):
+    """Write one camera frame to `path` as PNG. Supports rgb8 and bgr8 encodings."""
+    PILImage.fromarray(image_msg_to_rgb(msg), 'RGB').save(path)

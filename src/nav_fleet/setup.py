@@ -34,6 +34,7 @@ setup(
         'console_scripts': [
             'nav_runner = nav_fleet.nav_runner:main',
             'metrics_collector = nav_fleet.metrics_collector:main',
+            'ball_detector = nav_fleet.ball_detector:main',
         ],
     },
 )

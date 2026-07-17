@@ -30,6 +30,8 @@ Commit to CI only when the x86 pipeline is clean. See BLUEPRINT.md "Tiered devel
 - Colcon workspace: ~/autonomous-fleet-testbed/ (build from here)
 - `ros-jazzy-robot-localization` (ekf_node) required on BOTH machines since Session 16 —
   workstation + Jetson (`sudo apt install ros-jazzy-robot-localization` on a rebuilt Jetson)
+- `ros-jazzy-vision-msgs` required on BOTH machines since Session 16 Plan B (ball_detector) —
+  `sudo apt install ros-jazzy-vision-msgs`
 
 ## Key Commands
 ```bash
