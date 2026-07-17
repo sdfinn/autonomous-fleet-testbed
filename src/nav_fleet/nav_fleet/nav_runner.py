@@ -40,6 +40,7 @@ class NavRunner(Node):
         self.last_final_x = None
         self.last_final_y = None
         self.last_position_error = None
+        self.last_interrupt = None
 
         self._latest_pose = None
         self.create_subscription(
@@ -49,7 +50,18 @@ class NavRunner(Node):
     def _pose_cb(self, msg):
         self._latest_pose = msg.pose.pose
 
-    def send_goal(self, x, y, timeout=90.0, yaw=None):
+    def _cancel_goal(self, goal_handle, timeout_s=5.0):
+        """Cancel an in-flight Nav2 goal and wait briefly for the server to confirm —
+        the controller stops publishing cmd_vel on cancellation, which IS the stop."""
+        fut = goal_handle.cancel_goal_async()
+        deadline = time.time() + timeout_s
+        while time.time() < deadline and not fut.done():
+            rclpy.spin_once(self, timeout_sec=0.1)
+        if not fut.done():
+            self.get_logger().warning('cancel_goal not confirmed within timeout')
+
+    def send_goal(self, x, y, timeout=90.0, yaw=None, interrupt_cb=None, spin_extra=None):
+        self.last_interrupt = None
         start_time = time.time()
         steps = 0
 
@@ -112,6 +124,17 @@ class NavRunner(Node):
             if result_future.done():
                 break
             spin()
+            if spin_extra is not None:
+                # Service the caller's subscriptions (e.g. mission_runner's detection
+                # topic) — send_goal's spin loop only spins THIS node otherwise.
+                rclpy.spin_once(spin_extra, timeout_sec=0.0)
+            if interrupt_cb is not None:
+                hit = interrupt_cb()
+                if hit:
+                    self.get_logger().warning(f'goal interrupted: {hit!r} — cancelling')
+                    self.last_interrupt = hit
+                    self._cancel_goal(goal_handle)
+                    return self._finish(False, x, y, start_time, steps)
 
         if not result_future.done():
             self.get_logger().warning('Goal wait timed out')
