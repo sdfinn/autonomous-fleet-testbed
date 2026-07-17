@@ -65,6 +65,18 @@ def generate_launch_description():
         ],
     )
 
+    # Mission 2 HSV ball detector — always-on with the nav stack (spec §4): lives on the
+    # robot side so HIL runs it on the Jetson while camera frames arrive over DDS.
+    # mission_runner simply ignores detections during steps with no reactions.
+    ball_detector = Node(
+        package='nav_fleet',
+        executable='ball_detector',
+        name='ball_detector',
+        output='screen',
+        parameters=[{'use_sim_time': True,
+                     'hsv_config': str(PKG / 'config' / 'hsv_gazebo.yaml')}],
+    )
+
     nav2_bringup_dir = get_package_share_directory('nav2_bringup')
     nav2 = TimerAction(
         period=LaunchConfiguration('start_delay'),
@@ -87,5 +99,6 @@ def generate_launch_description():
     return LaunchDescription([
         start_delay_arg,
         ekf_node,
+        ball_detector,
         nav2,
     ])

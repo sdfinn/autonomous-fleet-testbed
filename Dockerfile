@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-navigation2 \
     ros-jazzy-nav2-bringup \
     ros-jazzy-rmw-cyclonedds-cpp \
+    ros-jazzy-vision-msgs \
     && rm -rf /var/lib/apt/lists/*
 
 # Python deps (CI-safe subset — not the full venv pip freeze)
