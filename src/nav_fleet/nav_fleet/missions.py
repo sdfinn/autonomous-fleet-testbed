@@ -23,6 +23,13 @@ from dataclasses import dataclass
 from nav_fleet.semantic_map import SEMANTIC_MAP
 
 VALID_ACTIONS = ('navigate', 'take_picture')  # Mission 2 adds reaction supervision atop these
+VALID_REACTIONS = ('photo_then_stop', 'photo_then_home')
+
+# Trigger definition A (spec §2): a ball whose apparent range is at or under
+# REACTION_RANGE_M for REACTION_FRAMES consecutive detector frames. Values shared by
+# mission_runner (counting) and the Mission 2 test harness (placement envelope).
+REACTION_RANGE_M = 1.0
+REACTION_FRAMES = 3
 
 
 @dataclass(frozen=True)
@@ -31,6 +38,7 @@ class MissionStep:
     label: str           # human-readable step description (logged during execution)
     location: str = None  # SEMANTIC_MAP key — required for 'navigate'
     yaw: float = None    # optional final heading (radians, map frame) for 'navigate'
+    reactions: dict = None  # navigate only: detected color -> VALID_REACTIONS entry
 
 
 MISSIONS = {
@@ -45,6 +53,14 @@ MISSIONS = {
         # turn at the arch (observed eyes-on 2026-07-15). Spawn faces north (pi/2).
         MissionStep('navigate', 'return to start', 'home_base', math.pi / 2),
     ),
+    # Mission 2 (Session 16 Plan B): drive toward the green sphere and stop short of it,
+    # reacting to croquet balls come across en route (spec §1-2). Single leg — the
+    # reaction itself supplies any further movement (photo_then_home drives back).
+    'mission2': (
+        MissionStep('navigate', 'drive toward the green sphere, watching for balls',
+                    'sphere_approach', math.pi / 2,
+                    reactions={'red': 'photo_then_stop', 'yellow': 'photo_then_home'}),
+    ),
 }
 
 
@@ -57,6 +73,13 @@ def validate_mission(steps):
             raise ValueError(f'step {i}: unknown action {step.action!r}')
         if step.action == 'navigate' and step.location not in SEMANTIC_MAP:
             raise ValueError(f'step {i}: location {step.location!r} not in SEMANTIC_MAP')
+        if step.reactions is not None:
+            if step.action != 'navigate':
+                raise ValueError(f'step {i}: reactions are only valid on navigate steps')
+            for color, reaction in step.reactions.items():
+                if reaction not in VALID_REACTIONS:
+                    raise ValueError(
+                        f'step {i}: unknown reaction {reaction!r} for color {color!r}')
 
 
 def yaw_to_quaternion(yaw):
