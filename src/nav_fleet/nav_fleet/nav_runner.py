@@ -124,6 +124,10 @@ class NavRunner(Node):
             if result_future.done():
                 break
             spin()
+            # goal finished during spin() — its real result wins over a
+            # same-iteration interrupt (review 2026-07-17 race finding)
+            if result_future.done():
+                break
             if spin_extra is not None:
                 # Service the caller's subscriptions (e.g. mission_runner's detection
                 # topic) — send_goal's spin loop only spins THIS node otherwise.
