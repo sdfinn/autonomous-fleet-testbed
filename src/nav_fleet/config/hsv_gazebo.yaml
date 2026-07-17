@@ -6,5 +6,6 @@ colors:
   red:    {h: [345, 15], s_min: 0.5, v_min: 0.2}   # wraps through 0
   yellow: {h: [40, 75],  s_min: 0.5, v_min: 0.2}   # green sphere is ~120 — outside band
 min_pixels: 40          # reject speckle; an 86 mm ball at 3 m is still ~200 px
-range_k: 47.7           # analytic pinhole estimate (f_px 554.3 x 0.086 m ball) —
-                        # REPLACED by the measured value in Task 9 calibration
+range_k: 47.1           # measured via tools/calibrate_ball_range 2026-07-16 (analytic
+                        # estimate was 47.7) — red & yellow, 5 distances 0.5-2.0 m,
+                        # spread 2.0 (4.2% of mean) across 10 samples
