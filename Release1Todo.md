@@ -3653,13 +3653,14 @@ Nav2's own mechanisms — no custom BT).
 > detected area keepout/lethal via a dynamic `nav2_costmap_2d` layer — the planner routes
 > around it natively). No custom Behavior Tree — that risk was explicitly rejected.
 >
-> **Update (2026-07-15): the brainstorm draft spec
-> `docs/superpowers/specs/2026-07-15-session16-mission2-design-draft.md` supersedes this
-> section where they conflict.** Yellow is now photo + return home (NO costmap keepout in
-> Mission 2 — avoid-and-continue deferred to Mission 3); red = photo + full stop; trigger =
+> **Update (2026-07-16): the APPROVED Mission 2 spec
+> `docs/superpowers/specs/2026-07-16-mission2-design.md` supersedes this section where
+> they conflict.** Yellow is now photo + return home (NO costmap keepout in Mission 2 —
+> avoid-and-continue deferred to Mission 3); red = photo + full stop; trigger =
 > proximity + persistence (~1 m / 3 frames); ball placement is harness-owned, seeded
-> random. The checkboxes below predate that draft — reconcile them when the spec
-> finalizes.
+> random per CI run; detector publishes vision_msgs; webcam tier is a follow-up plan
+> (its checkboxes below transfer there). The checkboxes below predate the spec —
+> reconcile them when Plan B is written.
 
 - [ ] **HSV ball-detector node** (new, in `nav_fleet/`): reimplement the *algorithm* from
       BC's `behavior_controller.py` (HSV thresholding — hardware-proven, zero training
