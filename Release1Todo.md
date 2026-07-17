@@ -3607,9 +3607,12 @@ Nav2's own mechanisms — no custom BT).
       colcon trap either way).
 - [x] **Reproducibility:** ≥3 consecutive green `stage-4-hil` runs. Session 15's HIL record
       is a single successful run — this is the open risk the CI stage exists to close.
-- [ ] Phase 2 (this session or explicitly re-deferred): the job pulls the `stage-3-arm64`
+- [x] Phase 2 (this session or explicitly re-deferred): the job pulls the `stage-3-arm64`
       GHCR arm64 image onto the Jetson and runs the mission executor *inside that
       container* — finally making the arm64→Stage-4 edge consume something real.
+      (Shipped 2026-07-15, PR #3 → cf343da; second run all green — first CI exercise of
+      the full chain: arm64 image → GHCR pull → in-container mission at 15W → HIL
+      telemetry row shipped to the workstation drift DB.)
 - [x] **Registry-backed Docker build cache** for `stage-3-arm64`: add
       `cache-from`/`cache-to: type=registry,ref=ghcr.io/sdfinn/autonomous-fleet-testbed:buildcache,mode=max`
       to the build-push step so layer cache survives BuildKit GC, builder recreation, and
@@ -3649,6 +3652,14 @@ Nav2's own mechanisms — no custom BT).
 > `cancel_goal_async()` — urgent/binary, no planning needed); yellow ball → avoid (mark the
 > detected area keepout/lethal via a dynamic `nav2_costmap_2d` layer — the planner routes
 > around it natively). No custom Behavior Tree — that risk was explicitly rejected.
+>
+> **Update (2026-07-15): the brainstorm draft spec
+> `docs/superpowers/specs/2026-07-15-session16-mission2-design-draft.md` supersedes this
+> section where they conflict.** Yellow is now photo + return home (NO costmap keepout in
+> Mission 2 — avoid-and-continue deferred to Mission 3); red = photo + full stop; trigger =
+> proximity + persistence (~1 m / 3 frames); ball placement is harness-owned, seeded
+> random. The checkboxes below predate that draft — reconcile them when the spec
+> finalizes.
 
 - [ ] **HSV ball-detector node** (new, in `nav_fleet/`): reimplement the *algorithm* from
       BC's `behavior_controller.py` (HSV thresholding — hardware-proven, zero training
