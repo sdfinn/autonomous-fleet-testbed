@@ -15,7 +15,7 @@ def test_semantic_map_keeps_existing_locations():
     from nav_fleet.semantic_map import SEMANTIC_MAP
     assert SEMANTIC_MAP['home_base'] == (-1.276, 1.2)
     assert SEMANTIC_MAP['bedroom_goal'] == (0.0, 3.7)
-    assert len(SEMANTIC_MAP) == 9  # 8 original + doorway_center
+    assert len(SEMANTIC_MAP) == 10  # 9 as of Session 15 + sphere_approach (Mission 2)
 
 
 def test_mission1_shape():
@@ -101,3 +101,39 @@ def test_image_msg_to_png_rejects_unknown_encoding(tmp_path):
     from nav_fleet.image_io import image_msg_to_png
     with pytest.raises(ValueError, match='mono16'):
         image_msg_to_png(_fake_image_msg('mono16'), str(tmp_path / 'x.png'))
+
+
+def test_semantic_map_has_sphere_approach():
+    from nav_fleet.semantic_map import SEMANTIC_MAP
+    # 0.5 m short of the green sphere at bedroom_goal (0.0, 3.7) — Mission 2 nav goal
+    assert SEMANTIC_MAP['sphere_approach'] == (0.0, 3.2)
+
+
+def test_mission2_shape():
+    import math
+    from nav_fleet.missions import MISSIONS
+    steps = MISSIONS['mission2']
+    assert [s.action for s in steps] == ['navigate']
+    assert steps[0].location == 'sphere_approach'
+    assert steps[0].yaw == pytest.approx(math.pi / 2)  # face north, toward the sphere
+    assert steps[0].reactions == {'red': 'photo_then_stop', 'yellow': 'photo_then_home'}
+
+
+def test_validate_rejects_unknown_reaction():
+    from nav_fleet.missions import MissionStep, validate_mission
+    with pytest.raises(ValueError, match='unknown reaction'):
+        validate_mission((MissionStep('navigate', 'go', 'bedroom_goal',
+                                      reactions={'red': 'explode'}),))
+
+
+def test_validate_rejects_reactions_on_take_picture():
+    from nav_fleet.missions import MissionStep, validate_mission
+    with pytest.raises(ValueError, match='navigate steps'):
+        validate_mission((MissionStep('take_picture', 'snap',
+                                      reactions={'red': 'photo_then_stop'}),))
+
+
+def test_validate_rejects_navigate_without_location():
+    from nav_fleet.missions import MissionStep, validate_mission
+    with pytest.raises(ValueError, match='not in SEMANTIC_MAP'):
+        validate_mission((MissionStep('navigate', 'go nowhere'),))

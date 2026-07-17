@@ -29,4 +29,5 @@ SEMANTIC_MAP = {
     'desk':           (-0.9590, 5.3240),
     'pc_tower':       (-1.0360, 4.2050),  # obstacle near the desk
     'bed':            (0.8130, 5.4360),
+    'sphere_approach': (0.0, 3.2),        # Mission 2 nav goal — 0.5 m short of the sphere
 }
