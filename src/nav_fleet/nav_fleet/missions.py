@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from nav_fleet.semantic_map import SEMANTIC_MAP
 
-VALID_ACTIONS = ('navigate', 'take_picture')  # Mission 2 will add reaction supervision on top of these
+VALID_ACTIONS = ('navigate', 'take_picture')  # Mission 2 adds reaction supervision atop these
 
 
 @dataclass(frozen=True)
