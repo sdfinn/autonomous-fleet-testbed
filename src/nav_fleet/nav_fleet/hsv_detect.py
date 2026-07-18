@@ -9,6 +9,15 @@ runners without ROS2 (stage-1). Thresholds and range_k are per-camera CONFIG, no
 import numpy as np
 import yaml
 
+# Task 9 fix (2026-07-17): a bounding box touching (within this many px of) the frame
+# border is CLIPPED — its true width extends past the frame edge, so width_px
+# underestimates the ball's apparent size and range_m = range_k / width_px overshoots
+# badly (a live run measured 2.9-6.7 m estimated range for a true ~1.1 m distance).
+# Such detections must not drive the reaction trigger. range_m is set to NaN rather than
+# omitted so callers doing a numeric range comparison (est_range <= threshold) exclude
+# them automatically with no extra branching — see mission_runner._detection_cb.
+EDGE_MARGIN_PX = 2
+
 
 def load_hsv_config(path):
     """Load a per-camera HSV profile (colors, min_pixels, range_k) from YAML."""
@@ -40,9 +49,11 @@ def detect_balls(rgb, cfg):
     """Detect configured ball colors in one RGB frame.
 
     Returns one dict per detected color: {'color', 'cx', 'cy', 'width_px', 'height_px',
-    'range_m', 'pixels'}. One ball per color per frame by design (Mission 2 runs place a
-    single ball; the bounding box of a multi-blob mask would simply be wrong — accepted).
+    'range_m', 'pixels', 'edge_clipped'}. One ball per color per frame by design (Mission
+    2 runs place a single ball; the bounding box of a multi-blob mask would simply be
+    wrong — accepted). 'range_m' is NaN when 'edge_clipped' is True (see EDGE_MARGIN_PX).
     """
+    h_img, w_img = rgb.shape[:2]
     h, s, v = rgb_to_hsv(rgb)
     out = []
     for color, band in cfg['colors'].items():
@@ -57,13 +68,16 @@ def detect_balls(rgb, cfg):
             continue
         ys, xs = np.nonzero(mask)
         width = int(xs.max() - xs.min() + 1)
+        clipped = bool(xs.min() < EDGE_MARGIN_PX or xs.max() >= w_img - EDGE_MARGIN_PX
+                       or ys.min() < EDGE_MARGIN_PX or ys.max() >= h_img - EDGE_MARGIN_PX)
         out.append({
             'color': color,
             'cx': float(xs.mean()),
             'cy': float(ys.mean()),
             'width_px': width,
             'height_px': int(ys.max() - ys.min() + 1),
-            'range_m': cfg['range_k'] / width,
+            'range_m': float('nan') if clipped else cfg['range_k'] / width,
             'pixels': pixels,
+            'edge_clipped': clipped,
         })
     return out
