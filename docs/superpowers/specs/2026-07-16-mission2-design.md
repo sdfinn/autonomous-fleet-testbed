@@ -7,6 +7,8 @@ checkboxes in `Release1Todo.md` where they conflict.**
 (Was `2026-07-15-session16-mission2-design-draft.md`; the 2026-07-15 decisions are
 unchanged, the former open questions are now resolved in §3–§9.)
 
+**Implemented:** 2026-07-18, draft PR #4 (all three HIL rungs live-proven on the Jetson).
+
 ## 1. Mission definition
 
 1. **Preset navigation, no search.** The robot is told where to go; "find it yourself"

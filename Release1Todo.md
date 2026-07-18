@@ -3712,6 +3712,14 @@ Nav2's own mechanisms — no custom BT).
       returns in Session 19, constrained to an area-of-interest — placement bounds are
       spec, not a tuning knob. Per-color triggers as shipped: red 1.3 m → photo + stop;
       yellow 0.8 m → photo + return home.)
+      **(2026-07-18: all three HIL rungs now in `stage-4-hil` — Task 11 rung 1 (nominal,
+      no ball) + Task 12 rung 2 (yellow, photo_then_home) + rung 3 (red, photo_then_stop).
+      HIL sequence: mission1 → nominal → reset-home (drive-home janitor) → yellow → red
+      (red last, robot stays mid-room). Ground truth for the react judges comes from a
+      workstation poller — the Jetson has no Gazebo, so its reaction log reads "at None";
+      the poller's closest-approach point is the reaction point. Both react rungs
+      LIVE-PROVEN on the real Jetson 2026-07-18: yellow reaction @0.64 m returned home,
+      red reaction @1.31 m stayed stationary, both judge PASS. draft PR #4.)
 - [ ] **Real-camera tier (manual by design — stays OUT of CI):** USB UVC webcam on the
       Jetson via `ros-jazzy-v4l2-camera` (or `usb_cam`), publishing on its **own topic —
       do NOT reuse `/robot_001/camera/image_raw`**, the Gazebo bridge owns that in sim;
@@ -3743,6 +3751,17 @@ Nav2's own mechanisms — no custom BT).
       don't discover it live mid-run.
       **(2026-07-18: deferred** — to the webcam follow-up plan, per spec §9. Not in scope
       for this Plan B.)
+
+> **Webcam follow-up plan (deferred, spec §9) — its own future scope, NOT Plan B.**
+> The three real-camera bullets above (UVC webcam tier, auto-exposure/white-balance pin,
+> and the wall-clock-vs-sim-time clock-domain decision) are consolidated here as one
+> deferred deliverable: swap the sim camera for a real UVC webcam on the Jetson, publishing
+> on its own topic (never `/robot_001/camera/image_raw`, which the Gazebo bridge owns),
+> remap the detector's input, and run Mission 2 HIL with Mike presenting red/yellow croquet
+> balls by hand. Outputs Session 18 (real robot) consumes: a calibrated `hsv_realcam.yaml`
+> + pinned camera settings + observed detection latency. **Bill of materials: one UVC USB
+> webcam.** Explicitly out of CI (manual by design) and out of the Mission 2 Plan B closed
+> here — the CI/HIL tiers use the sim camera. Written up so it isn't lost, not scheduled.
 
 ### Piece 3 — E2E fixes that protect the new stage (kept from the old tidy-up list)
 
