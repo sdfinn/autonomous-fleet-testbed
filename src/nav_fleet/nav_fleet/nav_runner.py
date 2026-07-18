@@ -42,6 +42,10 @@ class NavRunner(Node):
         self.last_final_y = None
         self.last_position_error = None
         self.last_interrupt = None
+        # Cancel-on-final-failure zombie guard (Task 13 fix wave): the most recent goal
+        # handle, so a failure path can cancel a still-executing controller instead of
+        # leaving an unsupervised robot driving a goal Nav2's BT already gave up on.
+        self._last_goal_handle = None
 
         self._latest_pose = None
         self.create_subscription(
@@ -200,7 +204,7 @@ class NavRunner(Node):
             # handle while the controller still executes the delivered path — the robot
             # then drives with NO supervising mission. Cancel whatever is outstanding
             # before reporting failure; on the real robot this is a safety issue.
-            if getattr(self, '_last_goal_handle', None) is not None:
+            if self._last_goal_handle is not None:
                 self._cancel_goal(self._last_goal_handle)
             return self._finish(False, x, y, start_time, steps)
 

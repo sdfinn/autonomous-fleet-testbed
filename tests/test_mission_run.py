@@ -205,7 +205,10 @@ def test_reaction_red_stops_and_photographs(runner, monkeypatch):
     runner.reaction_events.clear()
     assert runner.run_mission('mission2') is True
     assert len(goals) == 1                      # no retreat leg on photo_then_stop
-    assert photos == ['mission2_reaction_red']
+    # Option B (Task 13): mission2 takes a home reference photo FIRST, before the
+    # reactive navigate leg even starts — so a red stop-in-place still yields two
+    # photos, not one.
+    assert photos == ['mission2_home_ref', 'mission2_reaction_red']
     assert runner.reaction_events == [
         {'color': 'red', 'reaction': 'photo_then_stop', 'truth_xy': (0.0, 2.9)}]
 
