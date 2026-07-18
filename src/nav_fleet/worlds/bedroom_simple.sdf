@@ -220,7 +220,7 @@
          semantic_map.MARKER_XY (0.0, 4.05); the reaction ball is derived from it. -->
     <model name="goal_marker">
       <static>true</static>
-      <pose>0.0 4.05 0.0025 0 0 0</pose>
+      <pose>0.9 3.90 0.0025 0 0 0</pose>
       <link name="link">
         <visual name="v">
           <geometry><cylinder><radius>0.10</radius><length>0.005</length></cylinder></geometry>

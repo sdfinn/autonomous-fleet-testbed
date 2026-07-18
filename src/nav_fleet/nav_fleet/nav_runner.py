@@ -132,6 +132,7 @@ class NavRunner(Node):
                 return ('send_fail',)
 
             accept_time = time.time()
+            self._last_goal_handle = goal_handle  # for cancel-on-final-failure (zombie guard)
             start_xy = self._pose_xy()  # for the cold-abort displacement check
             result_future = goal_handle.get_result_async()
 
@@ -186,12 +187,21 @@ class NavRunner(Node):
                     f'COLD-START GOAL ABORT (retry {cold_attempt + 1}/{COLD_ABORT_RETRIES}): '
                     f'non-success result in {elapsed:.2f}s, displacement {disp_s} — Nav2 '
                     'cold-goal ack-timeout race, resending the same goal')
-                time.sleep(1.0)
+                # Escalating backoff (live evidence 2026-07-18): rapid ~1 s resends failed
+                # 6/6 — they land inside the same controller not-ready window. The bash-level
+                # retries that DID work had multi-second process-restart gaps; mirror that.
+                time.sleep(2.0 * (cold_attempt + 1))
                 continue
             if verdict == 'cold_abort':
                 self.get_logger().error(
                     f'cold-start abort persisted after {COLD_ABORT_RETRIES} retries — '
                     'treating as a real failure')
+            # Zombie guard (2026-07-18, Jetson nav2_hil.log): bt_navigator can abort our
+            # handle while the controller still executes the delivered path — the robot
+            # then drives with NO supervising mission. Cancel whatever is outstanding
+            # before reporting failure; on the real robot this is a safety issue.
+            if getattr(self, '_last_goal_handle', None) is not None:
+                self._cancel_goal(self._last_goal_handle)
             return self._finish(False, x, y, start_time, steps)
 
     def _finish(self, succeeded, goal_x, goal_y, start_time, steps):
