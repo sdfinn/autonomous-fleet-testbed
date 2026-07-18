@@ -370,11 +370,25 @@ def _print_checklist(checklist, verdict, fails):
     print(f'  => {verdict}')
 
 
-def run_no_ball(executor):
+def run_no_ball(executor, ball_ops=None, ball_xy=None):
+    """Mike's day design (2026-07-18 GUI review): the YELLOW ball is placed DURING this run's
+    return leg — the observer sees it appear behind the retreating robot, and run 2 starts
+    with no dead air. gz mode only; operator mode keeps its explicit post-run prompt."""
     print('\n=== [day] RUN 1/3: no_ball — verified round trip ===')
     print(f'  start ground truth: {get_ground_truth_xy()}')
+    holder = {'placed_name': None}
+    place_thread = None
+    stop_evt = threading.Event()
+    if ball_ops is not None and ball_ops.concurrent and ball_xy is not None:
+        place_thread = threading.Thread(
+            target=_place_during_return,
+            args=(ball_ops, 'yellow', ball_xy, holder, stop_evt), daemon=True)
+        place_thread.start()
     result = executor.run()
     final = get_ground_truth_xy()
+    if place_thread is not None:
+        stop_evt.set()
+        place_thread.join(timeout=30)
     sim = home_pair_similarity(result.tagged('mission2_home_ref'),
                                result.tagged('mission2_home_arrival'))
     fails = judge_no_ball(result.reaction_events, final,
@@ -385,7 +399,25 @@ def run_no_ball(executor):
     print(f'  home_photo_similarity = {sim}')
     _print_checklist(result.checklist, f"no_ball {'PASS' if ok else 'FAIL'}", fails)
     executor.reset()
-    return ok
+    return ok, holder['placed_name']
+
+
+def _place_during_return(ball_ops, color, ball_xy, holder, stop_evt):
+    """Background placement for run 1's return leg: wait until the robot has begun retreating
+    (same retreat detector as the yellow->red swap), then place `color` behind it. If the
+    mission finishes first, stop_evt fires the same placement as a fallback — the ball is
+    always in place before the next run. NOTE: placement happens on the return leg, where
+    reactions are NOT armed (outbound-only) — verified in missions.py."""
+    peak_y = None
+    while not stop_evt.is_set():
+        xy = get_ground_truth_xy()
+        if xy is not None:
+            peak_y = xy[1] if peak_y is None else max(peak_y, xy[1])
+            if peak_y - xy[1] >= RETREAT_DROP_M:
+                print(f'[day] retreat detected — placing {color} behind the returning robot')
+                break
+        time.sleep(0.3)
+    holder['placed_name'] = ball_ops.place(color, *ball_xy)
 
 
 def _swap_during_return(ball_ops, yellow_name, ball_xy, holder, stop_evt):
@@ -409,9 +441,10 @@ def _swap_during_return(ball_ops, yellow_name, ball_xy, holder, stop_evt):
     holder['red_name'] = ball_ops.place('red', *ball_xy)
 
 
-def run_yellow(executor, ball_ops, ball_xy):
+def run_yellow(executor, ball_ops, ball_xy, yellow_name=None):
     print('\n=== [day] RUN 2/3: yellow — stop 0.8 m, photograph, self-return home ===')
-    yellow_name = ball_ops.place('yellow', *ball_xy)
+    if yellow_name is None:   # operator mode, or run-1 placement didn't happen
+        yellow_name = ball_ops.place('yellow', *ball_xy)
     truth_start = get_ground_truth_xy()
     print(f'  start ground truth: {truth_start}')
     holder = {'red_name': None}
@@ -471,8 +504,8 @@ def run_red(executor, ball_ops, ball_xy, red_name, hold_s):
 def run_day(executor, ball_ops, ball_xy, hold_s):
     """The reusable day core — SAME on sim and HIL, only executor + BallOps differ."""
     results = {}
-    results['no_ball'] = run_no_ball(executor)
-    results['yellow'], red_name = run_yellow(executor, ball_ops, ball_xy)
+    results['no_ball'], yellow_name = run_no_ball(executor, ball_ops, ball_xy)
+    results['yellow'], red_name = run_yellow(executor, ball_ops, ball_xy, yellow_name)
     results['red'] = run_red(executor, ball_ops, ball_xy, red_name, hold_s)
     print('\n=== [day] SUMMARY ===')
     for name in ('no_ball', 'yellow', 'red'):
