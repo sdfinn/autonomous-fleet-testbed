@@ -286,15 +286,18 @@ jobs:
     # accepted behavior the retired Isaac job had.
     runs-on: [self-hosted, x86, gpu, rtx5080]
     needs: stage-3-arm64
-    # 30 (raised from 20 in Task 12 when the react rungs were added). Budget arithmetic —
-    # the react rungs REUSE the sim+Nav2 that `run` leaves up, so they cost real mission
-    # runtime (~1-2 min each in practice), not another sim/Nav2 relaunch:
+    # 30 (raised from 20 in Task 12 when the react rungs were added). Budget arithmetic
+    # (Task 13: reset-home step REMOVED — nominal self-returns — but nominal now costs a full
+    # round trip incl. its own return leg). The rungs REUSE the sim+Nav2 that `run` leaves
+    # up, so each is real mission runtime, not another sim/Nav2 relaunch:
     #   run (mission1): sim 60 + nav2 120 + mission 300 + verify 30 = 510s, and the
-    #     discovery-flake retry re-runs that whole phase -> ~17 min worst case (the old
-    #     20-min ceiling's driver).
-    #   mission2-nominal ~1.5 + reset-home ~1.5 + mission2-yellow ~2 + mission2-red ~2
-    #     + judges/scp + teardown ~1.5 = ~8.5 min of added realistic runtime.
-    #   Common case (no retry): ~8 (run) + 8.5 = ~17 min. With one retry: ~25 min.
+    #     transient-flake retry (now also covering the follow_path ack-timeout) re-runs that
+    #     whole phase -> ~17 min worst case (the ceiling's driver).
+    #   mission2-nominal ROUND TRIP ~3 (out+back+3 photos) + mission2-yellow ~2.5
+    #     (out+react+back) + mission2-red ~2 (out+react, stays) + judges/scp/pair-check
+    #     + teardown ~1.5 = ~9 min of added realistic runtime (reset-home's ~1.5 min is gone,
+    #     absorbed into nominal's return leg).
+    #   Common case (no retry): ~8 (run) + 9 = ~17 min. With one retry: ~25 min.
     # 30 leaves headroom for DDS settle without masking a genuine hang — each ssh mission
     # keeps its own `timeout 300`/`180` cap, so a stuck rung still fails fast on its own.
     timeout-minutes: 30
@@ -358,12 +361,12 @@ jobs:
       - name: Run HIL mission (sim up → Nav2 up → mission → verify; one retry on discovery flake)
         run: scripts/hil_stage.sh run
 
-      - name: Mission 2 nominal variant (HIL graduation rung 1 — spec §8)
+      - name: Mission 2 nominal round trip (HIL graduation rung 1 — spec §8, Option B)
         run: scripts/hil_stage.sh mission2-nominal
 
-      - name: Reset — drive home before the react rungs (nominal ends at the sphere)
-        run: scripts/hil_stage.sh reset-home
-
+      # No reset-home step (Task 13): under Option B the nominal round trip SELF-RETURNS to
+      # home_base, so the yellow rung already starts from home. Each rung still asserts the
+      # home precondition first, so a failed self-return fails loudly rather than silently.
       - name: "Mission 2 yellow react (HIL rung 2 — photo_then_home, robot returns home)"
         run: scripts/hil_stage.sh mission2-yellow
 

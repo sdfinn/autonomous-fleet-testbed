@@ -8,16 +8,20 @@
 #   sync <sha>        fetch+checkout <sha> on the Jetson and colcon build --base-paths src
 #   run               full HIL test: sim-up -> nav2-up -> mission -> verify (+1 retry on
 #                     a discovery-shaped failure, after full teardown + 5s DDS settle)
-#   mission2-nominal  HIL graduation rung 1 (spec §8): reuse the sim+Nav2 left up by `run`,
-#                     run mission2 (NO ball — the deterministic-pivot nominal variant) on
-#                     the Jetson, then judge workstation-side (zero reactions + ground truth
-#                     stopped short of the green sphere). Run AFTER `run`, BEFORE teardown.
-#   reset-home        drive the robot back to home_base (go_home mission) between rungs —
-#                     nominal ends at the sphere, so the react rungs need this first.
-#   mission2-yellow   HIL rung 2 (spec §8): deterministic yellow ball beside the sphere;
-#                     reaction photo_then_home (robot returns home by itself). No reset after.
+#   mission2-nominal  HIL graduation rung 1 (spec §8, Task 13 Option B): reuse the sim+Nav2
+#                     left up by `run`, run mission2 (NO ball) on the Jetson — the VERIFIED
+#                     ROUND TRIP (home_ref photo -> marker -> marker photo -> home ->
+#                     home_arrival photo). Judge workstation-side: zero reactions + marker
+#                     photo + ended HOME + home-photo pair. The mission SELF-RETURNS, so no
+#                     reset-home step follows it. Run AFTER `run`, BEFORE the react rungs.
+#   reset-home        drive the robot to home_base (go_home mission) — RETAINED for manual
+#                     use, but NO LONGER a CI step: under Option B nominal/yellow self-return.
+#   mission2-yellow   HIL rung 2 (spec §8): deterministic yellow ball beside the marker;
+#                     reaction photo_then_home (robot returns home by itself + home_arrival
+#                     photo for the pair check). No reset after.
 #   mission2-red      HIL rung 3 (spec §8): deterministic red ball; reaction photo_then_stop
-#                     (robot stays mid-room). Run LAST — nothing follows but teardown.
+#                     (robot STAYS mid-room, takes NO home photo). Run LAST — only teardown
+#                     follows.
 #   teardown          kill both sides (safe to run any time; used by CI's if:always() step)
 #   restore-checkout  checkout main on the Jetson (run once at the very end, not mid-retry)
 set -euo pipefail
@@ -233,6 +237,49 @@ PY
   fi
 }
 
+scp_tagged_photo() {
+  # Pull the newest photo whose 'photo saved:' path contains $2 from mission output $1 to
+  # STATE_DIR — FIRST removing any stale copies of that tag (Task 12 review item 2: a
+  # leftover photo from a prior CI run otherwise satisfies the judge's presence check, and
+  # a stale home_arrival would even FALSE-FAIL the red rung). Best-effort scp: a missing
+  # photo is left for the judge to flag, not a hard error here.
+  local out="$1" tag="$2"
+  rm -f "$STATE_DIR"/*"${tag}"*.png
+  local photo
+  photo=$(grep -oP 'photo saved: \K\S+' "$out" 2>/dev/null | grep -- "$tag" | tail -1 || true)
+  if [ -n "$photo" ]; then
+    scp -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}:autonomous-fleet-testbed/${photo}" \
+        "$STATE_DIR/" || echo "WARN: photo ${photo} (${tag}) not on the Jetson" >&2
+  else
+    echo "WARN: no '${tag}' photo path in mission output (judge flags it if required)" >&2
+  fi
+}
+
+retry_reason() {
+  # Print a one-line reason IFF the just-failed `run` is a known TRANSIENT flake worth ONE
+  # retry, else print nothing (caller then fails hard — a second run would mask a real
+  # regression). Checked BEFORE teardown so the Jetson's Nav2 log is still intact.
+  local m
+  m=$(grep -oE 'Nav2 action server unavailable|Goal rejected after all retries|no camera frame' \
+      "$STATE_DIR/mission.out" 2>/dev/null | head -1 || true)
+  if [ -n "$m" ]; then echo "$m"; return 0; fi
+  # follow_path ACK-TIMEOUT (Task 12 review item 1): the cold-goal flake that bit mission1's
+  # own return leg once. bt_navigator times out waiting for a cold controller_server to
+  # acknowledge the FollowPath goal — "Timed out while waiting for action server to
+  # acknowledge goal request for follow_path" -> "Aborting handle" -> the leg returns False.
+  # That text lands in the JETSON's Nav2 log (${NAV2_LOG}), NOT in mission.out (which only
+  # carries mission_runner's own stdout), so the old mission.out-only filter never caught it.
+  # Bounded to one retry; run_once re-runs verify(), so a retried run stays fully judged.
+  if [ -n "${JETSON_IP:-}" ]; then
+    local f
+    f=$(jssh "grep -c 'acknowledge goal request for follow_path' ${NAV2_LOG} 2>/dev/null || true")
+    if [ "${f:-0}" -ge 1 ] 2>/dev/null; then
+      echo 'follow_path ack-timeout (Nav2 cold-goal flake, Jetson nav2 log)'; return 0
+    fi
+  fi
+  return 0
+}
+
 run_once() {
   sim_up && nav2_up && mission && verify
 }
@@ -241,14 +288,14 @@ run() {
   mkdir -p "$STATE_DIR"
   rm -f "$STATE_DIR/mission.out"
   if run_once; then return 0; fi
-  # Retry-once policy (design doc §3): only for a discovery-shaped failure.
-  if grep -qE 'Nav2 action server unavailable|Goal rejected after all retries|no camera frame' \
-       "$STATE_DIR/mission.out" 2>/dev/null; then
-    local reason_line
-    reason_line=$(grep -oE 'Nav2 action server unavailable|Goal rejected after all retries|no camera frame' \
-        "$STATE_DIR/mission.out" 2>/dev/null | head -1 || true)
+  # Retry-once policy (design doc §3): only for a known TRANSIENT flake — discovery-shaped
+  # (mission.out) OR the follow_path ack-timeout cold-goal flake (Jetson nav2 log). See
+  # retry_reason(). A retried run still goes through verify() (fully judged).
+  local reason_line
+  reason_line=$(retry_reason)
+  if [ -n "$reason_line" ]; then
     echo "HIL RETRY: first attempt failed (${reason_line}) — retrying once"
-    echo '=== discovery-shaped failure: full both-sides teardown, 5s settle, ONE retry ==='
+    echo '=== transient failure: full both-sides teardown, 5s settle, ONE retry ==='
     if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
       {
         echo '### HIL retry occurred'
@@ -259,7 +306,7 @@ run() {
     sleep 5
     run_once
   else
-    echo '=== non-discovery failure: no retry (a second run would mask a real regression) ==='
+    echo '=== non-transient failure: no retry (a second run would mask a real regression) ==='
     return 1
   fi
 }
@@ -277,10 +324,10 @@ run_mission2_nominal() {
   source install/setup.bash
   set -u
   export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0
-  # Deterministic pivot (Mike, 2026-07-17): rung 1 spawns NO ball. The Jetson runs plain
-  # mission2 (navigate to the sphere, take_picture, react to nothing); the workstation
-  # judges zero reactions + ground truth stopped short of the sphere. Same docker-vs-bare
-  # shape as mission(), different mission + container name + log file.
+  # Rung 1 spawns NO ball (Mike, 2026-07-17). The Jetson runs plain mission2 — the Option B
+  # verified round trip (home_ref -> marker -> marker photo -> home -> home_arrival); the
+  # workstation judges zero reactions + marker photo + ended home + home-photo pair. Same
+  # docker-vs-bare shape as mission(), different mission + container name + log file.
   local mission_cmd
   if [ "${HIL_CONTAINER:-0}" = "1" ]; then
     echo "=== [mission2-nominal] in-container: ${HIL_IMAGE:?HIL_CONTAINER=1 requires HIL_IMAGE} ==="
@@ -296,11 +343,23 @@ run_mission2_nominal() {
   local mrc=0
   timeout 300 ssh -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}" "$mission_cmd" \
     2>&1 | tee "$STATE_DIR/mission2.out" || mrc=$?
-  # Workstation-side judge (Gazebo runs here, so ground truth is available here). Reaction
-  # grep + sphere-band check. Capture rc — never let a judge nonzero abort under `set -e`.
+  # Option B (Task 13): the nominal round trip takes home_ref + marker + home_arrival photos
+  # on the Jetson. The Jetson has no Gazebo, so the ground-truth home check AND the
+  # return-fidelity pair check both run HERE — pull the three photos (stale copies removed
+  # first) and hand their globs to the judge.
+  scp_tagged_photo "$STATE_DIR/mission2.out" mission2_marker
+  scp_tagged_photo "$STATE_DIR/mission2.out" mission2_home_ref
+  scp_tagged_photo "$STATE_DIR/mission2.out" mission2_home_arrival
+  # Workstation-side judge (Gazebo runs here, so ground truth is available here). Zero
+  # reactions + marker photo + ended home + home-photo pair. Capture rc — never let a judge
+  # nonzero abort under `set -e`.
   local jrc=0
+  RUNNER_TYPE=hil_jetson POWER_MODE="${POWER_MODE_LABEL}" \
   python3 -m tools.mission2_harness judge-nominal \
-    --mission-log "$STATE_DIR/mission2.out" || jrc=$?
+    --mission-log "$STATE_DIR/mission2.out" \
+    --marker-glob "$STATE_DIR/mission2_marker_*.png" \
+    --home-ref-glob "$STATE_DIR/mission2_home_ref_*.png" \
+    --home-arrival-glob "$STATE_DIR/mission2_home_arrival_*.png" || jrc=$?
   if [ "$mrc" -ne 0 ]; then
     echo "FATAL: mission2 self-reported failure on the Jetson (rc=${mrc})" >&2
     return "$mrc"
@@ -324,10 +383,10 @@ reset_home() {
   echo '=== [reset-home] drive the robot back to home_base (mirrors the sim janitor) ==='
   require_ip
   ws_source
-  # The nominal rung ends AT the sphere (mission2 has no return leg). Before the react rungs
-  # the robot must start from home_base — drive it there via the go_home mission (a single
-  # navigate leg; mission_runner clears both costmaps first, exactly like the sim tests'
-  # _drive_home_after janitor). Teleporting is forbidden: it breaks AMCL + the costmaps.
+  # RETAINED for manual use (Task 13): under Option B the nominal/yellow missions self-return
+  # home, so CI no longer runs this between rungs. When invoked manually it drives the robot
+  # to home_base via the go_home mission (a single navigate leg; mission_runner clears both
+  # costmaps first). Teleporting is forbidden: it breaks AMCL + the costmaps.
   # Bare-metal on the Jetson (a plain nav needs no container image). 180s: one nav leg.
   # Retry up to 3x: go_home is a COLD first goal (fresh mission_runner process, idle Nav2),
   # the case most exposed to a transient flake where bt_navigator's FollowPath call times
@@ -402,16 +461,27 @@ run_mission2_react() {
   # Stop the poller (it writes its JSON in a SIGTERM handler).
   kill -TERM "$watch_pid" 2>/dev/null || true
   wait "$watch_pid" 2>/dev/null || true
-  # Pull the reaction photo to the workstation — mirrors verify()'s scp existence check.
-  # The bind-mounted reports dir puts it on the Jetson host; the judge globs it locally.
-  local photo
-  photo=$(grep -oP 'photo saved: \K\S+' "$STATE_DIR/mission2_${color}.out" \
-      | grep "reaction_${color}" | tail -1 || true)
-  if [ -n "$photo" ]; then
-    scp -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}:autonomous-fleet-testbed/${photo}" \
-        "$STATE_DIR/" || echo "WARN: reaction photo ${photo} not on the Jetson" >&2
+  # Pull the reaction photo to the workstation (stale copy removed first — Task 12 review
+  # item 2). The bind-mounted reports dir puts it on the Jetson host; the judge globs it.
+  scp_tagged_photo "$STATE_DIR/mission2_${color}.out" "reaction_${color}"
+  # Return-fidelity photos (Task 13 §3). Yellow self-returns and takes home_ref + home_arrival
+  # -> pull both for the pair check. Red STAYS and takes NO home_arrival -> just clear any
+  # stale one so the judge's no-home-photo check can't be tripped by the yellow rung's
+  # leftover (this is exactly the stale-photo false-pass/false-fail hazard from item 2).
+  rm -f "$STATE_DIR"/*mission2_home_arrival*.png "$STATE_DIR"/*mission2_home_ref*.png
+  local home_globs=()
+  if [ "$color" = "yellow" ]; then
+    scp_tagged_photo "$STATE_DIR/mission2_${color}.out" mission2_home_ref
+    scp_tagged_photo "$STATE_DIR/mission2_${color}.out" mission2_home_arrival
+    home_globs=(--home-ref-glob "$STATE_DIR/mission2_home_ref_*.png"
+                --home-arrival-glob "$STATE_DIR/mission2_home_arrival_*.png")
   else
-    echo "WARN: no reaction_${color} photo path in mission output (judge will flag it)" >&2
+    # Red: assert NO home-arrival exists (the glob will match nothing after the rm above).
+    home_globs=(--home-arrival-glob "$STATE_DIR/mission2_home_arrival_*.png")
+    # Stationary check depends on the robot having decelerated by the time judge-red takes
+    # its two ground-truth samples. The kill/scp above already spent a second; add a short
+    # explicit settle so red's stop is unambiguous rather than relying on that latency.
+    sleep 2
   fi
   # Workstation-side judge (ground truth is here). Tag the judged verdict row as a HIL run.
   local jrc=0
@@ -420,7 +490,8 @@ run_mission2_react() {
       --ball-x "$ballx" --ball-y "$bally" \
       --mission-log "$STATE_DIR/mission2_${color}.out" \
       --watch-file "$watch" \
-      --photo-glob "$STATE_DIR/mission2_reaction_${color}_*.png" || jrc=$?
+      --photo-glob "$STATE_DIR/mission2_reaction_${color}_*.png" \
+      "${home_globs[@]}" || jrc=$?
   # Ball swap hygiene: remove the ball and settle >=3 s (ghost-ball gotcha) so the next rung
   # can't react to this one's ball. Done after judging (the judge needs the world unchanged).
   python3 -m tools.mission2_harness remove "$ballname" >/dev/null 2>&1 || true
