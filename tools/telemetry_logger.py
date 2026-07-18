@@ -66,6 +66,8 @@ def _ensure_run_columns(conn):
         "lidar_max_range": "REAL",
         "num_obstacles_detected": "INTEGER",
         "power_mode": "TEXT",
+        "seed": "INTEGER",
+        "home_photo_similarity": "REAL",
     }
     existing = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
     for name, col_type in expected_columns.items():
@@ -80,7 +82,8 @@ def log_run(scenario: str, steps: int, final_x: float, final_y: float,
             mean_position_error: float = None, mean_time_to_goal: float = None,
             collision_rate: float = None, odom_hz_mean: float = None,
             lidar_hz_mean: float = None, camera_hz_mean: float = None,
-            power_mode: str = None):
+            power_mode: str = None, seed: int = None,
+            home_photo_similarity: float = None):
     """Insert one row into `runs`. Only `scenario`/`steps`/`final_x`/`final_y`/`result`
     are required — every other field is optional telemetry attached to the same run,
     left NULL when not supplied by the caller.
@@ -98,6 +101,12 @@ def log_run(scenario: str, steps: int, final_x: float, final_y: float,
         "lidar_hz_mean": lidar_hz_mean,
         "camera_hz_mean": camera_hz_mean,
         "power_mode": power_mode,
+        "seed": seed,
+        # Mission 2 return-fidelity (Task 13 §3): mean-abs grayscale diff of the home
+        # reference vs home arrival photo [0..1], nullable — NULL on every non-mission2 row
+        # and on red (which stops mid-room and takes no arrival photo). Trended by
+        # baseline_monitor as drift-detection material.
+        "home_photo_similarity": home_photo_similarity,
     }
     optional_fields = {k: v for k, v in optional_fields.items() if v is not None}
 

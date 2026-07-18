@@ -77,8 +77,9 @@ class _StubNav:
     last_position_error = 3.2
     last_final_x = 0.0
     last_final_y = 0.0
+    last_interrupt = None
 
-    def send_goal(self, x, y, timeout=90.0, yaw=None):
+    def send_goal(self, x, y, timeout=90.0, yaw=None, interrupt_cb=None, spin_extra=None):
         return False
 
 
@@ -98,8 +99,9 @@ class _StubNavOk:
     last_position_error = None
     last_final_x = 0.0
     last_final_y = 0.0
+    last_interrupt = None
 
-    def send_goal(self, x, y, timeout=90.0, yaw=None):
+    def send_goal(self, x, y, timeout=90.0, yaw=None, interrupt_cb=None, spin_extra=None):
         return True
 
 
@@ -125,3 +127,126 @@ def test_log_mission_tolerates_none_runner(monkeypatch):
     assert recorded['scenario'] == 'mission1'
     assert recorded['final_x'] == 0.0 and recorded['final_y'] == 0.0
     assert recorded['mean_time_to_goal'] is None
+
+
+def _detection_msg(entries):
+    """Fake Detection2DArray via SimpleNamespace — _detection_cb reads attributes only."""
+    import types
+    dets = []
+    for class_id, rng in entries:
+        hyp = types.SimpleNamespace(
+            hypothesis=types.SimpleNamespace(class_id=class_id),
+            pose=types.SimpleNamespace(pose=types.SimpleNamespace(
+                position=types.SimpleNamespace(x=rng))))
+        dets.append(types.SimpleNamespace(results=[hyp]))
+    return types.SimpleNamespace(detections=dets)
+
+
+def test_detection_cb_triggers_after_consecutive_frames(runner):
+    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'counts': {},
+                     'triggered': None}
+    for _ in range(2):
+        runner._detection_cb(_detection_msg([('red_ball', 0.8)]))
+    assert runner._watch['triggered'] is None          # 2 frames < REACTION_FRAMES
+    runner._detection_cb(_detection_msg([('red_ball', 0.8)]))
+    assert runner._watch['triggered'] == 'red'
+
+
+def test_detection_cb_gap_resets_count(runner):
+    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'counts': {},
+                     'triggered': None}
+    runner._detection_cb(_detection_msg([('red_ball', 0.8)]))
+    runner._detection_cb(_detection_msg([('red_ball', 0.8)]))
+    runner._detection_cb(_detection_msg([]))            # glimpse lost — reset
+    runner._detection_cb(_detection_msg([('red_ball', 0.8)]))
+    assert runner._watch['triggered'] is None
+
+
+def test_detection_cb_ignores_far_and_unwatched(runner):
+    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'counts': {},
+                     'triggered': None}
+    for _ in range(5):
+        runner._detection_cb(_detection_msg([('red_ball', 2.5),      # beyond 1.0 m
+                                             ('yellow_ball', 0.5)]))  # not watched
+    assert runner._watch['triggered'] is None
+
+
+def test_detection_cb_inactive_outside_reactive_leg(runner):
+    runner._watch = None
+    runner._detection_cb(_detection_msg([('red_ball', 0.5)]))  # must not raise
+
+
+def test_reaction_red_stops_and_photographs(runner, monkeypatch):
+    """Triggered red: cancel -> photo -> stop; no further navigation; event recorded."""
+    goals = []
+
+    class _StubNavInterrupt:
+        last_duration_s = None
+        last_position_error = None
+        last_final_x = 0.0
+        last_final_y = 0.0
+        last_interrupt = None
+
+        def send_goal(self, x, y, timeout=90.0, yaw=None,
+                      interrupt_cb=None, spin_extra=None):
+            goals.append((x, y))
+            if interrupt_cb is not None:
+                runner._watch['triggered'] = 'red'   # simulate the detector firing
+                self.last_interrupt = interrupt_cb()
+                return False
+            return True
+
+    photos = []
+    monkeypatch.setattr(runner, 'nav', _StubNavInterrupt())
+    monkeypatch.setattr(runner, '_clear_costmaps', lambda *a, **k: None)
+    monkeypatch.setattr(runner, 'take_picture', lambda label: photos.append(label) or True)
+    import nav_fleet.mission_runner as mr
+    monkeypatch.setattr(mr, 'get_ground_truth_xy', lambda *a, **k: (0.0, 2.9))
+    runner.reaction_events.clear()
+    assert runner.run_mission('mission2') is True
+    assert len(goals) == 1                      # no retreat leg on photo_then_stop
+    # Option B (Task 13): mission2 takes a home reference photo FIRST, before the
+    # reactive navigate leg even starts — so a red stop-in-place still yields two
+    # photos, not one.
+    assert photos == ['mission2_home_ref', 'mission2_reaction_red']
+    assert runner.reaction_events == [
+        {'color': 'red', 'reaction': 'photo_then_stop', 'truth_xy': (0.0, 2.9)}]
+
+
+def test_reaction_yellow_photographs_then_drives_home(runner, monkeypatch):
+    goals = []
+
+    class _StubNavYellow:
+        last_duration_s = None
+        last_position_error = None
+        last_final_x = 0.0
+        last_final_y = 0.0
+        last_interrupt = None
+
+        def send_goal(self, x, y, timeout=90.0, yaw=None,
+                      interrupt_cb=None, spin_extra=None):
+            goals.append((x, y))
+            if interrupt_cb is not None:
+                runner._watch['triggered'] = 'yellow'
+                self.last_interrupt = interrupt_cb()
+                return False
+            return True                          # the retreat leg (no interrupt_cb)
+
+    monkeypatch.setattr(runner, 'nav', _StubNavYellow())
+    monkeypatch.setattr(runner, '_clear_costmaps', lambda *a, **k: None)
+    monkeypatch.setattr(runner, 'take_picture', lambda label: True)
+    import nav_fleet.mission_runner as mr
+    monkeypatch.setattr(mr, 'get_ground_truth_xy', lambda *a, **k: None)
+    runner.reaction_events.clear()
+    assert runner.run_mission('mission2') is True
+    from nav_fleet.semantic_map import SEMANTIC_MAP
+    assert goals[-1] == SEMANTIC_MAP['home_base']
+    assert runner.reaction_events[0]['color'] == 'yellow'
+
+
+def test_mission2_no_trigger_completes_normally(runner, monkeypatch):
+    monkeypatch.setattr(runner, 'nav', _StubNavOk())
+    monkeypatch.setattr(runner, '_clear_costmaps', lambda *a, **k: None)
+    runner.reaction_events.clear()
+    assert runner.run_mission('mission2') is True
+    assert runner.reaction_events == []

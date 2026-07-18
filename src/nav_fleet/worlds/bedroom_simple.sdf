@@ -38,7 +38,10 @@
             name="gz::sim::systems::Imu"/>
 
     <light name="sun" type="directional">
-      <cast_shadows>true</cast_shadows>
+      <!-- shadows off 2026-07-17 (Mike): wall/shadow edges indistinguishable when
+           observing runs; camera sees this too — HSV/range_k calibrated with shadows
+           ON, revalidate via the deterministic mission2 tests after any lighting change -->
+      <cast_shadows>false</cast_shadows>
       <pose>0 4 10 0 0 0</pose>
       <diffuse>0.8 0.8 0.8 1</diffuse>
       <specular>0.2 0.2 0.2 1</specular>
@@ -203,17 +206,30 @@
     </model>
 
     <!-- ═══ NAVIGATION TARGET MARKER ════════════════════════════════════ -->
-    <!-- 3-inch (76mm) green sphere at the BR-01 nav goal (0.0, 3.7).
-         Centre of the bedroom floor, fully clear of all furniture inflation zones:
-         0.71m from Dresser (north face y=2.99), 0.72m from Bed (south face y=4.42).
-         No collision geometry — sphere sits below the lidar scan plane
-         (sphere top z=0.076m, lidar z=0.225m) so Nav2 never sees it. -->
+    <!-- FLAT floor disc = the Mission 2 human-observability marker — Task 13 (2026-07-18)
+         replaced the raised 76mm green sphere with a floor-level marker: the robot navigates
+         by AMCL coordinates, so this marker exists purely for human observers watching the
+         run. A thin green cylinder (radius 0.10m, height 5mm) lying on the floor —
+         deliberately GREEN, kept OUT of the detector's red/yellow colour space so it can never
+         be mistaken for a reaction ball. No collision geometry, and its 5mm top (z=0.005m)
+         sits far below the lidar scan plane (z=0.225m) so Nav2 never sees it.
+         History: (0.0, 3.7) -> (0.0, 4.05) [Task 13e, same day: robot stopped too SHALLOW,
+         "a lot closer to the wall, well past the dresser"] -> (0.9, 3.90) [Task 13 fix wave,
+         same day: Mike's GUI review relocated the whole stop/marker/ball cluster EAST of the
+         dresser, into the open pocket between the dresser's NE corner and the bed's SW
+         corner]. At the current pose: 0.52m south of the Bed's south face (center (0.813,
+         5.436), size 1.524x2.032 -> face y = 5.436 - 1.016 = 4.420), ~1.03m NE of the
+         Dresser's NE corner (center (0.0074, 2.7583), size 0.813x0.457 -> corner ~(0.4139,
+         2.987)), and 0.70m west of Wall_East's near face (pose x=1.625, thickness 0.05 ->
+         face x=1.600). Must stay in lockstep with semantic_map.MARKER_XY (0.9, 3.90); the
+         reaction ball (BALL_AT_SPHERE_XY, tools/mission2_harness.py) is derived from it as
+         MARKER + 0.3m in +x = (1.2, 3.90). -->
     <model name="goal_marker">
       <static>true</static>
-      <pose>0.0 3.7 0.0381 0 0 0</pose>
+      <pose>0.9 3.90 0.0025 0 0 0</pose>
       <link name="link">
         <visual name="v">
-          <geometry><sphere><radius>0.0381</radius></sphere></geometry>
+          <geometry><cylinder><radius>0.10</radius><length>0.005</length></cylinder></geometry>
           <material>
             <ambient>0.0 0.6 0.0 1</ambient>
             <diffuse>0.0 0.9 0.0 1</diffuse>
