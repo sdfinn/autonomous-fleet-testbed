@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+# One pipeline at a time, ever (2026-07-18 finding): our runners are ONE physical
+# workstation + ONE Jetson sharing DDS domain 0 — concurrent runs destroy each other
+# (the PR-close + push-to-main pair fired by merging PR #4 both went red this way).
+# Queue, never overlap, never cancel: a queued run waits for the machines.
+concurrency:
+  group: fleet-ci-shared-hardware
+  cancel-in-progress: false
+
 jobs:
   changes:
     # Detects whether this push touches anything that actually affects the arm64 Docker image

@@ -26,7 +26,9 @@ JETSON_USER="${JETSON_USER:-mike}"
 POWER_MODE_ID="${POWER_MODE_ID:-1}"
 STATE_DIR="${STATE_DIR:-/tmp/hil_stage}"
 SIM_LOG="${STATE_DIR}/sim.log"
-NAV2_LOG=/tmp/nav2_hil.log   # on the Jetson
+# Per-run log name (2026-07-18): a fixed name let a later nav2-up OVERWRITE the crash
+# evidence of the run before it — a Nav2 SIGSEGV autopsy was lost exactly that way.
+NAV2_LOG="/tmp/nav2_hil_$(date +%Y%m%d_%H%M%S).log"   # on the Jetson
 JETSON_REPO='~/autonomous-fleet-testbed'
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Ghost-ball settle (CLAUDE.md Gotchas, 2026-07-17): the headless llvmpipe renderer keeps a
