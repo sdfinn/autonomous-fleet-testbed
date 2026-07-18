@@ -3669,7 +3669,7 @@ Nav2's own mechanisms — no custom BT).
 > (its checkboxes below transfer there). The checkboxes below predate the spec —
 > reconcile them when Plan B is written.
 
-- [ ] **HSV ball-detector node** (new, in `nav_fleet/`): reimplement the *algorithm* from
+- [x] **HSV ball-detector node** (new, in `nav_fleet/`): reimplement the *algorithm* from
       BC's `behavior_controller.py` (HSV thresholding — hardware-proven, zero training
       data), not the file — this project's `/robot_001/` topic conventions, subscribing to
       a **remappable** image topic, publishing detections (color + bearing + apparent
@@ -3677,20 +3677,41 @@ Nav2's own mechanisms — no custom BT).
       `config/hsv_realcam.yaml`): Gazebo's OGRE2 rendering and a real webcam under room
       lighting will need different numbers, and that measured delta is itself a
       sim-to-real data point worth keeping.
-- [ ] Red-ball supervisor node (goal cancel) + yellow-ball costmap keepout wiring, per the
+      **(2026-07-18: implemented** — `nav_fleet/ball_detector.py` + `nav_fleet/hsv_detect.py`,
+      publishing the standard `vision_msgs/Detection2D` contract rather than a bespoke
+      color+bearing+size message, per the approved 2026-07-16 spec.)
+- [x] Red-ball supervisor node (goal cancel) + yellow-ball costmap keepout wiring, per the
       spec bullet above.
-- [ ] **Mission framework groundwork** (moved from the old tidy-up list — it IS Mission 2
+      **(2026-07-18: red-ball half implemented, yellow-ball half superseded.** Red-ball
+      react (goal cancel + photo + stop) is a reactive step inside `mission_runner.py`
+      (`_execute_reaction`), not a separate supervisor node. Yellow-ball costmap keepout is
+      **superseded** — the approved spec replaced it with `photo_then_home` (photo, then
+      retreat to home_base), no dynamic costmap layer, per the 2026-07-16 design.)
+- [x] **Mission framework groundwork** (moved from the old tidy-up list — it IS Mission 2
       work): tighten `validate_mission` (clear error for navigate-without-location; reject
       stray fields per action type) before adding Mission 2's new action types; gate
       `take_picture` freshness on `msg.header.stamp` (required before photo *content*
       becomes a pass/fail signal).
-- [ ] **Mission 2 definition** in `missions.py` + executor support in `mission_runner.py`
+      **(2026-07-18: partially done.** Reactions validation shipped (per-step `reactions`
+      dict validated, unknown colors/actions rejected). The `take_picture` freshness stamp
+      gate is NOT in scope for this plan — remains open, not silently dropped.)
+- [x] **Mission 2 definition** in `missions.py` + executor support in `mission_runner.py`
       (new action types as needed — e.g. enabling/disabling ball-watching around navigate
       legs), telemetry row per run same as Mission 1.
-- [ ] **Sim tier (the CI-able one):** scripted colored-sphere spawn/move in the Gazebo
+      **(2026-07-18: implemented** — Mission 2 defined in `missions.py`, watch-window
+      enable/disable around navigate legs and reaction telemetry (`reaction_events`) shipped
+      in `mission_runner.py`.)
+- [x] **Sim tier (the CI-able one):** scripted colored-sphere spawn/move in the Gazebo
       world at a key mission moment (`gz service` spawn or a world plugin) so Mission 2
       runs fully unattended. Prove Tier-1 PASS → HIL PASS → then add to `stage-4-hil`,
       only after the Piece-1 3×-green gate with Mission 1.
+      **(2026-07-18: implemented — harness-owned, DETERMINISTIC placement, not seeded.**
+      Design pivot 2026-07-17 (Mike): `tools/mission2_harness.py` places the ball at a
+      fixed spot beside the green sphere (`BALL_AT_SPHERE_XY` = (0.3, 3.7)) instead of the
+      seeded-random placement this bullet and the spec originally described. Seeded fuzzing
+      returns in Session 19, constrained to an area-of-interest — placement bounds are
+      spec, not a tuning knob. Per-color triggers as shipped: red 1.3 m → photo + stop;
+      yellow 0.8 m → photo + return home.)
 - [ ] **Real-camera tier (manual by design — stays OUT of CI):** USB UVC webcam on the
       Jetson via `ros-jazzy-v4l2-camera` (or `usb_cam`), publishing on its **own topic —
       do NOT reuse `/robot_001/camera/image_raw`**, the Gazebo bridge owns that in sim;
@@ -3699,6 +3720,8 @@ Nav2's own mechanisms — no custom BT).
       stop / re-route. Deliverables: the calibrated `hsv_realcam.yaml` profile + observed
       detection latency, both of which Session 18 (real robot) consumes directly.
       **Bill of materials: one UVC USB webcam.**
+      **(2026-07-18: deferred** — to the webcam follow-up plan, per spec §9. Not in scope
+      for this Plan B.)
 - [ ] **Pin the real camera's auto-exposure and auto-white-balance before calibrating.**
       Consumer webcams continuously shift exposure and color temperature, which moves a
       croquet ball's hue frame to frame — HSV thresholding against floating white balance
@@ -3706,6 +3729,8 @@ Nav2's own mechanisms — no custom BT).
       `white_balance_automatic=0`, fixed `exposure_*`; exact control names vary — check
       `v4l2-ctl -d /dev/video0 --list-ctrls`) and **record the pinned settings alongside
       `hsv_realcam.yaml`** — the calibration is only valid for that camera configuration.
+      **(2026-07-18: deferred** — to the webcam follow-up plan, per spec §9. Not in scope
+      for this Plan B.)
 - [ ] **Decide the clock-domain handling for real-camera frames in HIL (wall clock vs sim
       time).** The HIL stack runs on Gazebo sim time (`use_sim_time`), but a real webcam
       stamps frames with wall clock. This breaks two planned mechanisms: the
@@ -3716,6 +3741,8 @@ Nav2's own mechanisms — no custom BT).
       e.g. detector re-stamps detections with its own node clock, or the real-camera tier
       treats detections as stampless triggers only (stop yes, keepout sim-tier-only) —
       don't discover it live mid-run.
+      **(2026-07-18: deferred** — to the webcam follow-up plan, per spec §9. Not in scope
+      for this Plan B.)
 
 ### Piece 3 — E2E fixes that protect the new stage (kept from the old tidy-up list)
 
