@@ -27,7 +27,7 @@ from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.mission_runner import MissionRunner
 from nav_fleet.semantic_map import SEMANTIC_MAP
 from tools.mission2_harness import (BALL_AT_SPHERE_XY, BALL_REMOVAL_SETTLE_S,
-                                    home_pair_similarity, judge_nominal, judge_red,
+                                    home_pair_similarity, judge_no_ball, judge_red,
                                     judge_yellow, log_variant_row, remove_ball, spawn_ball)
 
 
@@ -76,7 +76,7 @@ def _tagged(runner, before, tag):
 
 
 @pytest.mark.timeout(300)
-def test_mission2_nominal_round_trip(runner):
+def test_mission2_no_ball_round_trip(runner):
     """No ball: home_ref photo -> navigate to marker -> marker photo -> navigate HOME ->
     home_arrival photo. Zero reactions, ended home, home-photo pair PASS."""
     _assert_at_home_base()
@@ -89,12 +89,12 @@ def test_mission2_nominal_round_trip(runner):
         marker = _tagged(runner, before, 'mission2_marker')
         similarity = home_pair_similarity(_tagged(runner, before, 'mission2_home_ref'),
                                           _tagged(runner, before, 'mission2_home_arrival'))
-        fails = judge_nominal(runner.reaction_events, get_ground_truth_xy(), marker,
+        fails = judge_no_ball(runner.reaction_events, get_ground_truth_xy(), marker,
                               similarity)
         for p in marker:
             assert pathlib.Path(p).exists()
     finally:
-        log_variant_row('nominal', None, ok=(fails == []), runner=runner,
+        log_variant_row('no_ball', None, ok=(fails == []), runner=runner,
                         home_photo_similarity=similarity)
     assert fails == [], '; '.join(fails)
 

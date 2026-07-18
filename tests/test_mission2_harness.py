@@ -21,7 +21,8 @@ def test_react_placement_sits_on_the_approach_corridor():
     for seed in range(20):
         x, y = solve_placement('react', seed)
         assert _route_min_dist(x, y) <= 0.2         # on/next to the route line
-        assert 2.4 <= y <= 3.2                       # between doorway and sphere approach
+        # between doorway (y=2.43) and sphere_approach (y=3.85, Task 13e deeper stop)
+        assert 2.8 <= y <= 3.6
 
 
 def test_ignore_placement_stays_outside_reaction_envelope():
@@ -166,28 +167,28 @@ def test_parse_reaction_events_ignores_unparseable_truth():
     assert events == [{'color': 'red', 'reaction': 'photo_then_stop', 'truth_xy': None}]
 
 
-def test_parse_reaction_events_feeds_judge_nominal_spurious_reaction():
+def test_parse_reaction_events_feeds_judge_no_ball_spurious_reaction():
     """The nominal judge greps these lines expecting zero — a recovered event must make
-    judge_nominal report a spurious reaction (integration of parse + judge)."""
+    judge_no_ball report a spurious reaction (integration of parse + judge)."""
     from nav_fleet.semantic_map import SEMANTIC_MAP
-    from tools.mission2_harness import judge_nominal, parse_reaction_events
+    from tools.mission2_harness import judge_no_ball, parse_reaction_events
     events = parse_reaction_events("  reaction: red -> photo_then_stop at None\n")
-    fails = judge_nominal(events, final_truth=SEMANTIC_MAP['home_base'],
+    fails = judge_no_ball(events, final_truth=SEMANTIC_MAP['home_base'],
                           marker_photos=['m.png'], similarity=0.0)
     assert any('reaction' in f for f in fails)
 
 
-def test_judge_nominal_passes_good_round_trip():
+def test_judge_no_ball_passes_good_round_trip():
     """Task 13 Option B: zero reactions + marker photo + ended home + good home pair."""
     from nav_fleet.semantic_map import SEMANTIC_MAP
-    from tools.mission2_harness import judge_nominal
-    assert judge_nominal(events=[], final_truth=SEMANTIC_MAP['home_base'],
+    from tools.mission2_harness import judge_no_ball
+    assert judge_no_ball(events=[], final_truth=SEMANTIC_MAP['home_base'],
                          marker_photos=['m.png'], similarity=0.02) == []
 
 
-def test_judge_nominal_fails_not_home_no_marker_and_bad_pair():
-    from tools.mission2_harness import HOME_PAIR_MAX_DIFF, judge_nominal
-    fails = judge_nominal(
+def test_judge_no_ball_fails_not_home_no_marker_and_bad_pair():
+    from tools.mission2_harness import HOME_PAIR_MAX_DIFF, judge_no_ball
+    fails = judge_no_ball(
         events=[{'color': 'red', 'reaction': 'photo_then_stop', 'truth_xy': None}],
         final_truth=(0.0, 3.5), marker_photos=[], similarity=HOME_PAIR_MAX_DIFF + 0.1)
     assert any('reaction' in f for f in fails)      # spurious reaction

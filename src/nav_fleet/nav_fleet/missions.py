@@ -60,7 +60,7 @@ class MissionStep:
     # Lets a waypoint's photo be found by MEANING (home_ref / marker / home_arrival) rather
     # than by a fragile step index — the return-fidelity pair check (Task 13, Option B) pairs
     # the `home_ref` and `home_arrival` photos regardless of where they land in the sequence
-    # (nominal takes home_arrival as step 5; yellow's reaction takes it mid-mission). When
+    # (no_ball takes home_arrival as step 5; yellow's reaction takes it mid-mission). When
     # absent, the runner falls back to the `{mission}_step{i}` label (Mission 1 unchanged).
     photo_tag: str = None
 
@@ -97,12 +97,12 @@ MISSIONS = {
     #   5. home arrival photo — must MATCH photo 1 (see the return-fidelity pair check in
     #      tools/mission2_harness.judge_home_pair).
     # Variant endings (same mission, different world state):
-    #   nominal (no ball) — all 5 steps; pair-check photo 1 vs photo 5.
+    #   no_ball (no ball) — all 5 steps; pair-check photo 1 vs photo 5.
     #   yellow — reaction interrupts step 2 -> reaction photo -> self-return home ->
     #     home arrival photo (photo_then_home now takes the arrival photo too, so the pair
     #     check applies to yellow); steps 3 is skipped, 4/5 are folded into the reaction.
     #   red — reaction interrupts step 2 -> reaction photo -> STOPS; steps 3-5 never run,
-    #     no second home photo. PASS for nominal/yellow requires the whole round trip.
+    #     no second home photo. PASS for no_ball/yellow requires the whole round trip.
     # A fired reaction short-circuits run_mission from inside the navigate step (see
     # mission_runner.run_mission `if triggered is not None: return self._execute_reaction`).
     'mission2': (
@@ -121,7 +121,7 @@ MISSIONS = {
     # breaks AMCL + the costmaps). Run via mission_runner, which clears both costmaps
     # before the navigate leg — mirroring the sim tests' `_drive_home_after` janitor
     # (clear costmaps + send_goal(home_base, yaw=pi/2)). yaw=pi/2 restores the spawn/home
-    # heading (north), matching what nominal/yellow/red expect at their start.
+    # heading (north), matching what no_ball/yellow/red expect at their start.
     'go_home': (
         MissionStep('navigate', 'return to home base', 'home_base', math.pi / 2),
     ),

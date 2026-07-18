@@ -43,25 +43,25 @@ BALL_REMOVAL_SETTLE_S = 3.0
 
 # Deterministic placement (Task 9 rework, 2026-07-17 — Mike's decision, supersedes seeded
 # placement for the live tests below): 0.3 m in +x beside the floor MARKER. DERIVED from
-# MARKER_XY (semantic_map.py, = bedroom_goal (0.0, 3.7)) so placement moves WITH the marker
-# and is never tuned independently (Task 13 spec): BALL = (MARKER_X + 0.3, MARKER_Y). The
-# marker did not move in Task 13 (it's already at the clear-zone centre); only the APPROACH
-# moved north to clear the dresser squeeze — so this spot is unchanged (0.3, 3.7) and the
-# color/size range_k calibration and reaction bands carry over untouched.
+# MARKER_XY (semantic_map.py, now (0.0, 4.05)) so placement moves WITH the marker and is
+# never tuned independently (Task 13 spec): BALL = (MARKER_X + 0.3, MARKER_Y) = (0.3, 4.05).
+# Task 13e moved the marker + stop + ball 0.35 m north as ONE rigid cluster (Mike: robot
+# stopped too shallow), so the closest-approach geometry — and therefore the color/size
+# range_k calibration and reaction bands — carry over UNCHANGED.
 #
 # Verified clear of every static footprint in bedroom_simple.sdf: the floor marker itself
 # (0.10 m radius disc — 0.3 m centre distance clears BALL_RADIUS + disc radius and the
 # >=0.25 m spec floor), Dresser (center (0.0074, 2.7583), 0.813x0.457 box -> y in
-# [2.530, 2.987], well south of y=3.7), Bed (center (0.8130, 5.4360), 1.524x2.032 box ->
-# y in [4.420, 6.452], well north of y=3.7), and Wall_East (x in [1.600, 1.650], far from
-# x=0.3).
+# [2.530, 2.987], 1.06 m south of y=4.05), Bed (center (0.8130, 5.4360), 1.524x2.032 box ->
+# y in [4.420, 6.452]; the ball at y=4.05 is 0.37 m south of the bed's south face — camera-
+# only, no collision), and Wall_East (x in [1.600, 1.650], far from x=0.3).
 #
 # Trigger geometry sanity (Task 9 rework brief): distance from home_base (-1.276, 1.2) to
-# this spot is ~2.955 m — far outside either color's REACTION_RANGE_M at mission start, so
-# the reaction cannot fire at t=0. sphere_approach (0.0, 3.5), mission2's nav goal, is only
+# this spot is ~3.30 m — far outside either color's REACTION_RANGE_M at mission start, so
+# the reaction cannot fire at t=0. sphere_approach (0.0, 3.85), mission2's nav goal, is only
 # ~0.361 m from the ball — inside REACTION_RANGE_M for BOTH colors (red 1.3 m, yellow
 # 0.8 m) — so the robot's final approach to the goal necessarily brings it into trigger
-# range for whichever color is spawned; the robot travels ~2.7 m (home -> doorway ->
+# range for whichever color is spawned; the robot travels ~3.0 m (home -> doorway ->
 # sphere_approach) before that can happen, comfortably above MIN_TRAVEL_M. That same
 # 0.361 m closest-approach distance sits inside both per-color bands [BAND_NEAR,
 # BAND_FAR[color]] = [0.3, 1.6] (red) and [0.3, 1.1] (yellow), so judge_red's and
@@ -203,7 +203,10 @@ def solve_placement(variant, seed):
     if variant == 'ignore':
         # Clear floor per the world map: by the bed / hallway east. Visible-but-far
         # placements are deliberately possible — correctly ignoring them is the test.
-        anchors = ((0.9, 5.2), (1.3, 1.7))
+        # First anchor nudged (0.9, 5.2) -> (0.9, 5.6) in Task 13e: sphere_approach moved
+        # north to (0.0, 3.85), so the old anchor fell inside MAX_REACTION_RANGE_M +
+        # IGNORE_MARGIN (1.8 m) of the extended route; 5.6 restores >1.8 m of clearance.
+        anchors = ((0.9, 5.6), (1.3, 1.7))
         route = _route_points()
         for _ in range(100):
             axx, ayy = anchors[rng.randrange(len(anchors))]
@@ -341,7 +344,7 @@ def judge_home_pair(similarity):
     return []
 
 
-def judge_nominal(events, final_truth, marker_photos, similarity):
+def judge_no_ball(events, final_truth, marker_photos, similarity):
     """Nominal (no-ball) round-trip verdict (Task 13 §3, Option B): PASS = zero reactions +
     marker photo exists + ended HOME (ground truth) + home-photo pair PASS. The old
     stop-short-of-the-sphere check is gone — the nominal mission now drives itself home, so
@@ -534,26 +537,26 @@ def _cmd_watch(args):
             json.dump(state, f)
 
 
-def _cmd_judge_nominal(args):
+def _cmd_judge_no_ball(args):
     # HIL rung 1 is the NO-BALL nominal round trip (Task 13 Option B): home_ref photo ->
     # navigate to the marker -> marker photo -> navigate HOME -> home_arrival photo, reacting
-    # to nothing. judge_nominal checks zero reactions + marker photo exists + ended HOME
+    # to nothing. judge_no_ball checks zero reactions + marker photo exists + ended HOME
     # (workstation ground truth) + home-photo pair PASS. Mirrors
-    # tests/test_mission2.py::test_mission2_nominal. Photos were scp'd to STATE_DIR by
+    # tests/test_mission2.py::test_mission2_no_ball. Photos were scp'd to STATE_DIR by
     # hil_stage.sh (the Jetson has no Gazebo, so the pair check runs here).
     with open(args.mission_log) as f:
         log_text = f.read()
     marker_photos = sorted(glob.glob(args.marker_glob))
     similarity = home_pair_similarity(sorted(glob.glob(args.home_ref_glob)),
                                       sorted(glob.glob(args.home_arrival_glob)))
-    fails = judge_nominal(parse_reaction_events(log_text), get_ground_truth_xy(),
+    fails = judge_no_ball(parse_reaction_events(log_text), get_ground_truth_xy(),
                           marker_photos, similarity)
     ok = not fails
-    log_variant_row('nominal', None, ok=ok, home_photo_similarity=similarity)
+    log_variant_row('no_ball', None, ok=ok, home_photo_similarity=similarity)
     for fail in fails:
         print(f'JUDGE FAIL: {fail}')
     print(f'home_photo_similarity: {similarity}')
-    print(f'mission2_nominal: {"PASS" if ok else "FAIL"}')
+    print(f'mission2_no_ball: {"PASS" if ok else "FAIL"}')
     raise SystemExit(0 if ok else 1)
 
 
@@ -631,14 +634,14 @@ def main():
     p_watch.add_argument('--max-s', type=float, default=300.0)
     p_watch.set_defaults(func=_cmd_watch)
 
-    p_nom = sub.add_parser('judge-nominal', help='judge a nominal (no-ball) HIL round trip: '
+    p_nom = sub.add_parser('judge-no-ball', help='judge a no-ball HIL round trip: '
                                                  'zero reactions + marker photo + ended home '
                                                  '+ home-photo pair (Task 13 Option B)')
     p_nom.add_argument('--mission-log', required=True)
     p_nom.add_argument('--marker-glob', required=True)
     p_nom.add_argument('--home-ref-glob', required=True)
     p_nom.add_argument('--home-arrival-glob', required=True)
-    p_nom.set_defaults(func=_cmd_judge_nominal)
+    p_nom.set_defaults(func=_cmd_judge_no_ball)
 
     for color in ('red', 'yellow'):
         pj = sub.add_parser(f'judge-{color}',
