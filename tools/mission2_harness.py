@@ -43,27 +43,32 @@ BALL_REMOVAL_SETTLE_S = 3.0
 
 # Deterministic placement (Task 9 rework, 2026-07-17 — Mike's decision, supersedes seeded
 # placement for the live tests below): 0.3 m in +x beside the floor MARKER. DERIVED from
-# MARKER_XY (semantic_map.py, now (0.0, 4.05)) so placement moves WITH the marker and is
-# never tuned independently (Task 13 spec): BALL = (MARKER_X + 0.3, MARKER_Y) = (0.3, 4.05).
-# Task 13e moved the marker + stop + ball 0.35 m north as ONE rigid cluster (Mike: robot
-# stopped too shallow), so the closest-approach geometry — and therefore the color/size
-# range_k calibration and reaction bands — carry over UNCHANGED.
+# MARKER_XY (semantic_map.py) so placement moves WITH the marker and is never tuned
+# independently (Task 13 spec): BALL = (MARKER_X + 0.3, MARKER_Y). Current cluster
+# (2026-07-18, Task 13 fix wave — Mike's GUI review relocated stop/marker/ball as ONE rigid
+# unit EAST of the dresser): MARKER_XY = (0.9, 3.90) -> BALL_AT_SPHERE_XY = (1.2, 3.90). Every
+# prior move of this cluster ((0.0, 3.5) -> (0.0, 3.85)/(0.3, 4.05) -> here) kept the internal
+# stop/marker/ball offsets rigid, so the closest-approach geometry — and therefore the
+# color/size range_k calibration and reaction bands — carry over UNCHANGED.
 #
-# Verified clear of every static footprint in bedroom_simple.sdf: the floor marker itself
-# (0.10 m radius disc — 0.3 m centre distance clears BALL_RADIUS + disc radius and the
-# >=0.25 m spec floor), Dresser (center (0.0074, 2.7583), 0.813x0.457 box -> y in
-# [2.530, 2.987], 1.06 m south of y=4.05), Bed (center (0.8130, 5.4360), 1.524x2.032 box ->
-# y in [4.420, 6.452]; the ball at y=4.05 is 0.37 m south of the bed's south face — camera-
-# only, no collision), and Wall_East (x in [1.600, 1.650], far from x=0.3).
+# Verified clear of every static footprint in bedroom_simple.sdf at the current spot (1.2,
+# 3.90): the floor marker itself (0.10 m radius disc — 0.3 m centre distance clears
+# BALL_RADIUS + disc radius and the >=0.25 m spec floor), Dresser (center (0.0074, 2.7583),
+# 0.813x0.457 box -> NE corner ~(0.4139, 2.987); the ball is ~1.20 m NE of it), Bed (center
+# (0.8130, 5.4360), 1.524x2.032 box -> south face y = 5.436 - 1.016 = 4.420; the ball at
+# y=3.90 is 0.52 m south of it — camera-only, no collision), and Wall_East (pose x=1.625,
+# thickness 0.05 -> near face x=1.600; the ball is 0.40 m west of it).
 #
-# Trigger geometry sanity (Task 9 rework brief): distance from home_base (-1.276, 1.2) to
-# this spot is ~3.30 m — far outside either color's REACTION_RANGE_M at mission start, so
-# the reaction cannot fire at t=0. sphere_approach (0.0, 3.85), mission2's nav goal, is only
-# ~0.361 m from the ball — inside REACTION_RANGE_M for BOTH colors (red 1.3 m, yellow
+# Trigger geometry sanity (Task 9 rework brief, numbers refreshed for the current cluster):
+# distance from home_base (-1.276, 1.2) to the ball (1.2, 3.90) is ~3.66 m — far outside
+# either color's REACTION_RANGE_M at mission start, so the reaction cannot fire at t=0.
+# sphere_approach (0.9, 3.70), mission2's nav goal, is only ~0.36 m from the ball (same
+# offset as every prior cluster position: marker 0.20 m ahead of the stop in y, ball 0.30 m
+# east of the marker in x) — inside REACTION_RANGE_M for BOTH colors (red 1.3 m, yellow
 # 0.8 m) — so the robot's final approach to the goal necessarily brings it into trigger
-# range for whichever color is spawned; the robot travels ~3.0 m (home -> doorway ->
+# range for whichever color is spawned; the robot travels ~3.5 m (home -> doorway ->
 # sphere_approach) before that can happen, comfortably above MIN_TRAVEL_M. That same
-# 0.361 m closest-approach distance sits inside both per-color bands [BAND_NEAR,
+# ~0.36 m closest-approach distance sits inside both per-color bands [BAND_NEAR,
 # BAND_FAR[color]] = [0.3, 1.6] (red) and [0.3, 1.1] (yellow), so judge_red's and
 # judge_yellow's band checks are both satisfiable from the real approach path (Task 9
 # final batch, 2026-07-17 — per-color REACTION_RANGE_M).
@@ -106,15 +111,22 @@ BAND_NEAR = 0.3                    # reaction band vs ball truth, near edge (spe
 BAND_FAR = {color: r + 0.3 for color, r in REACTION_RANGE_M.items()}  # per-color far edge
 HOME_TOL = 0.3                     # nominal/yellow: final pose vs home_base
 STATIONARY_TOL = 0.05              # red: max drift between two truth samples
-# Return-fidelity threshold (Task 13 §3): max mean-abs grayscale diff [0..1] between the
-# home reference photo (taken at spawn, before moving) and the home arrival photo (taken
-# after the mission drives itself back). Above this, the round trip did not return the robot
-# faithfully to its start POSE. Expected variance the threshold must absorb: Nav2 goal
-# tolerance (a few cm of position) + RPP rotate_to_heading residual (up to ~17 deg of final
-# yaw -> the arrival frame is a parallaxed/rotated view of the same scene). CALIBRATED from
-# real sim runs (>=3 pairs) 2026-07-18 — see tools/mission2_day self-test / task-13b-report:
-# observed nominal pairs clustered at diff ~<CAL> with a max of ~<CAL_MAX>; threshold set
-# with headroom above that. Placeholder pending live calibration in this task's live phase.
+# Return-fidelity GROSS-FAILURE guard (Task 13 §3) — NOT a pose-fidelity discriminator.
+# Max mean-abs grayscale diff [0..1] between the home reference photo (taken at spawn,
+# before moving) and the home arrival photo (taken after the mission drives itself back).
+# This catches wrong room / missing photo / garbage frame, not "is the pose a few cm or
+# degrees off": the metric conflates SCENE CONTENT with pose, so a well-posed frame that
+# simply has a ball visible in it (yellow's reaction-then-home arrival) scores as if it
+# were badly mis-posed.
+#
+# Observed pass-band values, live sim + HIL, 2026-07-18: 0.021, 0.035, 0.037, 0.062, 0.115
+# (yellow ball visible in the no_ball arrival frame — scene content, not a pose defect),
+# 0.168 (historical Tier-1, pre fix-wave). The fix-wave brief's proposal to "recalibrate
+# below 0.035" is INFEASIBLE: a run with correct pose but a ball in frame scores ~0.12,
+# comfortably above 0.035 — tightening the threshold there would fail good-pose runs on
+# scene content alone. Pose fidelity is instead guaranteed upstream, by Nav2's tightened
+# yaw_goal_tolerance (0.5 -> 0.15 rad, src/nav_fleet/config/nav2_params.yaml) — this
+# threshold stays a wide, gross-failure-only guard, not a precision instrument.
 HOME_PAIR_MAX_DIFF = 0.18
 # Task 9 fix (2026-07-17): minimum start->reaction displacement for red/yellow judges —
 # a robot that "reacts" without actually driving (see MIN_SPAWN_DIST_M above for the
@@ -624,6 +636,9 @@ def main():
     p_home.add_argument('--tol', type=float, default=0.35)
     p_home.set_defaults(func=_cmd_assert_home)
 
+    # watch / judge-no-ball / judge-{red,yellow} below: manual/robot-day CLI verbs, kept for
+    # ad-hoc HIL use — CI no longer calls any of them (tools/mission2_day.py's day
+    # orchestrator judges in-process against the same judge_*/home_pair_similarity functions).
     p_watch = sub.add_parser('watch', help='poll workstation ground truth during a mission; '
                                            'record closest approach to the ball as the '
                                            'reaction point; write JSON on SIGTERM/--max-s')
