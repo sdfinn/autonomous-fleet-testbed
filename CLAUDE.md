@@ -262,16 +262,33 @@ docker buildx build --platform linux/arm64 \
   runs nothing. To exercise CI from a branch, open a (draft) PR; that's what draft PR #4
   is for on `mission2-camera-reactive` (2026-07-17: full 8-job green first try, incl.
   stage-4 HIL on the Jetson, run 29626889652).
-- **Mission 2 state (post-2026-07-17):** DETERMINISTIC ball placement (`BALL_AT_SPHERE_XY`
-  = (0.3, 3.7) beside the green sphere) replaced seeded random placement — Mike's call;
-  seeded fuzzing returns in Session 19 constrained to the area-of-interest, and placement
-  bounds are SPEC, not tuning knobs (the fuzzer had been quietly tuned into determinism to
-  chase green). Per-color triggers: red 1.3 m (stop), yellow 0.8 m (closer look, then home).
-  Judges enforce min-travel (≥0.5 m before a reaction counts) + start-position
-  preconditions. World sun `cast_shadows` is now FALSE (observability; detection
-  revalidated live shadow-free). Detector ignores frame-edge-clipped bboxes (clipped
-  width corrupts the range estimate). `-k red`-style pytest filters are substring matches
-  — the ignore test was renamed after `-k red` matched `…is_ignoRED`.
+- **Mission 2 state (post-2026-07-18, Task 13 Option B):** Mission 2 is now ONE
+  self-returning mission — a verified round trip, not a one-way drive. Five steps: (1) home
+  reference photo BEFORE any movement, (2) navigate to the floor marker with reactions armed
+  (red 1.3 m -> `photo_then_stop`, yellow 0.8 m -> `photo_then_home`), (3) marker photo,
+  (4) navigate itself HOME (no external reset leg), (5) home arrival photo — must MATCH the
+  reference (see `tools/mission2_harness.judge_home_pair` / `HOME_PAIR_MAX_DIFF`, a
+  gross-failure guard, not a precision instrument — see its comment in
+  `tools/mission2_harness.py`). The mission's own per-waypoint checklist (`runner.checklist`,
+  printed by `mission_runner.main()`) IS the verdict. A fired reaction SHORTENS the mission
+  (Option B): red stops in place after its photo (no further steps); yellow folds its own
+  return-and-arrival-photo into the reaction, so the pair check still applies. The no-ball
+  scenario is renamed `mission2_no_ball` (was `mission2_nominal`) — old telemetry rows keep
+  their old name, only new rows use the new one. Marker (0.9, 3.90) / ball (1.2, 3.90) now
+  sit EAST of the dresser (Mike's GUI review, 2026-07-18) — see `semantic_map.py`'s
+  `sphere_approach`/`MARKER_XY` comments for the clearance math. `tools/mission2_day.py` is
+  THE single day orchestrator — it is stage-4's only Mission 2 step, the GUI demo command,
+  and the future real-robot-day runner, all running the SAME sequence (no_ball -> yellow ->
+  red). Ball placement is pluggable (`GzBallOps` for sim/HIL, `OperatorBallOps` for a human
+  on the real robot) and mid-return placement is part of the choreography: the yellow ball
+  is placed DURING no_ball's return leg, and yellow is swapped for red DURING yellow's
+  return leg (both behind the retreating robot, after a settle — reactions are
+  outbound-only, so this can't self-trigger). Judges enforce min-travel (≥0.5 m before a
+  reaction counts) + start-position preconditions. World sun `cast_shadows` is FALSE
+  (observability; detection revalidated live shadow-free). Detector ignores
+  frame-edge-clipped bboxes (clipped width corrupts the range estimate). `-k red`-style
+  pytest filters are substring matches — the ignore test was renamed after `-k red` matched
+  `…is_ignoRED`.
 - **nav_runner goal stamp:** Use `Time().to_msg()` (zero timestamp = "use latest TF") for the
   NavigateToPose goal header stamp. Wall-clock `get_clock().now()` will be rejected by Nav2
   which uses sim time (far-future wall timestamp has no TF data in Nav2's buffer).
@@ -297,6 +314,39 @@ docker buildx build --platform linux/arm64 \
   producing north-first paths. SMAC 2D uses equal cost for all 8 directions — it naturally
   routes diagonally toward the goal. Use SMAC when diagonal paths matter for controller heading
   error. Plugin: `nav2_smac_planner::SmacPlanner2D`.
+- **bt_navigator `default_server_timeout` 20ms → 1000ms is the ROOT FIX for the cold-goal
+  abort storm** (Task 13 fix wave, 2026-07-18): on a fresh mission_runner process, the FIRST
+  goal was sometimes accepted then aborted in ~0.1-0.25s before the robot moved. Cause: the
+  BT's internal goal-ack window (20ms default) is too short on a loaded Jetson — the
+  controller_server's ack legitimately takes longer than that under load, so bt_navigator
+  gives up on a goal that was actually fine. Worse, the controller could go on to EXECUTE the
+  delivered path after bt_navigator had already aborted the handle — a "zombie goal": the
+  robot drives with no supervising mission, a real safety issue on hardware. Fix has two
+  parts: the timeout bump (root fix, `src/nav_fleet/config/nav2_params.yaml`
+  `default_server_timeout: 1000`) removes the race at the source; `nav_runner.py`'s bounded
+  cold-start retry (escalating `sleep(2.0 * (attempt+1))` backoff, `COLD_ABORT_RETRIES`) is
+  now just a safety net for whatever the timeout doesn't catch, not the primary fix; and a
+  cancel-on-failure guard (`NavRunner._last_goal_handle`) cancels any still-outstanding goal
+  before reporting failure, so a giving-up mission can never leave an unsupervised robot
+  driving.
+- **`yaw_goal_tolerance` tightened 0.5 → 0.15 rad** (`src/nav_fleet/config/nav2_params.yaml`):
+  needed for home-pose squareness — Mike observed the robot arriving home visibly
+  off-heading (nosed left) even though the old 0.5 rad (~29°) tolerance called it arrived.
+  0.15 rad (~8.6°) is what makes Mission 2's home-arrival photo actually match the reference
+  pose (see `HOME_PAIR_MAX_DIFF` in `tools/mission2_harness.py` for why photo similarity
+  alone can't police this).
+- **stage-4-hil runs ONLY the deployment mission** — the day orchestrator
+  (`tools/mission2_day.py`), invoked via `scripts/hil_stage.sh day`. Mission 1 stays in
+  stage-2 (sim regression, `tests/test_mission_run.py`); it is no longer run on hardware as
+  a warm-up. `hil_stage.sh run` is now just the stack-up gate (sim + Nav2, no mission, no
+  retry) — a mission failure must surface RED, so all harness-level whole-mission retries
+  were removed (the in-process cold-goal retry above is the only retry left anywhere).
+- **GUI-watched Mission 2 day, the command sequence:** bring the HIL stack up with
+  `scripts/hil_stage.sh run`, view it with the scrubbed-env `gz sim -g` recipe above (the
+  snap/glibc GUI-crash workaround), then run `DAY_HOLD_S=10 scripts/hil_stage.sh day` — the
+  env var reaches `tools/mission2_day.py --hold-s` and keeps the robot in place after the
+  final red run so an observer sees an unambiguous "done" instead of the process exiting
+  mid-frame.
 
 ## Isaac Sim Gotchas (Session 11+)
 - **Version:** `isaacsim==6.0.1.0` is the correct pip package (`isaacsim[all,extscache]==6.0.1.0`
