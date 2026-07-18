@@ -44,6 +44,11 @@ class RunsModel(DataFrameModel):
     # rows. Added IN THE SAME COMMIT as the logger column: power_mode and hil_jetson each
     # broke CI when the schema met its first real row as a follow-up.
     seed: Series[float] = pa.Field(nullable=True)
+    # home_photo_similarity: Mission 2 return-fidelity score [0..1] (Task 13 §3) — nullable,
+    # NULL on non-mission2 rows and on red. Schema + logger column land in the SAME commit
+    # (seed-column precedent above): a follow-up column breaks CI the moment the first real
+    # row arrives before the schema knows about it.
+    home_photo_similarity: Series[float] = pa.Field(ge=0, le=1, nullable=True)
 
 
 RUNS_SCHEMA = RunsModel.to_schema()
@@ -65,6 +70,7 @@ KNOWN_RUNS_COLS = {
     "lidar_min_range", "lidar_max_range", "num_obstacles_detected",
     "power_mode",  # Session 16 Task 1 — Jetson nvpmodel mode the mission ran at (HIL)
     "seed",  # Mission 2 placement seed (Session 16 Plan B)
+    "home_photo_similarity",  # Session 16 Task 13 — Mission 2 return-fidelity score
 }
 
 
