@@ -22,6 +22,7 @@ from rclpy.time import Time
 from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 
+from nav_fleet.goal_retry import (COLD_ABORT_RETRIES, classify_result)
 from nav_fleet.missions import yaw_to_quaternion
 
 
@@ -49,6 +50,13 @@ class NavRunner(Node):
 
     def _pose_cb(self, msg):
         self._latest_pose = msg.pose.pose
+
+    def _pose_xy(self):
+        """Latest AMCL (x, y), or None if no pose has arrived yet (cold start) — the
+        cold-abort displacement check treats None as 'unmeasured' (still eligible to retry)."""
+        if self._latest_pose is None:
+            return None
+        return (self._latest_pose.position.x, self._latest_pose.position.y)
 
     def _cancel_goal(self, goal_handle, timeout_s=5.0):
         """Cancel an in-flight Nav2 goal and wait briefly for the server to confirm —
@@ -87,65 +95,104 @@ class NavRunner(Node):
             goal.pose.pose.orientation.z = z
             goal.pose.pose.orientation.w = w
 
-        # wait_for_server() only confirms the action is discoverable on the ROS graph, which
-        # happens as soon as bt_navigator's node exists — not that its lifecycle state is
-        # ACTIVE. A goal sent in that gap is rejected ("Action server is inactive"), so retry
-        # a few times with a short backoff rather than treating one rejection as final.
-        goal_handle = None
-        for attempt in range(5):
-            send_goal_future = self._action_client.send_goal_async(goal)
+        # One accept-then-await cycle. Returns a tuple whose first element is the outcome
+        # kind: 'send_fail' (rejected/timed-out — terminal), 'interrupt' (caller cancelled —
+        # terminal), or 'result' (finished; carries succeeded/elapsed/displacement so the
+        # outer loop can classify a cold-start abort). Nested so it shares spin()/steps/goal.
+        def attempt():
+            # wait_for_server() only confirms the action is discoverable on the ROS graph,
+            # which happens as soon as bt_navigator's node exists — not that its lifecycle
+            # state is ACTIVE. A goal sent in that gap is rejected ("Action server is
+            # inactive"), so retry a few times with a short backoff rather than treating one
+            # rejection as final.
+            goal_handle = None
+            for a in range(5):
+                send_goal_future = self._action_client.send_goal_async(goal)
 
-            deadline = time.time() + 10.0
+                deadline = time.time() + 10.0
+                while time.time() < deadline:
+                    if send_goal_future.done():
+                        break
+                    spin()
+
+                if not send_goal_future.done():
+                    self.get_logger().warning('Goal send timed out')
+                    return ('send_fail',)
+
+                goal_handle = send_goal_future.result()
+                if goal_handle.accepted:
+                    break
+
+                self.get_logger().warning(
+                    f'Goal rejected (attempt {a + 1}/5) — bt_navigator likely not '
+                    'active yet, retrying')
+                time.sleep(1.0)
+            else:
+                self.get_logger().error('Goal rejected after all retries')
+                return ('send_fail',)
+
+            accept_time = time.time()
+            start_xy = self._pose_xy()  # for the cold-abort displacement check
+            result_future = goal_handle.get_result_async()
+
+            deadline = time.time() + timeout
             while time.time() < deadline:
-                if send_goal_future.done():
+                if result_future.done():
                     break
                 spin()
+                # goal finished during spin() — its real result wins over a
+                # same-iteration interrupt (review 2026-07-17 race finding)
+                if result_future.done():
+                    break
+                if spin_extra is not None:
+                    # Service the caller's subscriptions (e.g. mission_runner's detection
+                    # topic) — send_goal's spin loop only spins THIS node otherwise.
+                    rclpy.spin_once(spin_extra, timeout_sec=0.0)
+                if interrupt_cb is not None:
+                    hit = interrupt_cb()
+                    if hit:
+                        self.get_logger().warning(f'goal interrupted: {hit!r} — cancelling')
+                        self.last_interrupt = hit
+                        self._cancel_goal(goal_handle)
+                        return ('interrupt',)
 
-            if not send_goal_future.done():
-                self.get_logger().warning('Goal send timed out')
+            if not result_future.done():
+                self.get_logger().warning('Goal wait timed out')
+                return ('send_fail',)
+
+            succeeded = result_future.result().status == 4
+            elapsed = time.time() - accept_time
+            end_xy = self._pose_xy()
+            displacement = (math.hypot(end_xy[0] - start_xy[0], end_xy[1] - start_xy[1])
+                            if start_xy is not None and end_xy is not None else None)
+            return ('result', succeeded, elapsed, displacement)
+
+        # Cold-start abort retry (Task 13a, see nav_fleet.goal_retry): a fresh process's
+        # first goal is sometimes accepted then aborted in ~0.1-0.25 s before the robot moves
+        # (bt_navigator->controller_server FollowPath ack-timeout race). Resend the goal,
+        # bounded, ONLY for that signature; a real/slow failure or an interrupt is terminal.
+        for cold_attempt in range(COLD_ABORT_RETRIES + 1):
+            outcome = attempt()
+            kind = outcome[0]
+            if kind in ('send_fail', 'interrupt'):
                 return self._finish(False, x, y, start_time, steps)
-
-            goal_handle = send_goal_future.result()
-            if goal_handle.accepted:
-                break
-
-            self.get_logger().warning(
-                f'Goal rejected (attempt {attempt + 1}/5) — bt_navigator likely not '
-                'active yet, retrying')
-            time.sleep(1.0)
-        else:
-            self.get_logger().error('Goal rejected after all retries')
+            _, succeeded, elapsed, displacement = outcome
+            verdict = classify_result(succeeded, elapsed, displacement)
+            if verdict == 'success':
+                return self._finish(True, x, y, start_time, steps)
+            if verdict == 'cold_abort' and cold_attempt < COLD_ABORT_RETRIES:
+                disp_s = 'unmeasured' if displacement is None else f'{displacement:.3f} m'
+                self.get_logger().error(
+                    f'COLD-START GOAL ABORT (retry {cold_attempt + 1}/{COLD_ABORT_RETRIES}): '
+                    f'non-success result in {elapsed:.2f}s, displacement {disp_s} — Nav2 '
+                    'cold-goal ack-timeout race, resending the same goal')
+                time.sleep(1.0)
+                continue
+            if verdict == 'cold_abort':
+                self.get_logger().error(
+                    f'cold-start abort persisted after {COLD_ABORT_RETRIES} retries — '
+                    'treating as a real failure')
             return self._finish(False, x, y, start_time, steps)
-
-        result_future = goal_handle.get_result_async()
-
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if result_future.done():
-                break
-            spin()
-            # goal finished during spin() — its real result wins over a
-            # same-iteration interrupt (review 2026-07-17 race finding)
-            if result_future.done():
-                break
-            if spin_extra is not None:
-                # Service the caller's subscriptions (e.g. mission_runner's detection
-                # topic) — send_goal's spin loop only spins THIS node otherwise.
-                rclpy.spin_once(spin_extra, timeout_sec=0.0)
-            if interrupt_cb is not None:
-                hit = interrupt_cb()
-                if hit:
-                    self.get_logger().warning(f'goal interrupted: {hit!r} — cancelling')
-                    self.last_interrupt = hit
-                    self._cancel_goal(goal_handle)
-                    return self._finish(False, x, y, start_time, steps)
-
-        if not result_future.done():
-            self.get_logger().warning('Goal wait timed out')
-            return self._finish(False, x, y, start_time, steps)
-
-        succeeded = result_future.result().status == 4
-        return self._finish(succeeded, x, y, start_time, steps)
 
     def _finish(self, succeeded, goal_x, goal_y, start_time, steps):
         self.last_result = succeeded
