@@ -384,11 +384,15 @@ def run_no_ball(executor, ball_ops=None, ball_xy=None):
             target=_place_during_return,
             args=(ball_ops, 'yellow', ball_xy, holder, stop_evt), daemon=True)
         place_thread.start()
-    result = executor.run()
+    try:
+        result = executor.run()
+    finally:
+        # finally (not inline after run()): an exception out of executor.run() must not
+        # leave the placement thread spawning/polling into shutdown — stop it either way.
+        if place_thread is not None:
+            stop_evt.set()
+            place_thread.join(timeout=30)
     final = get_ground_truth_xy()
-    if place_thread is not None:
-        stop_evt.set()
-        place_thread.join(timeout=30)
     sim = home_pair_similarity(result.tagged('mission2_home_ref'),
                                result.tagged('mission2_home_arrival'))
     fails = judge_no_ball(result.reaction_events, final,
@@ -455,12 +459,16 @@ def run_yellow(executor, ball_ops, ball_xy, yellow_name=None):
             target=_swap_during_return,
             args=(ball_ops, yellow_name, ball_xy, holder, stop_evt), daemon=True)
         swap_thread.start()
-    result = executor.run(ball_xy=ball_xy, color='yellow')
+    try:
+        result = executor.run(ball_xy=ball_xy, color='yellow')
+    finally:
+        # finally (not inline after run()): an exception out of executor.run() must not
+        # leave the swap thread spawning/polling into shutdown — stop it either way.
+        if swap_thread is not None:
+            stop_evt.set()
+            swap_thread.join(timeout=30)
     final = get_ground_truth_xy()
-    if swap_thread is not None:
-        stop_evt.set()
-        swap_thread.join(timeout=30)
-    else:   # operator: swap after the robot is safely home
+    if swap_thread is None:   # operator: swap after the robot is safely home
         ball_ops.remove(yellow_name)
         ball_ops.settle()
         holder['red_name'] = ball_ops.place('red', *ball_xy)
