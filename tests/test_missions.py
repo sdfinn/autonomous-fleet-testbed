@@ -113,7 +113,10 @@ def test_mission2_shape():
     import math
     from nav_fleet.missions import MISSIONS
     steps = MISSIONS['mission2']
-    assert [s.action for s in steps] == ['navigate']
+    # Task 9 rework (2026-07-17): a take_picture step follows the reactive navigate leg —
+    # reached only on the nominal (no-ball) path, since a fired reaction short-circuits
+    # run_mission from inside the navigate step (see mission_runner.run_mission).
+    assert [s.action for s in steps] == ['navigate', 'take_picture']
     assert steps[0].location == 'sphere_approach'
     assert steps[0].yaw == pytest.approx(math.pi / 2)  # face north, toward the sphere
     assert steps[0].reactions == {'red': 'photo_then_stop', 'yellow': 'photo_then_home'}
@@ -137,3 +140,14 @@ def test_validate_rejects_navigate_without_location():
     from nav_fleet.missions import MissionStep, validate_mission
     with pytest.raises(ValueError, match='not in SEMANTIC_MAP'):
         validate_mission((MissionStep('navigate', 'go nowhere'),))
+
+
+def test_reaction_range_is_per_color():
+    """Task 9 final batch (2026-07-17, Mike's severity model): red keeps the live-tuned
+    1.3 m (danger — react early); yellow is 0.8 m (caution — approach closer first)."""
+    from nav_fleet.missions import MISSIONS, REACTION_RANGE_M
+    assert REACTION_RANGE_M == {'red': 1.3, 'yellow': 0.8}
+    # Every color mission2 declares a reaction for must have a threshold —
+    # mission_runner._detection_cb indexes this dict directly (KeyError = config bug).
+    for color in MISSIONS['mission2'][0].reactions:
+        assert color in REACTION_RANGE_M
