@@ -35,6 +35,11 @@ from tools.telemetry_logger import log_run  # noqa: E402
 
 WORLD = 'bedroom'
 BALL_RADIUS = 0.043           # 86 mm croquet ball (spec §6) — never inflate
+# Ghost-ball settle (CLAUDE.md Gotchas, 2026-07-17): the headless llvmpipe renderer keeps a
+# REMOVED model in camera frames for seconds — wait this long after remove_ball so the next
+# run never reacts to the previous run's ball. Single source of truth: tests/test_mission2.py,
+# scripts/hil_stage.sh, and tools/mission2_day.py all key off this value.
+BALL_REMOVAL_SETTLE_S = 3.0
 
 # Deterministic placement (Task 9 rework, 2026-07-17 — Mike's decision, supersedes seeded
 # placement for the live tests below): 0.3 m in +x beside the floor MARKER. DERIVED from
