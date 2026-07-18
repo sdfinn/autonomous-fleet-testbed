@@ -329,12 +329,12 @@ def main():
     p_spawn.add_argument('--seed', type=int, required=True)
     p_rm = sub.add_parser('remove', help='remove a spawned ball by model name')
     p_rm.add_argument('name')
-    p_judge = sub.add_parser('judge-ignore', help='judge an ignore-variant HIL run: '
-                                                  'greps the mission log for reactions, '
-                                                  'checks ground truth, exits nonzero on '
-                                                  'failure')
+    p_judge = sub.add_parser('judge-nominal', help='judge a nominal (no-ball) HIL run: '
+                                                   'greps the mission log for reactions '
+                                                   '(expects none) and checks ground truth '
+                                                   'stopped short of the green sphere; '
+                                                   'exits nonzero on failure')
     p_judge.add_argument('--mission-log', required=True)
-    p_judge.add_argument('--seed', type=int, required=True)
     args = parser.parse_args()
 
     if args.cmd == 'spawn':
@@ -343,7 +343,13 @@ def main():
         print(json.dumps({'name': name, 'x': x, 'y': y}))
     elif args.cmd == 'remove':
         remove_ball(args.name)
-    elif args.cmd == 'judge-ignore':
+    elif args.cmd == 'judge-nominal':
+        # Deterministic pivot (Mike, 2026-07-17): HIL rung 1 is the NO-BALL nominal
+        # mission — navigate to the sphere, take a picture, react to nothing. This mirrors
+        # tests/test_mission2.py::test_mission2_nominal_green_sphere_only. judge_ignore()'s
+        # semantics (zero reactions + ground truth stopped short of the green sphere) are
+        # exactly the nominal checks, so it is reused as-is; only the CLI verb (no seed,
+        # no ball) differs from the seeded design in the Task 11 brief.
         from nav_fleet.ground_truth import get_ground_truth_xy
         with open(args.mission_log) as f:
             log_text = f.read()
@@ -354,7 +360,7 @@ def main():
         fails = judge_ignore(events, get_ground_truth_xy())
         for fail in fails:
             print(f'JUDGE FAIL: {fail}')
-        print(f'mission2_ignore seed={args.seed}: {"PASS" if not fails else "FAIL"}')
+        print(f'mission2_nominal: {"PASS" if not fails else "FAIL"}')
         raise SystemExit(0 if not fails else 1)
 
 
