@@ -44,7 +44,10 @@ class BallDetector(Node):
             hyp = ObjectHypothesisWithPose()
             hyp.hypothesis.class_id = f"{d['color']}_ball"
             hyp.hypothesis.score = min(1.0, d['pixels'] / 500.0)
-            hyp.pose.pose.position.x = d['range_m']  # estimated range (m) — see module doc
+            # estimated range (m) — see module doc. NaN for frame-edge-clipped boxes
+            # (hsv_detect.EDGE_MARGIN_PX) — an unreliable width must not drive a
+            # reaction; mission_runner._detection_cb excludes non-finite ranges.
+            hyp.pose.pose.position.x = d['range_m']
             det.results.append(hyp)
             det.bbox.center.position.x = d['cx']
             det.bbox.center.position.y = d['cy']
