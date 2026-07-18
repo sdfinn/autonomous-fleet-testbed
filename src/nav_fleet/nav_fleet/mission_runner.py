@@ -127,7 +127,20 @@ class MissionRunner(Node):
                 continue
             color = det.results[0].hypothesis.class_id.removesuffix('_ball')
             est_range = det.results[0].pose.pose.position.x
-            if color in w['reactions'] and est_range <= REACTION_RANGE_M:
+            # math.isfinite rejects NaN — hsv_detect.detect_balls sets range_m to NaN
+            # for frame-edge-clipped bounding boxes (Task 9 fix, 2026-07-17): their
+            # width-derived range is unreliable and must not drive the trigger. A plain
+            # `est_range <= REACTION_RANGE_M[color]` would already be False for NaN
+            # (IEEE754), but the explicit check documents the exclusion instead of
+            # relying on that.
+            # REACTION_RANGE_M[color] (Task 9 final batch, 2026-07-17): per-color
+            # threshold — red=1.3 m (danger, react early), yellow=0.8 m (caution, closer
+            # approach). Direct indexing is intentional: `color in w['reactions']` above
+            # only admits colors that a mission actually declared a reaction for, and
+            # every such color must have a matching threshold here — a missing key is a
+            # real configuration bug that should raise, not be silently swallowed.
+            if (color in w['reactions'] and math.isfinite(est_range) and est_range > 0
+                    and est_range <= REACTION_RANGE_M[color]):
                 in_range.add(color)
         for color in w['reactions']:
             if color in in_range:
