@@ -39,7 +39,7 @@ The pipeline validates the planner; the planner generates the scenarios the pipe
 
 ## Showcase strategy
 
-**Format:** Each release ships two companion deliverables — a short video of the sim run and a short video of the real robot doing the same mission. Side-by-side, they get more compelling with every release. R1 shows a single nav test closing the loop. The agentic loop iteration makes R2/R4 the memorable demo.
+**Format:** Each release ships two companion deliverables — a short video of the sim run and a short video of the real robot doing the same mission. Side-by-side, they get more compelling with every release. R1 shows a single nav test closing the loop. The agentic loop iteration makes R2 (the agentic layer) the memorable demo.
 
 **Distribution:**
 - **GitHub:** Public README + video links/embeds. Code stays private (request access to contact).
@@ -59,37 +59,65 @@ There are two ways to grow this project. They are different axes:
 
 **The differentiator — and the career/product value — lives on the infrastructure axis.** Adding a second robot or a drone does little for a hiring director or investor. Proving an **agentic test-and-heal loop** + **automated sim-to-real alignment** on a *single rover*, on a *$3K workstation*, with *reproducible cost numbers*, is the thing nobody else has packaged. Multi-robot/drone work is a **demo flourish**, not the core value.
 
-Consequence: **the roadmap is reprioritized.** The agentic/alignment layer (R4) is pulled *before* the multi-robot ladder (R2/R3).
+Consequence: **the roadmap is reprioritized.** The agentic/alignment layer is pulled *before* the multi-robot ladder — and since 2026-07-17 the labels match that order: the agentic layer IS R2 (it was called "R4" between 2026-06-27 and 2026-07-17).
 
 ---
 
 ## Revised roadmap
 
+> **RELABELED 2026-07-17 (Session 20 planning with Mike):** release numbers now MATCH
+> execution order — the layer formerly called "R4" is now **R2**. Five releases,
+> definition sharpness deliberately degrading down the ladder (R2 tight, R3 moderate,
+> R4/R5 themes). Older docs/notes that say "R4" mean today's R2 — see decisions log.
+
 ```
-R1  (current)   Finish the 6-stage pipeline in sim, single rover → Showcase Moment 1
-                Stage 4 / Isaac Sim = reserved slot, NOT built (see Simulation Tiers)
+R1  Foundation (current)      Finish S16–18: single rover, scripted missions, 6-stage
+                              pipeline, drift detection, sim+HIL+real → r1-complete tag
+                              (S19's pick-list = post-R1 bridge work, credited to R2)
 
-R4  (NEXT after R1)   The Agentic & Alignment Layer — THE differentiator
-                Pillars: agentic test/heal · sim-to-real alignment · generative worlds
-                Outputs: local-throughput benchmark · positioning write-up
+R2  Agentic & Alignment       THE differentiator (was "R4")
+                              Entry criteria: hardened-nav remainder from S19's ladder
+                              (AMCL stuck-regression, collision_monitor, footprint,
+                              recovery/BR-03) — trustworthy nav signals first
+                              Pillars: agentic test/heal · sim-to-real alignment ·
+                              generative scenario→SDF (NL→world lives HERE)
+                              Outputs: local-first benchmark · positioning write-up
+                              (+ RaaS framing doc adjacency)
 
-R2 / R3  (OPTIONAL, demo flourish)   Multi-robot · drone · autonomous missions
-                Pulled forward only if a specific role/customer/demo demands it
+R3  Fleet & Input Expansion   Second robot (Arduino UNO Q bumper bot, instructions from
+                              the Jetson) · multi-robot launch parameterization · full
+                              user-INPUT missions/worlds/robots as pipeline inputs ·
+                              remote stationary WiFi camera as fleet resource · living-
+                              room world · MQTT telemetry · safety-cert framing
+
+R4  Autonomy & Perception     Wake-up-anywhere (SLAM) · dynamic/outdoor worlds
+                              (basketball court, movable walls) · dynamic SLAM ·
+                              Cosmos Edge spike (alt perception node behind the same
+                              Detection2DArray interface, same judges) · workstation↔
+                              Jetson above-paygrade inference split · VLA-class semantic
+                              nav · semantic costmaps
+
+R5  Self-Testing Fleet        The 10x endgame: AI defines and runs its own missions ·
+                              parallel sim swarms · SelfPath-style auto-routes · the
+                              pipeline stress-tests itself ("brains demo")
+
+CUT (2026-07-17, revivable with reason): drone / aerial coordination — new physics,
+safety and sim domain for demo value the ground fleet already provides.
 
 Stage 4 / Isaac Sim   Fidelity tier — drops into reserved slot when perception matters
 ```
 
 | Release | Robot composition | Mission style | Intelligence layer | Priority |
 |---|---|---|---|---|
-| R1 (current) | 1 Jetson Orin Nano (sim + real) | Scripted: navigate, sweep, stop/avoid | Drift detection + AI test generation | **Active** |
-| **R4** | Same single rover | Same scripted missions | **Agentic test/heal + sim-to-real alignment + generative worlds** | **Next** |
-| R2 | 1 Jetson + 1–2 cheaper robots | Coordinated search | Multi-robot coordination | Optional |
-| R3A | Add drone | More autonomous | Aerial + ground coordination | Optional |
-| R3B | Any fleet | Fully autonomous ("go find the red ball") | AI-defined missions, parallel sim | Optional |
+| R1 Foundation (current) | 1 Jetson Orin Nano (sim + real) | Scripted: navigate, sweep, stop/avoid | Drift detection + AI test generation | **Active** |
+| **R2 Agentic & Alignment** (was R4) | Same single rover | Same scripted missions | **Agentic test/heal + sim-to-real alignment + generative scenario→SDF** | **Next** |
+| R3 Fleet & Input Expansion | 1 Jetson + UNO Q bumper bot + fixed camera | Coordinated; user-INPUT missions/worlds/robots | Multi-robot coordination, input-ization | Planned |
+| R4 Autonomy & Perception | Same fleet | Wake-up-anywhere, dynamic worlds | SLAM, Cosmos/VLA-class perception | Theme |
+| R5 Self-Testing Fleet | Any fleet | Fully autonomous ("go find the red ball") | AI-defined missions, parallel sim | Theme |
 
 ---
 
-## R4 — The Agentic & Alignment Layer (the differentiator)
+## R2 — The Agentic & Alignment Layer (the differentiator; was "R4" pre-2026-07-17)
 
 **Three pillars:**
 
@@ -108,7 +136,7 @@ Stage 4 / Isaac Sim   Fidelity tier — drops into reserved slot when perception
 
 ## The local-first economics wedge
 
-The sharpest, most-unique angle: **enterprise-grade agentic robot CI without a cloud bill.** RTX 5080 (Blackwell, FP4/FP8), 96 GB RAM, Jetson Orin Nano for real HIL. The message: *"Eliminate ballooning cloud R&D costs — bring disciplined agentic automation local, deliver hardware-verified binaries to the edge."* This is a first-class, **measured, marketed** feature — captured by R4 output #4, not an afterthought.
+The sharpest, most-unique angle: **enterprise-grade agentic robot CI without a cloud bill.** RTX 5080 (Blackwell, FP4/FP8), 96 GB RAM, Jetson Orin Nano for real HIL. The message: *"Eliminate ballooning cloud R&D costs — bring disciplined agentic automation local, deliver hardware-verified binaries to the edge."* This is a first-class, **measured, marketed** feature — captured by R2 output #4, not an afterthought.
 
 ## Simulation tiers: throughput vs. fidelity
 
@@ -124,9 +152,9 @@ Two tiers, complementary — not competitors:
 ## Showcase moments
 
 1. **Moment 1 (R1):** Single rover in sim + real doing the same mission; drift detection visible. 1–2 min video.
-2. **Moment "R4" (the real differentiator):** Agentic loop catches an injected regression, diagnoses it from telemetry, proposes a fix (human approves), sim-to-real alignment shown tracking; plus the local-first benchmark number on screen. **This is the demo that lands the role / opens the pitch.**
-3. **Moment 2 (R2, optional):** 1 smart + 1–2 cheap robots, coordinated mission.
-4. **Moment 3A/3B (R3, optional):** Drone added / "brains demo" — pipeline defines and runs its own test missions.
+2. **Moment R2 (the real differentiator; was "Moment R4"):** Agentic loop catches an injected regression, diagnoses it from telemetry, proposes a fix (human approves), sim-to-real alignment shown tracking; plus the local-first benchmark number on screen. **This is the demo that lands the role / opens the pitch.**
+3. **Moment R3:** 1 smart + UNO Q bumper bot, coordinated mission — plus a user-INPUT mission running through the pipeline end to end.
+4. **Moment R5 ("brains demo"):** pipeline defines and runs its own test missions. (Drone moment cut 2026-07-17 with the drone itself.)
 
 ## Tiered development loop
 
@@ -226,16 +254,18 @@ JetPack is the compatibility target for Stage 6 real-robot deploy, not for runni
 
 ---
 
-## What's Next — Release 3 and Beyond
+## What's Next — R3 and Beyond (retagged 2026-07-17 to the relabeled ladder)
 
-These ideas are captured here to prevent scope creep in R1 and the agentic layer work.
-Pull forward only when a specific role, customer, or demo demands it.
+These ideas are captured here to prevent scope creep in R1 and the R2 agentic layer work.
+Pull forward only when a specific role, customer, or demo demands it. Placements below
+were decided in the 2026-07-17 Session 20 planning pass — changes go through the
+decisions log, not silent edits.
 
 **Infrastructure / platform:**
-- **MQTT telemetry** — replace JSON file polling with MQTT pub/sub for real-time edge-to-cloud telemetry (matches the IoT protocol pattern used by production AMR fleets)
-- **RaaS framing doc** — document the framework as a Robotics-as-a-Service offering: hardware lease + software subscription, OTA updates included
-- **Safety certification framing** — annotate the dual-layer architecture against SIL2 / UL 60730-1 requirements (not certification, just the mapping)
-- **Dynamic SLAM** — handle moving obstacles (people, forklifts) using a costmap layer that ages out dynamic detections
+- **MQTT telemetry [R3]** — replace JSON file polling with MQTT pub/sub for real-time edge-to-cloud telemetry (matches the IoT protocol pattern used by production AMR fleets)
+- **RaaS framing doc [R2 write-up adjacency]** — document the framework as a Robotics-as-a-Service offering: hardware lease + software subscription, OTA updates included
+- **Safety certification framing [R3]** — annotate the dual-layer architecture against SIL2 / UL 60730-1 requirements (not certification, just the mapping)
+- **Dynamic SLAM [R4]** — handle moving obstacles (people, forklifts) using a costmap layer that ages out dynamic detections
 - **CI stage ordering — considered, not decided (2026-07-06).** `stage-2-arm64` and
   `stage-3-gazebo` currently run in parallel (both just `needs: stage-1-quality`) — fast
   signal on the sim stages, but it burns the full QEMU build (24–37 min) even when
@@ -251,17 +281,17 @@ Pull forward only when a specific role, customer, or demo demands it.
   the dashboard show the trend over time rather than one-off notes.
 
 **AI / intelligence:**
-- **Full VLA models** — replace LLM mission planning with Vision-Language-Action models for visually grounded semantic navigation ("go to the area with the green box")
-- **SelfPath-style auto-route generation** — autonomous route planning without human-defined waypoints; robot generates its own coverage path
-- **Closed-loop sim-to-real auto-tuning** — automatically adjust URDF/nav2 params to minimize the sim-to-real gap based on telemetry comparison
+- **Full VLA models [R4/R5]** — replace LLM mission planning with Vision-Language-Action models for visually grounded semantic navigation ("go to the area with the green box")
+- **SelfPath-style auto-route generation [R5]** — autonomous route planning without human-defined waypoints; robot generates its own coverage path
+- **Closed-loop sim-to-real auto-tuning [= R2 pillar 2]** — automatically adjust URDF/nav2 params to minimize the sim-to-real gap based on telemetry comparison
 
 **Robot / fleet expansion:**
-- **Multi-robot fleet (R2)** — 2+ robots, coordinated missions, inter-robot collision avoidance. If the Jetson takes a **leader-node role** (central telemetry hub, fleet DB on-robot): NVMe becomes mandatory (sustained-write duty kills SD cards — see 2026-07-03 decision), workers send compact telemetry only (never raw video/lidar streams over Wi-Fi — bandwidth and leader memory both cap out fast), and DDS traffic needs scoping (CycloneDDS config or Zenoh) so sensor topics stay local to each robot
-- **Drone integration (R3A)** — aerial + ground coordination, combined sensing
-- **Fully autonomous missions (R3B)** — AI defines and runs its own test missions with no scripted waypoints
+- **Multi-robot fleet [R3]** — 2+ robots, coordinated missions, inter-robot collision avoidance. If the Jetson takes a **leader-node role** (central telemetry hub, fleet DB on-robot): NVMe becomes mandatory (sustained-write duty kills SD cards — see 2026-07-03 decision), workers send compact telemetry only (never raw video/lidar streams over Wi-Fi — bandwidth and leader memory both cap out fast), and DDS traffic needs scoping (CycloneDDS config or Zenoh) so sensor topics stay local to each robot
+- **Drone integration [CUT 2026-07-17, revivable with reason]** — aerial + ground coordination, combined sensing. Cut: new physics/safety/sim domain for demo value the ground fleet already provides.
+- **Fully autonomous missions [R5]** — AI defines and runs its own test missions with no scripted waypoints
 
 **Demo / portfolio:**
-- **Per-release video series** — YouTube shorts showing sim + real robot doing the same mission; compile into a progression reel for R3
+- **Per-release video series [ongoing, every release]** — YouTube shorts showing sim + real robot doing the same mission; compile into a progression reel as releases accumulate
 
 ---
 
@@ -276,7 +306,7 @@ Traditional robotic software relies on a modular, hand-coded pipeline — separa
 | **Logic layer** | Rigid — runs on geometric maps and exact numeric coordinates | Intuitive — uses probabilistic, semantic associations to predict next actions |
 | **Failure mode** | Cascading — if perception misidentifies an object, the entire pipeline breaks | Hallucination — may misunderstand a physical constraint or environmental context |
 
-Our Session 13 agentic loop is **VLA-lite**: Claude handles the language → action translation while Nav2 handles the deterministic execution. The SEMANTIC_MAP bridges the two — named locations give Claude spatial grounding without requiring a full neural perception stack. Full VLA integration (where the model directly generates motor commands from camera + language) is the R3 destination.
+Our Session 13 agentic loop is **VLA-lite**: Claude handles the language → action translation while Nav2 handles the deterministic execution. The SEMANTIC_MAP bridges the two — named locations give Claude spatial grounding without requiring a full neural perception stack. Full VLA integration (where the model directly generates motor commands from camera + language) is the R4/R5 destination.
 
 ### Background: Semantic Mapping in Dynamic Environments
 
@@ -286,7 +316,7 @@ Traditional robots see a busy public space (retail store, airport, warehouse) as
 - **Affordance awareness:** The robot links objects to their function. A wet floor requires a reroute; a dropped piece of soft packaging can be rolled over. These distinctions require semantic labels, not just geometry.
 - **Mitigating VLA weaknesses:** VLA models are stochastic — their outputs can be unpredictable. Embedding a fixed semantic 3D world model gives the robot a reliable safety framework to double-check the VLA's decisions against the physical reality of the environment. This is the same dual-layer principle (probabilistic AI + deterministic safety) used in BrainOS®.
 
-Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a first step. The R3 version upgrades this to a live semantic costmap updated by camera detections.
+Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a first step. The R4 version upgrades this to a live semantic costmap updated by camera detections.
 
 ---
 
@@ -734,3 +764,24 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   `agentic_loop`'s known diagnose() gap (inferred `current_value`, verified wrong once)
   pulled forward from 19+ into 17 — don't wait for real hardware to fix a known-wrong
   prompt input.
+
+- **2026-07-17 — Releases relabeled + full ladder decided (Session 20 planning, Mike).**
+  Numbers now match execution order: **the agentic & alignment layer is R2** (formerly
+  "R4"; older notes saying R4 mean today's R2). Five releases: R1 Foundation → R2
+  Agentic & Alignment → R3 Fleet & Input Expansion → R4 Autonomy & Perception → R5
+  Self-Testing Fleet; definition sharpness deliberately degrades down the ladder.
+  Placements decided (every candidate, no silent drops): NL→world generation stays in
+  R2 (pillar 3 seed); full user-INPUT missions/worlds/robots → R3; Arduino UNO Q
+  bumper bot → R3 (prereqs: multi-robot launch parameterization, DDS scoping); remote
+  stationary WiFi camera → R3; living-room world → R3; outdoor basketball world +
+  movable walls → R4; SLAM wake-up-anywhere → R4; Cosmos Edge perception spike +
+  workstation↔Jetson above-paygrade inference split → R4 (Cosmos positioning paragraph
+  → Session 17 docs pass, now); MQTT → R3; RaaS framing → R2 write-up adjacency;
+  safety-cert framing → R3; dynamic SLAM → R4; VLA → R4/R5; SelfPath → R5; fully
+  autonomous missions → R5. **Drone: CUT** (revivable with reason) — new physics/
+  safety/sim domain for demo value the ground fleet already provides. Hardened-nav
+  remainder (whatever S19's ladder doesn't finish: AMCL stuck-regression,
+  collision_monitor, footprint, recovery/BR-03) = **R2 entry criteria** — the agentic
+  loop's credibility requires trustworthy nav signals. R1 boundary confirmed:
+  `r1-complete` at Session 18; S19 pick-list = post-R1 bridge work credited to R2-era.
+  Standing principle recorded from MikesNotes.md: keep thinking 10x.

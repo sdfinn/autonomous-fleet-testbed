@@ -3819,7 +3819,10 @@ This is the last cheap chance to find them at a desk.
       (moved here from Session 16: wire it to `gz sim` or delete it in both
       `sim_launch.py` and `sim_only_launch.py`).
 - [ ] Docs pass (Mike 2026-07-17): review all docs, consolidate overlapping ones, delete
-      stale ones. Includes applying the Piece 1 terminology glossary.
+      stale ones. Includes applying the Piece 1 terminology glossary, and writing the
+      **Cosmos / world-foundation-models positioning paragraph** into BLUEPRINT.md
+      ("the testbed for the Cosmos era" — S20 decision 2026-07-17; angles in the
+      session-17-inputs memory).
 - [ ] **Second review round with a different model** after the first round's fixes land
       (Mike 2026-07-17) — fresh eyes, different blind spots; `/code-review` or ultra.
 - [ ] **Carry-ins from Session 16's observed runs (2026-07-17):**
@@ -4332,48 +4335,40 @@ underneath, which made it impossible to tell a real bug (recovery) apart from a 
 
 ---
 
-## Session 20 — Future Release Planning (the decisions session)
+## Session 20 — Future Release Planning — ✅ EXECUTED 2026-07-17/18 (with Mike)
 
-> **Created 2026-07-17 (planning session with Mike).** This session's WORK is planning:
-> every future-release candidate gets placed — **R4 / R2 / R3 / cut** (priority order:
-> the 2026-06-27 reprioritization pulled R4, the agentic & alignment layer, ahead of
-> R2/R3 in execution order — see BLUEPRINT decisions log) — with a written reason.
-> Nominally runs after Session 19, but can pull earlier if the robot slips.
+> Ran the same night it was chartered (Mike: "I don't want to stop just yet"). All
+> placement decisions made interactively; full record in **BLUEPRINT.md's 2026-07-17
+> decisions-log entry** (the authoritative version). Summary below.
 
-**Purpose:** reconcile two pulls the docs currently hold in tension, under the standing
-guiding principle from MikesNotes.md: *keep thinking 10x — best for career prospects and
-truly creating something unique and needed.* The candidate list leans robot-ambition
-(second robot, more worlds, remote cameras); BLUEPRINT's decided strategy puts the
-differentiator on the infrastructure axis (agentic test/heal, sim-to-real alignment,
-local-first economics). Session 20 decides what that means item by item.
+**Decided:**
+- **Releases relabeled — numbers now match execution order.** The agentic & alignment
+  layer (formerly "R4") is **R2**. Five-release ladder: **R1 Foundation → R2 Agentic &
+  Alignment → R3 Fleet & Input Expansion → R4 Autonomy & Perception → R5 Self-Testing
+  Fleet** — definition sharpness deliberately degrades down the ladder (R2 tight,
+  R3 moderate, R4/R5 themes).
+- **Every future-release candidate placed** (MikesNotes list + BLUEPRINT What's-Next +
+  2026-07-17 collected findings): NL→world stays in R2; full user-INPUT
+  missions/worlds/robots → R3; UNO Q bumper bot → R3; remote WiFi camera → R3;
+  living-room world → R3; MQTT → R3; safety-cert framing → R3; RaaS framing → R2
+  write-up adjacency; outdoor basketball world, SLAM wake-up, dynamic SLAM, Cosmos
+  Edge spike + workstation↔Jetson inference split, semantic costmaps → R4; VLA →
+  R4/R5; SelfPath + fully-autonomous missions ("brains demo") → R5.
+- **Drone: CUT** (revivable with reason, recorded).
+- **Hardened-nav remainder = R2 entry criteria** (trustworthy nav signals before the
+  agentic loop can be believed).
+- **R1 boundary confirmed:** ends at `r1-complete` (Session 18); Session 19's pick-list
+  is post-R1 bridge work credited to the R2 era.
+- **Cosmos positioning paragraph** → written during Session 17's docs pass (Piece 2).
 
-**Inputs (read/collect before deciding):**
-- [ ] MikesNotes.md "FUTURE RELEASE" list (~13 items: more autonomy; SLAM wake-up;
-      hardened navigation; Arduino UNO Q bumper bot fed instructions by the Jetson;
-      living-room + outdoor-basketball worlds; remote stationary WiFi camera as a robot
-      resource; user-INPUT missions/worlds/robots through the pipeline; AMCL/recovery/
-      footprint completion; multi-robot launch parameterization; NVIDIA Cosmos 3 Edge;
-      "all the stuff from the blueprint")
-- [ ] BLUEPRINT.md "What's Next — Release 3 and Beyond" backlog (MQTT, RaaS framing,
-      safety-cert framing, dynamic SLAM, VLA, SelfPath, fleet expansion, video series)
-- [ ] Session-17-inputs memory (2026-07-17 collection): Cosmos positioning paragraph
-      for BLUEPRINT; Cosmos-Edge-as-alternative-perception-node spike behind the same
-      Detection2DArray interface; workstation↔Jetson "above-paygrade inference" split;
-      pluggable test-reset strategy (drive-home vs teleport+re-init vs full restart —
-      full restart likely preferable for multi-robot resets); content-verified
-      photography; boot-mode switch follow-ons
-- [ ] Whatever Session 19's pick-list didn't get picked
-- [ ] Re-read `robotics_cicd_10x_blueprint.md` end to end (Mike's standing refresher)
-
-**Outputs:**
-- [ ] Updated BLUEPRINT.md roadmap table + decisions-log entries — every candidate
-      placed (R4 / R2 / R3 / cut) with a reason; no silent drops
-- [ ] **Consider renaming/renumbering the releases so numbers match execution order
-      again** (R4-before-R2 is a standing confusion; a rename like R2=agentic layer
-      would fix it — decide, don't drift)
-- [ ] Session sections beyond 18 renumbered/rewritten to match the decisions
-- [ ] R1 close-out check: confirm what "r1-complete" still requires (Session 18's tag)
-      and whether anything currently labeled R1 should move out
+**Follow-through checklist (mechanical, done same night unless checked open):**
+- [x] BLUEPRINT.md roadmap block + table rewritten to the 5-release ladder
+- [x] BLUEPRINT.md forward references swept (R4→R2 relabel; What's-Next retagged;
+      showcase moments relabeled; historical decisions-log entries left as history)
+- [x] Decisions-log entry appended (2026-07-17)
+- [ ] Cosmos positioning paragraph in BLUEPRINT (deliberately left for S17 Piece 2's
+      docs pass — it deserves fresh-eyes writing, not 1 a.m. writing)
+- [ ] Memory files updated to the new labels (project_vision roadmap table)
 
 ---
 
