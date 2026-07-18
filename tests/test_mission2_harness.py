@@ -123,6 +123,46 @@ def test_judge_yellow_fails_when_robot_did_not_drive():
     assert any('barely moved' in f for f in fails)
 
 
+def test_parse_reaction_events_recovers_color_reaction_and_tuple():
+    """Task 12: the sim-side reaction print carries a real (x, y) truth tuple — recover it
+    verbatim (color, reaction, truth_xy) so judge_red/judge_yellow consume it unchanged."""
+    from tools.mission2_harness import parse_reaction_events
+    log = ("[INFO] [mission_runner]: [mission2] step 1/2: drive toward the green sphere\n"
+           "  reaction: red -> photo_then_stop at (0.31, 2.44)\n"
+           "Mission mission2: PASS\n")
+    assert parse_reaction_events(log) == [
+        {'color': 'red', 'reaction': 'photo_then_stop', 'truth_xy': (0.31, 2.44)}]
+
+
+def test_parse_reaction_events_handles_none_truth_from_jetson():
+    """On the Jetson get_ground_truth_xy() returns None, so the printed truth is the literal
+    'None' — it must parse to truth_xy=None (the HIL judge then supplies workstation truth)."""
+    from tools.mission2_harness import parse_reaction_events
+    log = "  reaction: yellow -> photo_then_home at None\n"
+    assert parse_reaction_events(log) == [
+        {'color': 'yellow', 'reaction': 'photo_then_home', 'truth_xy': None}]
+
+
+def test_parse_reaction_events_empty_when_no_reactions():
+    from tools.mission2_harness import parse_reaction_events
+    assert parse_reaction_events("Mission mission2: PASS\nnothing to see here\n") == []
+
+
+def test_parse_reaction_events_ignores_unparseable_truth():
+    from tools.mission2_harness import parse_reaction_events
+    events = parse_reaction_events("  reaction: red -> photo_then_stop at not_a_tuple\n")
+    assert events == [{'color': 'red', 'reaction': 'photo_then_stop', 'truth_xy': None}]
+
+
+def test_parse_reaction_events_feeds_judge_ignore_spurious_reaction():
+    """The nominal judge greps these lines expecting zero — a recovered event must make
+    judge_ignore report a spurious reaction (integration of parse + judge)."""
+    from tools.mission2_harness import judge_ignore, parse_reaction_events
+    events = parse_reaction_events("  reaction: red -> photo_then_stop at None\n")
+    fails = judge_ignore(events, final_truth=(0.0, 3.2))
+    assert any('reaction' in f for f in fails)
+
+
 def test_judge_ignore_zero_reactions_and_sphere_band():
     from tools.mission2_harness import judge_ignore
     assert judge_ignore(events=[], final_truth=(0.0, 3.2)) == []

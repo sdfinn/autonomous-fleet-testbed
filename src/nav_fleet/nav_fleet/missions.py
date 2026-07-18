@@ -83,6 +83,15 @@ MISSIONS = {
                     reactions={'red': 'photo_then_stop', 'yellow': 'photo_then_home'}),
         MissionStep('take_picture', 'photograph the green sphere'),
     ),
+    # Reset leg (Session 16 HIL rungs, Task 12): drive straight back to home_base. Used
+    # between HIL react rungs to return the robot home WITHOUT teleporting (a teleport
+    # breaks AMCL + the costmaps). Run via mission_runner, which clears both costmaps
+    # before the navigate leg — mirroring the sim tests' `_drive_home_after` janitor
+    # (clear costmaps + send_goal(home_base, yaw=pi/2)). yaw=pi/2 restores the spawn/home
+    # heading (north), matching what nominal/yellow/red expect at their start.
+    'go_home': (
+        MissionStep('navigate', 'return to home base', 'home_base', math.pi / 2),
+    ),
 }
 
 

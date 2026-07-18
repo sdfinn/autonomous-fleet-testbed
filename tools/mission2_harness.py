@@ -13,16 +13,21 @@ Run as a CLI from the repo root for the HIL tier (python -m tools.mission2_harne
 the sim tier (tests/test_mission2.py) calls the functions in-process.
 """
 import argparse
+import ast
+import glob
 import json
 import math
 import os
 import random
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src', 'nav_fleet'))
 
+from nav_fleet.ground_truth import get_ground_truth_xy  # noqa: E402
 from nav_fleet.missions import REACTION_RANGE_M  # noqa: E402
 from nav_fleet.semantic_map import SEMANTIC_MAP  # noqa: E402
 from tools.telemetry_logger import log_run  # noqa: E402
@@ -298,6 +303,61 @@ def judge_ignore(events, final_truth):
     return fails
 
 
+def parse_reaction_events(log_text):
+    """Recover reaction events from a mission_runner stdout log (pure — unit-tested).
+
+    mission_runner.main() prints one line per reaction:
+        ``  reaction: <color> -> <reaction> at <truth_xy>``
+    where <truth_xy> is a ``(x, y)`` tuple in sim or ``None`` on the Jetson (no Gazebo
+    there — get_ground_truth_xy returns None). Each recovered event mirrors the in-process
+    dict shape (`color`, `reaction`, `truth_xy`) so judge_red/judge_yellow consume it
+    unchanged. The tuple is recovered with ast.literal_eval; anything unparseable (or the
+    literal ``None``) becomes truth_xy=None, which the HIL judges then override with a
+    workstation ground-truth sample (the Jetson can't measure ground truth)."""
+    events = []
+    for line in log_text.splitlines():
+        s = line.strip()
+        if not s.startswith('reaction: '):
+            continue
+        body = s[len('reaction: '):]
+        head, sep, tail = body.rpartition(' at ')
+        if not sep:
+            continue
+        color, arrow, reaction = head.partition(' -> ')
+        if not arrow:
+            continue
+        try:
+            truth = ast.literal_eval(tail.strip())
+        except (ValueError, SyntaxError):
+            truth = None
+        if not (truth is None or (isinstance(truth, tuple) and len(truth) == 2)):
+            truth = None
+        events.append({'color': color.strip(), 'reaction': reaction.strip(),
+                       'truth_xy': truth})
+    return events
+
+
+def _sample_two_ground_truths(gap_s=2.0):
+    """Two ground-truth samples `gap_s` apart (red's stationary check — robot is stopped
+    at the ball once photo_then_stop returns, so both are taken workstation-side after the
+    mission). Returns (truth_a, truth_b), either possibly None off-sim/on error."""
+    truth_a = get_ground_truth_xy()
+    time.sleep(gap_s)
+    truth_b = get_ground_truth_xy()
+    return truth_a, truth_b
+
+
+def _reaction_events_with_truth(log_text, color, reaction_xy):
+    """Parsed events for `color` with truth_xy overridden by the workstation-observed
+    reaction point (`reaction_xy`, the poller's closest approach to the ball). The Jetson
+    log carries truth_xy=None; the workstation Gazebo is the authoritative ground truth."""
+    events = parse_reaction_events(log_text)
+    for e in events:
+        if e['color'] == color and reaction_xy is not None:
+            e['truth_xy'] = tuple(reaction_xy)
+    return events
+
+
 def log_variant_row(variant, seed, ok, runner=None):
     """One telemetry row per judged variant run — the row's result is the JUDGED verdict
     (ground-truth honest), which may be stricter than the mission's self-report."""
@@ -319,49 +379,194 @@ def log_variant_row(variant, seed, ok, runner=None):
     )
 
 
+def _as_tuple(xy):
+    return tuple(xy) if xy is not None else None
+
+
+def _load_watch(path):
+    """Read the poller's JSON (start/reaction/final ground-truth points). Missing/unreadable
+    -> empty dict (the judges then fail cleanly on the None fields, never crash)."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _cmd_spawn(args):
+    x, y = solve_placement(args.variant, args.seed)
+    name = spawn_ball(args.color, x, y)
+    print(json.dumps({'name': name, 'x': x, 'y': y}))
+
+
+def _cmd_spawn_at(args):
+    """Deterministic spawn at BALL_AT_SPHERE_XY — mirrors the sim tests'
+    spawn_ball(color, *BALL_AT_SPHERE_XY) exactly (no seed, no random placement)."""
+    x, y = BALL_AT_SPHERE_XY
+    name = spawn_ball(args.color, x, y)
+    print(json.dumps({'name': name, 'x': x, 'y': y}))
+
+
+def _cmd_remove(args):
+    remove_ball(args.name)
+
+
+def _cmd_assert_home(args):
+    """Start-position precondition (mirrors tests/test_mission2.py::_assert_at_home_base):
+    workstation ground truth must be within `--tol` of home_base, else exit nonzero so a
+    failed drive-home surfaces loudly instead of silently displacing the next rung."""
+    truth = get_ground_truth_xy()
+    hx, hy = SEMANTIC_MAP['home_base']
+    if truth is None:
+        print('ASSERT FAIL: no ground truth — is the sim up on this host?')
+        raise SystemExit(1)
+    miss = _dist(truth, (hx, hy))
+    ok = miss <= args.tol
+    print(f'home precondition: robot at ({truth[0]:.3f}, {truth[1]:.3f}), {miss:.3f} m '
+          f'from home_base ({hx}, {hy}), tol {args.tol} m -> {"OK" if ok else "FAIL"}')
+    raise SystemExit(0 if ok else 1)
+
+
+def _cmd_watch(args):
+    """Workstation-side ground-truth poller, run concurrently with the Jetson mission.
+
+    The Jetson can't measure ground truth (no Gazebo there), and for the yellow rung the
+    robot drives home after reacting — so its reaction point can't be recovered from any
+    post-mission sample. This poller samples the workstation Gazebo throughout the mission
+    and records the CLOSEST approach to the ball (= the reaction point: the robot reacts
+    then stops/retreats, so it never gets closer afterward), plus the first sample (start,
+    ~home) and last sample (final). Writes its JSON on SIGTERM/SIGINT (bash kills it once
+    the mission ssh returns) or when --max-s elapses."""
+    ball = (args.ball_x, args.ball_y)
+    state = {'start_xy': None, 'reaction_xy': None, 'reaction_dist': None,
+             'final_xy': None, 'n_samples': 0}
+    stop = {'flag': False}
+
+    def _handler(signum, frame):
+        stop['flag'] = True
+
+    signal.signal(signal.SIGTERM, _handler)
+    signal.signal(signal.SIGINT, _handler)
+    deadline = time.time() + args.max_s
+    try:
+        while not stop['flag'] and time.time() < deadline:
+            xy = get_ground_truth_xy()
+            if xy is not None:
+                if state['start_xy'] is None:
+                    state['start_xy'] = list(xy)
+                state['final_xy'] = list(xy)
+                state['n_samples'] += 1
+                d = math.hypot(xy[0] - ball[0], xy[1] - ball[1])
+                if state['reaction_dist'] is None or d < state['reaction_dist']:
+                    state['reaction_dist'] = d
+                    state['reaction_xy'] = list(xy)
+            time.sleep(args.poll_s)
+    finally:
+        with open(args.out, 'w') as f:
+            json.dump(state, f)
+
+
+def _cmd_judge_nominal(args):
+    # Deterministic pivot (Mike, 2026-07-17): HIL rung 1 is the NO-BALL nominal mission —
+    # navigate to the sphere, take a picture, react to nothing. This mirrors
+    # tests/test_mission2.py::test_mission2_nominal_green_sphere_only. judge_ignore()'s
+    # semantics (zero reactions + ground truth stopped short of the green sphere) are
+    # exactly the nominal checks, so it is reused as-is; only the CLI verb (no seed, no
+    # ball) differs from the seeded design in the Task 11 brief.
+    with open(args.mission_log) as f:
+        log_text = f.read()
+    fails = judge_ignore(parse_reaction_events(log_text), get_ground_truth_xy())
+    for fail in fails:
+        print(f'JUDGE FAIL: {fail}')
+    print(f'mission2_nominal: {"PASS" if not fails else "FAIL"}')
+    raise SystemExit(0 if not fails else 1)
+
+
+def _cmd_judge_react(args):
+    """HIL judge for a react rung (red or yellow). Reuses judge_red/judge_yellow verbatim,
+    supplying ground truth from the WORKSTATION (the Jetson log's truth_xy is None): the
+    reaction point comes from the concurrent poller (`--watch-file`), and red's stationary
+    check takes two fresh samples 2 s apart in-process (the robot is stopped at the ball
+    once photo_then_stop returns)."""
+    with open(args.mission_log) as f:
+        log_text = f.read()
+    watch = _load_watch(args.watch_file)
+    reaction_xy = watch.get('reaction_xy')
+    truth_start = _as_tuple(watch.get('start_xy'))
+    events = _reaction_events_with_truth(log_text, args.color, reaction_xy)
+    photos = sorted(glob.glob(args.photo_glob))
+    ball_xy = (args.ball_x, args.ball_y)
+    if args.color == 'red':
+        truth_a, truth_b = _sample_two_ground_truths()
+        fails = judge_red(ball_xy, events, photos, truth_start, truth_a, truth_b)
+    else:
+        final_truth = get_ground_truth_xy()
+        fails = judge_yellow(ball_xy, events, photos, truth_start, final_truth)
+    ok = not fails
+    # Workstation-side JUDGED HIL verdict row (deferred here from Task 11) — the honest,
+    # ground-truth-checked result, distinct from the Jetson's own mission self-report.
+    log_variant_row(args.color, None, ok=ok)
+    for fail in fails:
+        print(f'JUDGE FAIL: {fail}')
+    print(f'mission2_{args.color}: {"PASS" if ok else "FAIL"}')
+    raise SystemExit(0 if ok else 1)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Mission 2 harness CLI (HIL tier).')
     sub = parser.add_subparsers(dest='cmd', required=True)
-    p_spawn = sub.add_parser('spawn', help='solve placement for seed + spawn the ball; '
-                                           'prints JSON {name, x, y}')
+
+    p_spawn = sub.add_parser('spawn', help='solve seeded placement + spawn the ball; '
+                                           'prints JSON {name, x, y} (seeded path, unused '
+                                           'by the deterministic live tests)')
     p_spawn.add_argument('--variant', choices=['react', 'ignore'], required=True)
     p_spawn.add_argument('--color', choices=['red', 'yellow'], required=True)
     p_spawn.add_argument('--seed', type=int, required=True)
+    p_spawn.set_defaults(func=_cmd_spawn)
+
+    p_spawn_at = sub.add_parser('spawn-at', help='spawn the ball at the deterministic '
+                                                 'BALL_AT_SPHERE_XY spot; prints JSON '
+                                                 '{name, x, y}')
+    p_spawn_at.add_argument('--color', choices=['red', 'yellow'], required=True)
+    p_spawn_at.set_defaults(func=_cmd_spawn_at)
+
     p_rm = sub.add_parser('remove', help='remove a spawned ball by model name')
     p_rm.add_argument('name')
-    p_judge = sub.add_parser('judge-nominal', help='judge a nominal (no-ball) HIL run: '
-                                                   'greps the mission log for reactions '
-                                                   '(expects none) and checks ground truth '
-                                                   'stopped short of the green sphere; '
-                                                   'exits nonzero on failure')
-    p_judge.add_argument('--mission-log', required=True)
-    args = parser.parse_args()
+    p_rm.set_defaults(func=_cmd_remove)
 
-    if args.cmd == 'spawn':
-        x, y = solve_placement(args.variant, args.seed)
-        name = spawn_ball(args.color, x, y)
-        print(json.dumps({'name': name, 'x': x, 'y': y}))
-    elif args.cmd == 'remove':
-        remove_ball(args.name)
-    elif args.cmd == 'judge-nominal':
-        # Deterministic pivot (Mike, 2026-07-17): HIL rung 1 is the NO-BALL nominal
-        # mission — navigate to the sphere, take a picture, react to nothing. This mirrors
-        # tests/test_mission2.py::test_mission2_nominal_green_sphere_only. judge_ignore()'s
-        # semantics (zero reactions + ground truth stopped short of the green sphere) are
-        # exactly the nominal checks, so it is reused as-is; only the CLI verb (no seed,
-        # no ball) differs from the seeded design in the Task 11 brief.
-        from nav_fleet.ground_truth import get_ground_truth_xy
-        with open(args.mission_log) as f:
-            log_text = f.read()
-        events = [{'color': line.split()[1], 'reaction': line.split()[3],
-                   'truth_xy': None}
-                  for line in log_text.splitlines()
-                  if line.strip().startswith('reaction: ')]
-        fails = judge_ignore(events, get_ground_truth_xy())
-        for fail in fails:
-            print(f'JUDGE FAIL: {fail}')
-        print(f'mission2_nominal: {"PASS" if not fails else "FAIL"}')
-        raise SystemExit(0 if not fails else 1)
+    p_home = sub.add_parser('assert-home', help='exit nonzero unless workstation ground '
+                                                'truth is within --tol of home_base')
+    p_home.add_argument('--tol', type=float, default=0.35)
+    p_home.set_defaults(func=_cmd_assert_home)
+
+    p_watch = sub.add_parser('watch', help='poll workstation ground truth during a mission; '
+                                           'record closest approach to the ball as the '
+                                           'reaction point; write JSON on SIGTERM/--max-s')
+    p_watch.add_argument('--ball-x', type=float, required=True)
+    p_watch.add_argument('--ball-y', type=float, required=True)
+    p_watch.add_argument('--out', required=True)
+    p_watch.add_argument('--poll-s', type=float, default=0.5)
+    p_watch.add_argument('--max-s', type=float, default=300.0)
+    p_watch.set_defaults(func=_cmd_watch)
+
+    p_nom = sub.add_parser('judge-nominal', help='judge a nominal (no-ball) HIL run: '
+                                                 'expects zero reactions + ground truth '
+                                                 'stopped short of the green sphere')
+    p_nom.add_argument('--mission-log', required=True)
+    p_nom.set_defaults(func=_cmd_judge_nominal)
+
+    for color in ('red', 'yellow'):
+        pj = sub.add_parser(f'judge-{color}',
+                            help=f'judge a {color} react HIL run (reuses judge_{color})')
+        pj.add_argument('--ball-x', type=float, required=True)
+        pj.add_argument('--ball-y', type=float, required=True)
+        pj.add_argument('--mission-log', required=True)
+        pj.add_argument('--watch-file', required=True)
+        pj.add_argument('--photo-glob', required=True)
+        pj.set_defaults(func=_cmd_judge_react, color=color)
+
+    args = parser.parse_args()
+    args.func(args)
 
 
 if __name__ == '__main__':
