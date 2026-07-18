@@ -128,7 +128,14 @@ controller_server:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.15
-      yaw_goal_tolerance: 0.5
+      # Tightened 0.5 -> 0.15 rad (Task 13f, 2026-07-18). The old ±28.6° let a goal be
+      # declared "reached" with a heading Mike could see was skewed — the return-home leg
+      # settled nosed LEFT of north yet still passed. RPP's final rotate-to-goal-heading
+      # (use_rotate_to_heading: true) drives yaw down until the goal checker is satisfied, so
+      # a tighter checker => a tighter final heading (±8.6°, below visible skew). Applies to
+      # every goal's final heading (marker approach + home), all of which want it tight; the
+      # reaction legs cancel mid-path and never reach a goal checker.
+      yaw_goal_tolerance: 0.15
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
       desired_linear_vel: 0.3   # slower than Jetbot (0.5) — ugv_pt is larger
