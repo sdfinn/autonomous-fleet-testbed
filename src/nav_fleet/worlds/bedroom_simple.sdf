@@ -213,11 +213,17 @@
          deliberately GREEN, kept OUT of the detector's red/yellow colour space so it can never
          be mistaken for a reaction ball. No collision geometry, and its 5mm top (z=0.005m)
          sits far below the lidar scan plane (z=0.225m) so Nav2 never sees it.
-         Task 13e moved it 0.35m DEEPER — (0.0, 3.7) -> (0.0, 4.05) — to sit close to the bed
-         (south face y=4.420 -> 0.37m clearance) "well past the dresser" (north face y=2.987 ->
-         1.06m), matching Mike's HIL note that the robot stopped too shallow. Kept x=0 so it is
-         dead-ahead in the robot's northward-facing photo. Must stay in lockstep with
-         semantic_map.MARKER_XY (0.0, 4.05); the reaction ball is derived from it. -->
+         History: (0.0, 3.7) -> (0.0, 4.05) [Task 13e, same day: robot stopped too SHALLOW,
+         "a lot closer to the wall, well past the dresser"] -> (0.9, 3.90) [Task 13 fix wave,
+         same day: Mike's GUI review relocated the whole stop/marker/ball cluster EAST of the
+         dresser, into the open pocket between the dresser's NE corner and the bed's SW
+         corner]. At the current pose: 0.52m south of the Bed's south face (center (0.813,
+         5.436), size 1.524x2.032 -> face y = 5.436 - 1.016 = 4.420), ~1.03m NE of the
+         Dresser's NE corner (center (0.0074, 2.7583), size 0.813x0.457 -> corner ~(0.4139,
+         2.987)), and 0.70m west of Wall_East's near face (pose x=1.625, thickness 0.05 ->
+         face x=1.600). Must stay in lockstep with semantic_map.MARKER_XY (0.9, 3.90); the
+         reaction ball (BALL_AT_SPHERE_XY, tools/mission2_harness.py) is derived from it as
+         MARKER + 0.3m in +x = (1.2, 3.90). -->
     <model name="goal_marker">
       <static>true</static>
       <pose>0.9 3.90 0.0025 0 0 0</pose>
