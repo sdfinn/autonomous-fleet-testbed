@@ -157,7 +157,8 @@ day() {
   ws_source
   RUNNER_TYPE=hil_jetson POWER_MODE="${POWER_MODE_LABEL}" JETSON_IP="${JETSON_IP}" \
     JETSON_USER="${JETSON_USER}" STATE_DIR="${STATE_DIR}" \
-    python3 -m tools.mission2_day --executor jetson --no-launch --hold-s "${DAY_HOLD_S:-0}"
+    PYTHONUNBUFFERED=1 python3 -u -m tools.mission2_day --executor jetson --no-launch \
+      --hold-s "${DAY_HOLD_S:-0}"
 }
 
 ws_source() {
