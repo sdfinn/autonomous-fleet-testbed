@@ -69,6 +69,11 @@ Consequence: **the roadmap is reprioritized.** The agentic/alignment layer is pu
 > execution order — the layer formerly called "R4" is now **R2**. Five releases,
 > definition sharpness deliberately degrading down the ladder (R2 tight, R3 moderate,
 > R4/R5 themes). Older docs/notes that say "R4" mean today's R2 — see decisions log.
+>
+> **Working copy note (2026-07-18):** Mike's go-to version of this roadmap — including
+> the per-release demo definitions and the Standing Disciplines (10x check, coaching
+> contract, LLM-leverage ramp, demo-first) — lives at the top of `Release1Todo.md`.
+> Keep the two in sync via decisions-log entries; Release1Todo.md leads.
 
 ```
 R1  Foundation (current)      Finish S16–18: single rover, scripted missions, 6-stage

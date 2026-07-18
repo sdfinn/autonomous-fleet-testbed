@@ -2,7 +2,79 @@
 
 **Goal:** Complete 6-stage CI/CD pipeline with one real robot (Waveshare UGV PT + Jetson Orin Nano Super). Sim-to-real validation is real, not a placeholder.  
 **Tag on completion:** `git tag r1-complete`  
-**Format:** Each session ~3 hrs. Do sessions in order — each one gates the next.
+**Format:** Each session ~3 hrs. Do sessions in order — each one gates the next.  
+**This file is the go-to doc** (Mike, 2026-07-18): roadmap, sessions, and standing
+disciplines all live HERE, self-contained. BLUEPRINT.md holds strategy background and
+the decisions log, but nothing below requires reading it.
+
+---
+
+## Release Roadmap R1–R5 (authoritative; relabeled 2026-07-17 — numbers = execution order)
+
+> Decided in the Session 20 planning pass with Mike (2026-07-17/18). The layer formerly
+> called "R4" is now **R2** — older notes saying R4 mean today's R2. Definition
+> sharpness deliberately degrades down the ladder: R2 tight, R3 moderate, R4/R5 themes.
+> Changes go through a decisions-log entry, never silent edits.
+
+| Release | Essence | Demo (defined at kickoff, shipped at close) | Priority |
+|---|---|---|---|
+| **R1 Foundation** (current) | Single rover, scripted missions, 6-stage pipeline, drift detection, sim+HIL+real. Ends at `r1-complete` (Session 18). | Sim + real robot doing the SAME mission, side by side; drift detection visible. 1–2 min video. | Active |
+| **R2 Agentic & Alignment** (was "R4") | THE differentiator. Pillars: agentic test/heal (human-approved, 3 named failure modes) · automated sim-to-real alignment · generative scenario→SDF (NL→world). Outputs: local-first benchmark ("N robot-hours, $0 cloud, one RTX 5080") + positioning write-up (+RaaS framing). **Entry criteria:** hardened-nav remainder from Session 19's ladder (AMCL stuck-regression, collision_monitor, footprint, recovery/BR-03) — the loop's credibility needs trustworthy nav signals. | Agentic loop catches an injected regression, diagnoses from telemetry, proposes a fix, human approves; alignment shown tracking; benchmark number on screen. **The demo that lands the role.** | Next |
+| **R3 Fleet & Input Expansion** | Arduino UNO Q bumper bot (instructions from the Jetson) · multi-robot launch parameterization + DDS scoping · full user-INPUT missions/worlds/robots through the pipeline · remote stationary WiFi camera as fleet resource · living-room world · MQTT telemetry · safety-cert framing. | A user-typed mission request runs end-to-end through the pipeline onto two real robots, coordinated. | Planned |
+| **R4 Autonomy & Perception** | SLAM wake-up-anywhere · dynamic/outdoor worlds (basketball court, movable walls) · dynamic SLAM · Cosmos Edge spike (alt perception node, same Detection2DArray interface, same judges) · workstation↔Jetson above-paygrade inference split · VLA-class semantic nav · semantic costmaps. | Robot wakes up somewhere it's never been, maps it, and completes a mission — classical HSV vs foundation-model perception, same judges. | Theme |
+| **R5 Self-Testing Fleet** | The 10x endgame: AI defines and runs its own missions · parallel sim swarms · SelfPath auto-routes · pipeline stress-tests itself. | "Brains demo": the pipeline invents a scenario, finds a real bug with it, and shows the fix validated — no human-authored test. | Theme |
+
+**Cut (2026-07-17, revivable with a written reason):** drone / aerial coordination —
+a new physics/safety/sim domain for demo value the ground fleet already provides.
+
+**Guiding principle (Mike, standing):** *keep thinking 10x — best for career prospects
+and truly creating something unique and needed.*
+
+---
+
+## Standing Disciplines (apply to EVERY release and session — added 2026-07-18, Mike)
+
+**1. The 10x check.** At each release's kickoff AND close, answer in writing: *"What in
+this release is a 10x move rather than a 10% improvement?"* If the honest answer is
+"nothing," the release is mis-scoped — revisit before proceeding. Re-read
+`robotics_cicd_10x_blueprint.md` at every release kickoff (Mike's standing refresher).
+The three 10x anchors to check against: continuous synthesis/validation engine (not
+just a pipeline), automated sim-to-real alignment (the "monkey"), unified virtu-real
+orchestration (sim and hardware under one pane).
+
+**2. The coaching contract.** Mike is learning robotics/ROS2/CI deeply alongside
+building — teaching is a deliverable, not a courtesy. Mechanism (all four, every
+session):
+- **Explain-before-doing:** before any non-trivial technical move, a short who/what/
+  where/how/why explainer — already standing policy, now written here.
+- **Teach-back close:** each session ends with the 3–5 concepts it introduced, stated
+  as questions Mike answers in his own words (e.g. tonight's would have been: why does
+  a particle filter diverge rotating near a flat surface? why must all processes agree
+  on ROS_LOCALHOST_ONLY?). Wrong or shaky answers → re-explain, note for next session.
+- **`LearningLog.md`:** append each session's concepts + teach-back outcomes — Mike's
+  personal curriculum record, greppable, review it at release boundaries.
+- **Mike drives, Claude navigates** for at least one hands-on segment per session
+  (terminal commands, GUI observation, param tuning) — watching builds familiarity;
+  driving builds skill.
+
+**3. The LLM-leverage ramp.** Each release must ADD a new way the pipeline uses
+LLMs/AI — not just keep drift detection. The ramp as planned: R1 drift detection + AI
+test generation → R2 agentic test/heal + NL→world generation → R3 LLM-assisted
+building of missions/worlds/robot configs (the input-ization layer IS the LLM
+interface) → R4 foundation-model perception → R5 self-defining test missions.
+Cross-cutting candidate to pull into ANY release when pain justifies it: **LLM-assisted
+simulation debugging** (feed launch logs + telemetry + the gotchas from this file to
+diagnose sim failures — tonight's orphan-bridge/TF-flood class of problem is exactly
+what it should catch). At each release close: "what does the pipeline do with AI now
+that it didn't at the last release?" **Standing decision:** no RAG at current data
+scale — direct SQL context injection is simpler and better; revisit only when the DB
+outgrows a prompt.
+
+**4. Demo-first releases.** The demo column above is part of each release's DEFINITION,
+not an afterthought: written at kickoff, budgeted like a feature, shipped at close
+(1–2 min video, sim + real side by side per the showcase format). A release without
+its demo is not done. Rule of thumb: if a session's work can't be pointed at "which
+demo does this feed?", question it.
 
 ---
 
@@ -4338,8 +4410,9 @@ underneath, which made it impossible to tell a real bug (recovery) apart from a 
 ## Session 20 — Future Release Planning — ✅ EXECUTED 2026-07-17/18 (with Mike)
 
 > Ran the same night it was chartered (Mike: "I don't want to stop just yet"). All
-> placement decisions made interactively; full record in **BLUEPRINT.md's 2026-07-17
-> decisions-log entry** (the authoritative version). Summary below.
+> placement decisions made interactively. **The authoritative roadmap now lives at the
+> TOP of this file** ("Release Roadmap R1–R5") along with the Standing Disciplines;
+> BLUEPRINT.md's decisions log keeps the change history. Summary below.
 
 **Decided:**
 - **Releases relabeled — numbers now match execution order.** The agentic & alignment
