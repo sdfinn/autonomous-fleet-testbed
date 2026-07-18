@@ -117,6 +117,7 @@ jobs:
             --ignore=tests/test_navigation.py \
             --ignore=tests/test_mission_run.py \
             --ignore=tests/test_mission2.py \
+            --ignore=tests/test_nav_runner.py \
             -k "not integration"
 
   stage-3-arm64:
@@ -246,7 +247,7 @@ jobs:
                                              # .bashrc, so this runner falls back to apt's
                                              # pytest 7.4.4 (owned by colcon-core) otherwise
           python -m pytest tests/test_navigation.py tests/test_mission_run.py \
-            tests/test_mission2.py -v --timeout=300
+            tests/test_mission2.py tests/test_nav_runner.py -v --timeout=300
 
       - name: Record Gazebo timing
         if: always()
@@ -276,7 +277,7 @@ jobs:
           pkill -f "gz sim" || true
 
   stage-4-hil:
-    name: "Stage 4 — HIL: Gazebo (x86) ↔ Nav2 + Mission 1 & 2 (nominal + red/yellow, real Jetson)"
+    name: "Stage 4 — HIL: Gazebo (x86) ↔ Nav2 + Mission 2 day (no_ball + yellow + red, real Jetson)"
     # Replaces the prior Isaac Sim job (retired 2026-07 — Session 16; scripts stay in
     # git/on disk). One job on the x86 runner drives the Jetson over SSH as a lab
     # instrument — see docs/session15-hil-ci-stage-design.md for every decision
@@ -286,21 +287,18 @@ jobs:
     # accepted behavior the retired Isaac job had.
     runs-on: [self-hosted, x86, gpu, rtx5080]
     needs: stage-3-arm64
-    # 30 (raised from 20 in Task 12 when the react rungs were added). Budget arithmetic
-    # (Task 13: reset-home step REMOVED — nominal self-returns — but nominal now costs a full
-    # round trip incl. its own return leg). The rungs REUSE the sim+Nav2 that `run` leaves
-    # up, so each is real mission runtime, not another sim/Nav2 relaunch:
-    #   run (mission1): sim 60 + nav2 120 + mission 300 + verify 30 = 510s, and the
-    #     transient-flake retry (now also covering the follow_path ack-timeout) re-runs that
-    #     whole phase -> ~17 min worst case (the ceiling's driver).
-    #   mission2-nominal ROUND TRIP ~3 (out+back+3 photos) + mission2-yellow ~2.5
-    #     (out+react+back) + mission2-red ~2 (out+react, stays) + judges/scp/pair-check
-    #     + teardown ~1.5 = ~9 min of added realistic runtime (reset-home's ~1.5 min is gone,
-    #     absorbed into nominal's return leg).
-    #   Common case (no retry): ~8 (run) + 9 = ~17 min. With one retry: ~25 min.
-    # 30 leaves headroom for DDS settle without masking a genuine hang — each ssh mission
-    # keeps its own `timeout 300`/`180` cap, so a stuck rung still fails fast on its own.
-    timeout-minutes: 30
+    # Budget arithmetic (Task 13b/d: Mission 1 dropped from stage-4 — it stays as stage-2
+    # regression, tests/test_mission_run.py; stage-4 runs ONLY the Mission 2 day). One `run`
+    # gate brings the stack up ONCE; the `day` orchestrator reuses it for all three runs:
+    #   run gate: clean + sim 60 + nav2 120 = ~3 min (no mission, no retry).
+    #   day: no_ball round trip ~3 (out+back+3 photos) + yellow ~2.5 (out+react+back, with the
+    #     concurrent yellow->red swap) + red ~2 (out+react, stays) + judges/scp/pair-check
+    #     + hold 0 = ~8 min.
+    #   Teardown ~1.5 min. Total ~12-13 min. No whole-mission retry exists any more (Task 13a
+    #     put the only retry in-process in nav_runner), so there is no retry multiplier.
+    # 20 leaves generous headroom without masking a genuine hang — the day's ssh mission keeps
+    # its own `timeout 300` cap per run, so a stuck run still fails fast on its own.
+    timeout-minutes: 20
     # phase 2: the mission runs inside the stage-3 arm64 GHCR image (private) — the Jetson
     # needs to pull it, so GITHUB_TOKEN needs read:packages.
     permissions:
@@ -314,14 +312,14 @@ jobs:
                                   # power budget (Mike, 2026-07-14); builds run at 25W
                                   # (explicit override below); restored to 25W at the end.
       STATE_DIR: /tmp/hil_stage
-      # phase 2 (Task 12): run the mission executor inside the arm64 image stage-3 built,
-      # consuming the arm64→HIL pipeline edge for real (see scripts/hil_stage.sh mission()).
+      # phase 2 (Task 12): the day orchestrator runs mission2 inside the arm64 image stage-3
+      # built, consuming the arm64→HIL pipeline edge (see tools/mission2_day.JetsonExecutor).
       HIL_CONTAINER: "1"
       HIL_IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
-      # Ship the HIL telemetry row into the shared workstation drift DB (Task 13) so
+      # The day's JUDGED verdict rows (mission2_no_ball / _yellow / _red) are logged HERE on
+      # the workstation (where the judge runs) directly into the shared drift DB — no SSH row-
+      # shipping needed any more (Task 13d). Same persistent path stage-2/5 use so
       # baseline_monitor tracks HIL trends and stage-5-reports-hw is genuinely hardware-fed.
-      # Same persistent path stage-2/5 use — history accumulates across runs outside the job
-      # workspace. hil_stage.sh verify() only ships when FLEET_DB is set.
       FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
     steps:
       - uses: actions/checkout@v4
@@ -358,20 +356,11 @@ jobs:
       - name: Record start time
         run: echo "HIL_START=$(date +%s)" >> $GITHUB_ENV
 
-      - name: Run HIL mission (sim up → Nav2 up → mission → verify; one retry on discovery flake)
+      - name: Bring up the HIL stack (sim on x86 → Nav2 on the Jetson — gate only, Task 13b)
         run: scripts/hil_stage.sh run
 
-      - name: Mission 2 nominal round trip (HIL graduation rung 1 — spec §8, Option B)
-        run: scripts/hil_stage.sh mission2-nominal
-
-      # No reset-home step (Task 13): under Option B the nominal round trip SELF-RETURNS to
-      # home_base, so the yellow rung already starts from home. Each rung still asserts the
-      # home precondition first, so a failed self-return fails loudly rather than silently.
-      - name: "Mission 2 yellow react (HIL rung 2 — photo_then_home, robot returns home)"
-        run: scripts/hil_stage.sh mission2-yellow
-
-      - name: "Mission 2 red react (HIL rung 3, LAST — photo_then_stop, robot stays mid-room)"
-        run: scripts/hil_stage.sh mission2-red
+      - name: "Mission 2 day (HIL orchestrator: no_ball → yellow → red, Task 13d)"
+        run: scripts/hil_stage.sh day
 
       - name: Record HIL timing
         if: always()
@@ -389,13 +378,10 @@ jobs:
           path: |
             /tmp/hil_stage/*.png
             /tmp/hil_stage/sim.log
-            /tmp/hil_stage/mission.out
-            /tmp/hil_stage/mission2.out
-            /tmp/hil_stage/reset_home.out
-            /tmp/hil_stage/mission2_yellow.out
-            /tmp/hil_stage/mission2_red.out
-            /tmp/hil_stage/mission2_yellow_watch.json
-            /tmp/hil_stage/mission2_red_watch.json
+            /tmp/hil_stage/day_no_ball.out
+            /tmp/hil_stage/day_yellow.out
+            /tmp/hil_stage/day_red.out
+            reports/photos/*.png
           if-no-files-found: warn
 
       - name: Show sim log tail on failure

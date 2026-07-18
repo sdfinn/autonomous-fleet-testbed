@@ -13,10 +13,10 @@
 # limitations under the License.
 """Mission 2 "rehearse the real day" orchestrator (Task 13 §4).
 
-Runs the WHOLE Mission 2 day, in order, against a LIVE stack, as one command — the
-rehearsal of the real robot day:
+THE single day-sequence owner — GUI demo, CI stage-4-hil, and the future robot day all run
+THIS file, in THIS order:
 
-  1. nominal  — no ball; the mission self-returns home (Option B).
+  1. no_ball  — no ball; the mission self-returns home (Option B verified round trip).
   2. yellow   — place the yellow ball; the robot stops 0.8 m short, photographs it, and
                 self-returns home. DURING its return leg the yellow ball is removed
                 (>=3 s ghost settle) and the RED ball spawned at the same spot, behind the
@@ -25,18 +25,20 @@ rehearsal of the real robot day:
   3. red      — the robot stops 1.3 m short, photographs, and STAYS; the ball STAYS; hold
                 a few seconds so an observer unambiguously sees "done"; then clean shutdown.
 
-Ball operations live behind a small BallOps interface so the on-Jetson ROBOT-day variant
-swaps the Gazebo spawn/remove calls for operator prompts ("place the yellow ball, press
-enter") — SAME procedure, different hands. That is the whole point of this file: it is
-designed to BECOME the on-robot day runner, with only BallOps and the (sim-only) stack
-launch swapped out.
+Two axes of pluggability keep the SAME sequence usable across sim, CI/HIL, and the robot:
+
+* BallOps — WHO places the ball: Gazebo spawn/remove (sim) or operator prompts (robot day).
+* MissionExecutor (Task 13d) — WHERE the mission runs: in-process on the workstation (sim),
+  or on the Jetson over SSH (HIL). Ball ops + ground-truth judging ALWAYS stay workstation-
+  side (Gazebo lives on the workstation in both modes); only the mission executor moves.
 
 Run from the repo root against a freshly-built workspace:
 
-    python -m tools.mission2_day                 # headless, judged self-test (CI-style)
-    python -m tools.mission2_day --hold-s 10      # GUI-watch rehearsal (see the report for
-                                                  # the separate `gz sim -g` viewer command)
+    python -m tools.mission2_day                  # sim, headless judged self-test (CI-style)
+    python -m tools.mission2_day --hold-s 10       # sim GUI-watch rehearsal (separate gz -g)
     python -m tools.mission2_day --ball-ops operator   # robot-day dry run (prompts, no gz)
+    python -m tools.mission2_day --executor jetson --no-launch   # HIL: mission on the Jetson
+                                                   # (stack brought up by scripts/hil_stage.sh)
 
 The GUI-watched run (Mike observing) is intentionally NOT executed by CI/self-tests — this
 tool just makes it a single command away.
@@ -44,25 +46,35 @@ tool just makes it a single command away.
 import argparse
 import os
 import pathlib
+import re
 import signal
 import subprocess
 import threading
 import time
 
-import rclpy
-
 from nav_fleet.ground_truth import get_ground_truth_xy
-from nav_fleet.mission_runner import MissionRunner
 from tools.mission2_harness import (BALL_AT_SPHERE_XY, BALL_REMOVAL_SETTLE_S,
-                                    home_pair_similarity, judge_nominal, judge_red,
-                                    judge_yellow, log_variant_row, remove_ball, spawn_ball)
+                                    home_pair_similarity, judge_no_ball, judge_red,
+                                    judge_yellow, log_variant_row, parse_reaction_events,
+                                    remove_ball, spawn_ball)
 
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
+PHOTO_DIR = REPO_DIR / 'reports' / 'photos'     # always-visible workstation copy (Task 13g)
 LAUNCH_FILE = 'src/nav_fleet/launch/sim_launch.py'
 NAV2_READY_MARK = 'Managed nodes are active'   # emitted once per lifecycle manager (x2)
 STACK_READY_TIMEOUT_S = 150.0
 SPAWN_APPEAR_SETTLE_S = 2.0                     # llvmpipe: new model takes ~1.5 s in-frame
 RETREAT_DROP_M = 0.4                            # y-drop below peak that means "retreating"
+
+# Jetson connection (HIL executor) — mirrors scripts/hil_stage.sh. Non-interactive SSH skips
+# .bashrc, so every remote ROS command must source its own env.
+JETSON_USER = os.environ.get('JETSON_USER', 'mike')
+JETSON_REPO = '~/autonomous-fleet-testbed'
+JENV = ('source /opt/ros/jazzy/setup.bash && '
+        'source ~/autonomous-fleet-testbed/install/setup.bash && '
+        'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0')
+STATE_DIR = os.environ.get('STATE_DIR', '/tmp/hil_stage')
+POWER_MODE_LABEL = os.environ.get('POWER_MODE', '15W')
 
 # Orphan-sweep pattern (CLAUDE.md Gotchas): every process a Gazebo+Nav2 launch spawns that
 # would poison the next run's DDS domain if it lingered. Kept in sync with ci.yml stage-2
@@ -71,8 +83,10 @@ _SWEEP_PATTERNS = (
     'parameter_bridge|component_container_isolated|ekf_node',
     'static_transform_publisher|robot_state_publisher',
 )
+_CHECKLIST_RE = re.compile(r'^\s*\[\s*(PASS|FAIL|REACTION)\s*\]\s+(.*\S)\s*$')
 
 
+# ── Ball placement (WHO) ──────────────────────────────────────────────────────────────────
 class BallOps:
     """Placement of the reaction ball. Two implementations: Gazebo (sim) and operator
     (the on-robot day). `concurrent` says whether a ball swap can happen WHILE the robot is
@@ -92,7 +106,8 @@ class BallOps:
 
 
 class GzBallOps(BallOps):
-    """Sim day: spawn/remove camera-only balls in the running Gazebo (reuses the harness)."""
+    """Sim/HIL day: spawn/remove camera-only balls in the workstation Gazebo (reuses the
+    harness). Gazebo is workstation-side in BOTH sim and HIL, so this is unchanged for HIL."""
     concurrent = True
 
     def place(self, color, x, y):
@@ -120,6 +135,166 @@ class OperatorBallOps(BallOps):
         input(f'[day] >>> remove the {name.split("_")[0].upper()} ball, then press Enter... ')
 
 
+# ── Mission execution (WHERE) ─────────────────────────────────────────────────────────────
+class ExecResult:
+    """What the day judges need from ONE mission2 execution, independent of where it ran."""
+
+    def __init__(self, reaction_events, photos, checklist, ok, nav=None):
+        self.reaction_events = reaction_events    # list of {color, reaction, truth_xy}
+        self.photos = photos                      # local workstation photo paths (this run)
+        self.checklist = checklist                # list of (label, verdict)
+        self.ok = ok                              # the mission's OWN self-report (informational)
+        self.nav = nav                            # for telemetry final_x/y (in-process only)
+
+    def tagged(self, tag):
+        return [p for p in self.photos if tag in p]
+
+
+class MissionExecutor:
+    def run(self, ball_xy=None, color=None):
+        raise NotImplementedError
+
+    def reset(self):
+        """Clear any per-run bookkeeping before the next execution."""
+
+
+class InProcessExecutor(MissionExecutor):
+    """Sim day: run the mission in-process on the workstation via a live MissionRunner. The
+    reaction event's truth_xy is captured in-process (Gazebo is right here), so no poller."""
+
+    def __init__(self, runner):
+        self.runner = runner
+
+    def run(self, ball_xy=None, color=None):
+        before = len(self.runner.photo_paths)
+        ok = self.runner.run_mission('mission2')
+        return ExecResult(
+            reaction_events=list(self.runner.reaction_events),
+            photos=list(self.runner.photo_paths[before:]),
+            checklist=list(self.runner.checklist),
+            ok=ok, nav=self.runner.nav)
+
+    def reset(self):
+        self.runner.reaction_events.clear()
+
+
+class JetsonExecutor(MissionExecutor):
+    """HIL day: run the mission on the Jetson over SSH (bare-metal, HIL_CONTAINER unset). The
+    Jetson has no Gazebo, so the reaction event's truth_xy is None in its log — a workstation
+    ground-truth poller (closest approach to the ball) supplies it, exactly as the retired
+    discrete react rung did. Photos are scp'd back to reports/photos/ AND STATE_DIR."""
+
+    def __init__(self, jetson_ip, state_dir):
+        if not jetson_ip:
+            raise RuntimeError('JetsonExecutor needs JETSON_IP (run: hil_stage.sh discover)')
+        self.ip = jetson_ip
+        self.state_dir = state_dir
+
+    def run(self, ball_xy=None, color=None):
+        label = color or 'no_ball'
+        poller = _ReactionPoller(ball_xy) if ball_xy is not None else None
+        if poller is not None:
+            poller.start()
+        log_text, mrc = self._ssh_mission2(label)
+        if poller is not None:
+            poller.stop()
+        events = parse_reaction_events(log_text)
+        if poller is not None and color is not None:
+            rxy = poller.reaction_xy
+            for e in events:
+                if e['color'] == color and rxy is not None:
+                    e['truth_xy'] = tuple(rxy)
+        photos = self._pull_photos(log_text)
+        return ExecResult(events, photos, _parse_checklist(log_text), ok=(mrc == 0), nav=None)
+
+    def _ssh_mission2(self, label):
+        # HIL_CONTAINER=1 runs the mission inside the stage-3 arm64 GHCR image (consuming the
+        # arm64->HIL pipeline edge), mirroring scripts/hil_stage.sh. The bind-mounted reports
+        # dir puts photos on the Jetson host so the same scp path works either way. Bare-metal
+        # (HIL_CONTAINER unset) is the default — used for local proofs.
+        if os.environ.get('HIL_CONTAINER') == '1':
+            image = os.environ['HIL_IMAGE']   # KeyError is a real misconfiguration — surface it
+            cmd = (
+                "docker run --rm --name hil_mission2 --network host --ipc host "
+                "-v $HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports "
+                f"-e RUNNER_TYPE=hil_jetson -e POWER_MODE={POWER_MODE_LABEL} "
+                "-e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp -e ROS_DOMAIN_ID=0 "
+                f"{image} bash -c 'source /opt/ros/jazzy/setup.bash && "
+                "source /ros2_ws/install/setup.bash && "
+                "python3 -m nav_fleet.mission_runner mission2'")
+        else:
+            cmd = (f'{JENV} && cd {JETSON_REPO} && RUNNER_TYPE=hil_jetson '
+                   f'POWER_MODE={POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner mission2')
+        out_path = os.path.join(self.state_dir, f'day_{label}.out')
+        print(f'[day] ssh Jetson mission2 ({label}) ...')
+        proc = subprocess.run(
+            ['timeout', '300', 'ssh', '-o', 'BatchMode=yes',
+             f'{JETSON_USER}@{self.ip}', cmd],
+            capture_output=True, text=True)
+        log_text = proc.stdout + proc.stderr
+        pathlib.Path(out_path).write_text(log_text)
+        print(log_text.rstrip())
+        return log_text, proc.returncode
+
+    def _pull_photos(self, log_text):
+        """scp every 'photo saved: <path>' from the Jetson to reports/photos/ AND STATE_DIR
+        (Task 13g — photos always visible on the workstation + in the CI evidence artifact)."""
+        PHOTO_DIR.mkdir(parents=True, exist_ok=True)
+        pathlib.Path(self.state_dir).mkdir(parents=True, exist_ok=True)
+        local = []
+        for rel in re.findall(r'photo saved:\s*(\S+)', log_text):
+            base = os.path.basename(rel)
+            dest = PHOTO_DIR / base
+            rc = subprocess.run(
+                ['scp', '-o', 'BatchMode=yes',
+                 f'{JETSON_USER}@{self.ip}:autonomous-fleet-testbed/{rel}', str(dest)],
+                capture_output=True, text=True).returncode
+            if rc == 0:
+                subprocess.run(['cp', '-f', str(dest),
+                                os.path.join(self.state_dir, base)], check=False)
+                local.append(str(dest))
+            else:
+                print(f'[day] WARN: could not scp Jetson photo {rel}')
+        return local
+
+
+class _ReactionPoller(threading.Thread):
+    """Workstation ground-truth poller (HIL only): records the CLOSEST approach to the ball as
+    the reaction point (the robot reacts, then stops/retreats, so it never gets closer). The
+    Jetson can't measure ground truth; this is the yellow rung's only way to recover its
+    reaction point (yellow drives home after reacting). Same equivalence caveat as the retired
+    harness `watch`: valid only because the path never loops back past the ball."""
+
+    def __init__(self, ball_xy, poll_s=0.5):
+        super().__init__(daemon=True)
+        self._ball = ball_xy
+        self._poll_s = poll_s
+        self._stop = threading.Event()
+        self.reaction_xy = None
+        self._best = None
+
+    def run(self):
+        while not self._stop.is_set():
+            xy = get_ground_truth_xy()
+            if xy is not None:
+                d = (xy[0] - self._ball[0]) ** 2 + (xy[1] - self._ball[1]) ** 2
+                if self._best is None or d < self._best:
+                    self._best = d
+                    self.reaction_xy = list(xy)
+            time.sleep(self._poll_s)
+
+    def stop(self):
+        self._stop.set()
+        self.join(timeout=5)
+
+
+def _parse_checklist(log_text):
+    """Recover the per-waypoint checklist rows the Jetson's mission_runner printed."""
+    return [(m.group(2), m.group(1)) for m in
+            (_CHECKLIST_RE.match(ln) for ln in log_text.splitlines()) if m]
+
+
+# ── Stack lifecycle (sim mode only; HIL's stack is owned by scripts/hil_stage.sh) ───────────
 def _pkill(pattern):
     subprocess.run(['pkill', '-9', '-f', pattern], check=False)
 
@@ -186,34 +361,30 @@ def shutdown_stack(proc):
         print('[day] clean — no orphans remain')
 
 
-def _new_photos(runner, before, tag):
-    """Photos this run appended to the session-scoped runner, filtered by semantic tag."""
-    return [p for p in runner.photo_paths[before:] if tag in p]
-
-
-def _print_checklist(runner, verdict, fails):
-    for label, v in runner.checklist:
+# ── The day sequence (SAME for sim and HIL — only executor + ball_ops differ) ───────────────
+def _print_checklist(checklist, verdict, fails):
+    for label, v in checklist:
         print(f'    [{v:^8}] {label}')
     for f in fails:
         print(f'    JUDGE FAIL: {f}')
     print(f'  => {verdict}')
 
 
-def run_nominal(runner):
-    print('\n=== [day] RUN 1/3: nominal (no ball) — verified round trip ===')
-    before = len(runner.photo_paths)
+def run_no_ball(executor):
+    print('\n=== [day] RUN 1/3: no_ball — verified round trip ===')
     print(f'  start ground truth: {get_ground_truth_xy()}')
-    runner.run_mission('mission2')
+    result = executor.run()
     final = get_ground_truth_xy()
-    sim = home_pair_similarity(_new_photos(runner, before, 'mission2_home_ref'),
-                               _new_photos(runner, before, 'mission2_home_arrival'))
-    fails = judge_nominal(runner.reaction_events, final,
-                          _new_photos(runner, before, 'mission2_marker'), sim)
+    sim = home_pair_similarity(result.tagged('mission2_home_ref'),
+                               result.tagged('mission2_home_arrival'))
+    fails = judge_no_ball(result.reaction_events, final,
+                          result.tagged('mission2_marker'), sim)
     ok = not fails
-    log_variant_row('nominal', None, ok=ok, runner=runner, home_photo_similarity=sim)
+    log_variant_row('no_ball', None, ok=ok, runner=result,
+                    home_photo_similarity=sim)
     print(f'  home_photo_similarity = {sim}')
-    _print_checklist(runner, f"nominal {'PASS' if ok else 'FAIL'}", fails)
-    runner.reaction_events.clear()
+    _print_checklist(result.checklist, f"no_ball {'PASS' if ok else 'FAIL'}", fails)
+    executor.reset()
     return ok
 
 
@@ -222,7 +393,8 @@ def _swap_during_return(ball_ops, yellow_name, ball_xy, holder, stop_evt):
     RETREAT_DROP_M below its observed peak), then remove yellow, settle, and spawn red at the
     same spot. If the mission returns before retreat is detected, stop_evt fires the same
     swap as a fallback (red still ends up placed before the red run). gz calls are
-    subprocess-based, so this shares no ROS state with the mission's rclpy spin."""
+    subprocess-based, so this shares no ROS state with the mission. Mode-agnostic: it polls
+    workstation ground truth, which is present in BOTH sim and HIL."""
     peak_y = None
     while not stop_evt.is_set():
         xy = get_ground_truth_xy()
@@ -237,9 +409,8 @@ def _swap_during_return(ball_ops, yellow_name, ball_xy, holder, stop_evt):
     holder['red_name'] = ball_ops.place('red', *ball_xy)
 
 
-def run_yellow(runner, ball_ops, ball_xy):
+def run_yellow(executor, ball_ops, ball_xy):
     print('\n=== [day] RUN 2/3: yellow — stop 0.8 m, photograph, self-return home ===')
-    before = len(runner.photo_paths)
     yellow_name = ball_ops.place('yellow', *ball_xy)
     truth_start = get_ground_truth_xy()
     print(f'  start ground truth: {truth_start}')
@@ -251,7 +422,7 @@ def run_yellow(runner, ball_ops, ball_xy):
             target=_swap_during_return,
             args=(ball_ops, yellow_name, ball_xy, holder, stop_evt), daemon=True)
         swap_thread.start()
-    runner.run_mission('mission2')
+    result = executor.run(ball_xy=ball_xy, color='yellow')
     final = get_ground_truth_xy()
     if swap_thread is not None:
         stop_evt.set()
@@ -260,38 +431,36 @@ def run_yellow(runner, ball_ops, ball_xy):
         ball_ops.remove(yellow_name)
         ball_ops.settle()
         holder['red_name'] = ball_ops.place('red', *ball_xy)
-    sim = home_pair_similarity(_new_photos(runner, before, 'mission2_home_ref'),
-                               _new_photos(runner, before, 'mission2_home_arrival'))
-    fails = judge_yellow(ball_xy, runner.reaction_events,
-                         _new_photos(runner, before, 'reaction_yellow'),
-                         truth_start, final, sim)
+    sim = home_pair_similarity(result.tagged('mission2_home_ref'),
+                               result.tagged('mission2_home_arrival'))
+    fails = judge_yellow(ball_xy, result.reaction_events,
+                         result.tagged('reaction_yellow'), truth_start, final, sim)
     ok = not fails
-    log_variant_row('yellow', None, ok=ok, runner=runner, home_photo_similarity=sim)
+    log_variant_row('yellow', None, ok=ok, runner=result,
+                    home_photo_similarity=sim)
     print(f'  home_photo_similarity = {sim}')
-    _print_checklist(runner, f"yellow {'PASS' if ok else 'FAIL'}", fails)
-    runner.reaction_events.clear()
+    _print_checklist(result.checklist, f"yellow {'PASS' if ok else 'FAIL'}", fails)
+    executor.reset()
     return ok, holder['red_name']
 
 
-def run_red(runner, ball_ops, ball_xy, red_name, hold_s):
+def run_red(executor, ball_ops, ball_xy, red_name, hold_s):
     print('\n=== [day] RUN 3/3: red — stop 1.3 m, photograph, STAY ===')
-    before = len(runner.photo_paths)
     if red_name is None:   # concurrent swap did not run (shouldn't happen) — place now
         red_name = ball_ops.place('red', *ball_xy)
     truth_start = get_ground_truth_xy()
     print(f'  start ground truth: {truth_start}')
-    runner.run_mission('mission2')
+    result = executor.run(ball_xy=ball_xy, color='red')
     truth_a = get_ground_truth_xy()
     time.sleep(2.0)                       # explicit stationary-settle (matches the sim test)
     truth_b = get_ground_truth_xy()
-    fails = judge_red(ball_xy, runner.reaction_events,
-                      _new_photos(runner, before, 'reaction_red'),
+    fails = judge_red(ball_xy, result.reaction_events, result.tagged('reaction_red'),
                       truth_start, truth_a, truth_b,
-                      home_arrival_photos=_new_photos(runner, before, 'mission2_home_arrival'))
+                      home_arrival_photos=result.tagged('mission2_home_arrival'))
     ok = not fails
-    log_variant_row('red', None, ok=ok, runner=runner)
-    _print_checklist(runner, f"red {'PASS' if ok else 'FAIL'}", fails)
-    runner.reaction_events.clear()
+    log_variant_row('red', None, ok=ok, runner=result)
+    _print_checklist(result.checklist, f"red {'PASS' if ok else 'FAIL'}", fails)
+    executor.reset()
     if hold_s > 0:
         print(f'  [day] red done — robot stays put; holding {hold_s:.0f}s for the observer')
         time.sleep(hold_s)
@@ -299,48 +468,67 @@ def run_red(runner, ball_ops, ball_xy, red_name, hold_s):
     return ok
 
 
-def run_day(runner, ball_ops, ball_xy, hold_s):
-    """The reusable day core — SAME on sim and robot, only BallOps differs."""
+def run_day(executor, ball_ops, ball_xy, hold_s):
+    """The reusable day core — SAME on sim and HIL, only executor + BallOps differ."""
     results = {}
-    results['nominal'] = run_nominal(runner)
-    results['yellow'], red_name = run_yellow(runner, ball_ops, ball_xy)
-    results['red'] = run_red(runner, ball_ops, ball_xy, red_name, hold_s)
+    results['no_ball'] = run_no_ball(executor)
+    results['yellow'], red_name = run_yellow(executor, ball_ops, ball_xy)
+    results['red'] = run_red(executor, ball_ops, ball_xy, red_name, hold_s)
     print('\n=== [day] SUMMARY ===')
-    for name in ('nominal', 'yellow', 'red'):
+    for name in ('no_ball', 'yellow', 'red'):
         print(f'  {name:8s}: {"PASS" if results[name] else "FAIL"}')
     return all(results.values())
 
 
 def main():
     parser = argparse.ArgumentParser(description='Mission 2 "rehearse the real day".')
+    parser.add_argument('--executor', choices=['inprocess', 'jetson'], default='inprocess',
+                        help='inprocess = run the mission on the workstation (sim); '
+                             'jetson = run it on the Jetson over SSH (HIL). Ball ops + judging '
+                             'stay workstation-side either way.')
     parser.add_argument('--ball-ops', choices=['gz', 'operator'], default='gz',
-                        help='gz = Gazebo spawn/remove (sim day); operator = human prompts '
+                        help='gz = Gazebo spawn/remove (sim/HIL); operator = human prompts '
                              '(robot-day dry run)')
     parser.add_argument('--hold-s', type=float, default=0.0,
                         help='seconds to hold after the red run so an observer sees "done" '
                              '(default 0 = headless self-test; use ~10 for a watched run)')
     parser.add_argument('--no-launch', action='store_true',
-                        help='assume the stack is already up (do not launch/teardown it)')
+                        help='assume the stack is already up (do not launch/teardown it). '
+                             'Implied by --executor jetson (hil_stage.sh owns the HIL stack).')
     parser.add_argument('--log', default='/tmp/mission2_day_sim.log')
     args = parser.parse_args()
 
+    hil = args.executor == 'jetson'
+    no_launch = args.no_launch or hil
     ball_ops = GzBallOps() if args.ball_ops == 'gz' else OperatorBallOps()
     ball_xy = BALL_AT_SPHERE_XY
+
     proc = None
+    runner = None
+    rclpy = None
     ok = False
     try:
-        if not args.no_launch:
+        if not no_launch:
             proc = launch_stack(args.log)
-        rclpy.init()
-        runner = MissionRunner()
+        if hil:
+            executor = JetsonExecutor(os.environ.get('JETSON_IP'), STATE_DIR)
+        else:
+            import rclpy as _rclpy
+            rclpy = _rclpy
+            from nav_fleet.mission_runner import MissionRunner
+            rclpy.init()
+            runner = MissionRunner()
+            executor = InProcessExecutor(runner)
         try:
-            ok = run_day(runner, ball_ops, ball_xy, args.hold_s)
+            ok = run_day(executor, ball_ops, ball_xy, args.hold_s)
         finally:
-            runner.nav.destroy_node()
-            runner.destroy_node()
-            rclpy.try_shutdown()
+            if runner is not None:
+                runner.nav.destroy_node()
+                runner.destroy_node()
+            if rclpy is not None:
+                rclpy.try_shutdown()
     finally:
-        if not args.no_launch:
+        if not no_launch:
             shutdown_stack(proc)
     print(f'\nMission 2 day: {"PASS" if ok else "FAIL"}')
     raise SystemExit(0 if ok else 1)
