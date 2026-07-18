@@ -105,8 +105,9 @@ def test_image_msg_to_png_rejects_unknown_encoding(tmp_path):
 
 def test_semantic_map_has_sphere_approach():
     from nav_fleet.semantic_map import SEMANTIC_MAP
-    # 0.5 m short of the green sphere at bedroom_goal (0.0, 3.7) — Mission 2 nav goal
-    assert SEMANTIC_MAP['sphere_approach'] == (0.0, 3.2)
+    # Task 13 (2026-07-18): moved (0.0, 3.2) -> (0.0, 3.5) to clear the dresser squeeze —
+    # the robot stops 0.2 m short of the floor marker at bedroom_goal (0.0, 3.7).
+    assert SEMANTIC_MAP['sphere_approach'] == (0.0, 3.5)
 
 
 def test_mission2_shape():
