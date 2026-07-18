@@ -276,7 +276,7 @@ jobs:
           pkill -f "gz sim" || true
 
   stage-4-hil:
-    name: "Stage 4 — HIL: Gazebo (x86) ↔ Nav2 + Mission 1 (real Jetson)"
+    name: "Stage 4 — HIL: Gazebo (x86) ↔ Nav2 + Mission 1 & 2-nominal (real Jetson)"
     # Replaces the prior Isaac Sim job (retired 2026-07 — Session 16; scripts stay in
     # git/on disk). One job on the x86 runner drives the Jetson over SSH as a lab
     # instrument — see docs/session15-hil-ci-stage-design.md for every decision
@@ -350,6 +350,9 @@ jobs:
       - name: Run HIL mission (sim up → Nav2 up → mission → verify; one retry on discovery flake)
         run: scripts/hil_stage.sh run
 
+      - name: Mission 2 nominal variant (HIL graduation rung 1 — spec §8)
+        run: scripts/hil_stage.sh mission2-nominal
+
       - name: Record HIL timing
         if: always()
         run: |
@@ -367,6 +370,7 @@ jobs:
             /tmp/hil_stage/*.png
             /tmp/hil_stage/sim.log
             /tmp/hil_stage/mission.out
+            /tmp/hil_stage/mission2.out
           if-no-files-found: warn
 
       - name: Show sim log tail on failure

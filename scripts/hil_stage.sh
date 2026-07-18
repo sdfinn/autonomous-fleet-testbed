@@ -8,6 +8,10 @@
 #   sync <sha>        fetch+checkout <sha> on the Jetson and colcon build --base-paths src
 #   run               full HIL test: sim-up -> nav2-up -> mission -> verify (+1 retry on
 #                     a discovery-shaped failure, after full teardown + 5s DDS settle)
+#   mission2-nominal  HIL graduation rung 1 (spec §8): reuse the sim+Nav2 left up by `run`,
+#                     run mission2 (NO ball — the deterministic-pivot nominal variant) on
+#                     the Jetson, then judge workstation-side (zero reactions + ground truth
+#                     stopped short of the green sphere). Run AFTER `run`, BEFORE teardown.
 #   teardown          kill both sides (safe to run any time; used by CI's if:always() step)
 #   restore-checkout  checkout main on the Jetson (run once at the very end, not mid-retry)
 set -euo pipefail
@@ -250,6 +254,50 @@ run() {
   fi
 }
 
+run_mission2_nominal() {
+  echo '=== [mission2-nominal] no-ball nominal variant on the Jetson (budget 300s) ==='
+  require_ip
+  mkdir -p "$STATE_DIR"
+  # Workstation env for the ground-truth judge (mirrors sim_up): cd to the repo so
+  # `python3 -m tools.mission2_harness` resolves, source ROS so `gz` is on PATH. The sim +
+  # Nav2 that `run` (mission1) left up are reused — this variant launches neither.
+  cd "$REPO_DIR"
+  set +u
+  source /opt/ros/jazzy/setup.bash
+  source install/setup.bash
+  set -u
+  export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0
+  # Deterministic pivot (Mike, 2026-07-17): rung 1 spawns NO ball. The Jetson runs plain
+  # mission2 (navigate to the sphere, take_picture, react to nothing); the workstation
+  # judges zero reactions + ground truth stopped short of the sphere. Same docker-vs-bare
+  # shape as mission(), different mission + container name + log file.
+  local mission_cmd
+  if [ "${HIL_CONTAINER:-0}" = "1" ]; then
+    echo "=== [mission2-nominal] in-container: ${HIL_IMAGE:?HIL_CONTAINER=1 requires HIL_IMAGE} ==="
+    mission_cmd="docker run --rm --name hil_mission2 --network host --ipc host \
+      -v \$HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
+      -e RUNNER_TYPE=hil_jetson -e POWER_MODE=${POWER_MODE_LABEL} \
+      -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp -e ROS_DOMAIN_ID=0 \
+      ${HIL_IMAGE} \
+      bash -c 'source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && python3 -m nav_fleet.mission_runner mission2'"
+  else
+    mission_cmd="$JENV && cd ${JETSON_REPO} && RUNNER_TYPE=hil_jetson POWER_MODE=${POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner mission2"
+  fi
+  local mrc=0
+  timeout 300 ssh -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}" "$mission_cmd" \
+    2>&1 | tee "$STATE_DIR/mission2.out" || mrc=$?
+  # Workstation-side judge (Gazebo runs here, so ground truth is available here). Reaction
+  # grep + sphere-band check. Capture rc — never let a judge nonzero abort under `set -e`.
+  local jrc=0
+  python3 -m tools.mission2_harness judge-nominal \
+    --mission-log "$STATE_DIR/mission2.out" || jrc=$?
+  if [ "$mrc" -ne 0 ]; then
+    echo "FATAL: mission2 self-reported failure on the Jetson (rc=${mrc})" >&2
+    return "$mrc"
+  fi
+  return "$jrc"
+}
+
 teardown() {
   echo '=== [teardown] both sides ==='
   if [ -n "${JETSON_IP:-}" ]; then
@@ -258,7 +306,18 @@ teardown() {
     # invisible to the host-side pkill above. A fixed --name (hil_mission) lets teardown
     # reach it directly. Best-effort: no-op when docker is absent or nothing is running,
     # and must never fail teardown itself.
-    jssh "command -v docker >/dev/null 2>&1 && docker rm -f hil_mission >/dev/null 2>&1 || true" || true
+    jssh "command -v docker >/dev/null 2>&1 && docker rm -f hil_mission hil_mission2 >/dev/null 2>&1 || true" || true
+  fi
+  # Safety net (Task 11): remove any Mission 2 ball still in the workstation Gazebo before
+  # we kill it, so an aborted react run (Task 12+) never leaves a ball in the world for the
+  # next job. Only attempt while a Gazebo server is actually up — a `gz service` against a
+  # dead server would block on its 5s timeout per name. Bracket-trick pgrep so the pattern
+  # never self-matches. Rung 1 (nominal) spawns no ball, so this is normally a no-op.
+  if pgrep -f '[g]z sim' >/dev/null 2>&1; then
+    ( cd "$REPO_DIR" 2>/dev/null || exit 0
+      for ball in ball_red ball_yellow; do
+        python3 -m tools.mission2_harness remove "$ball" >/dev/null 2>&1 || true
+      done ) || true
   fi
   local launch_pid
   launch_pid=$(pgrep -f '[s]im_only_launch' | head -1 || true)
@@ -283,13 +342,14 @@ restore_checkout() {
   echo '=== [restore-checkout] Jetson repo back on main ==='
 }
 
-cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|teardown|restore-checkout}"
+cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|mission2-nominal|teardown|restore-checkout}"
 shift || true
 case "$cmd" in
   discover)         discover ;;
   power-mode)       power_mode ;;
   sync)             sync "$@" ;;
   run)              run ;;
+  mission2-nominal) run_mission2_nominal ;;
   teardown)         teardown ;;
   restore-checkout) restore_checkout ;;
   *) echo "FATAL: unknown subcommand '$cmd'" >&2; exit 1 ;;
