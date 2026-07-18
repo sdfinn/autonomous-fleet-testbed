@@ -12,6 +12,12 @@
 #                     run mission2 (NO ball — the deterministic-pivot nominal variant) on
 #                     the Jetson, then judge workstation-side (zero reactions + ground truth
 #                     stopped short of the green sphere). Run AFTER `run`, BEFORE teardown.
+#   reset-home        drive the robot back to home_base (go_home mission) between rungs —
+#                     nominal ends at the sphere, so the react rungs need this first.
+#   mission2-yellow   HIL rung 2 (spec §8): deterministic yellow ball beside the sphere;
+#                     reaction photo_then_home (robot returns home by itself). No reset after.
+#   mission2-red      HIL rung 3 (spec §8): deterministic red ball; reaction photo_then_stop
+#                     (robot stays mid-room). Run LAST — nothing follows but teardown.
 #   teardown          kill both sides (safe to run any time; used by CI's if:always() step)
 #   restore-checkout  checkout main on the Jetson (run once at the very end, not mid-retry)
 set -euo pipefail
@@ -23,6 +29,10 @@ SIM_LOG="${STATE_DIR}/sim.log"
 NAV2_LOG=/tmp/nav2_hil.log   # on the Jetson
 JETSON_REPO='~/autonomous-fleet-testbed'
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Ghost-ball settle (CLAUDE.md Gotchas, 2026-07-17): the headless llvmpipe renderer keeps a
+# REMOVED model in camera frames for seconds — wait this long after remove_ball so the next
+# rung never reacts to the previous rung's ball. Mirrors tests/test_mission2.py's constant.
+BALL_REMOVAL_SETTLE_S="${BALL_REMOVAL_SETTLE_S:-3}"
 
 # Every remote ROS command must source its own env — non-interactive SSH skips .bashrc.
 JENV='source /opt/ros/jazzy/setup.bash && source ~/autonomous-fleet-testbed/install/setup.bash && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0'
@@ -298,6 +308,130 @@ run_mission2_nominal() {
   return "$jrc"
 }
 
+ws_source() {
+  # Workstation-side ROS env (mirrors sim_up): cd the repo so `python3 -m tools.mission2_harness`
+  # resolves and `gz` is on PATH for ground truth; source ROS + overlay; set DDS. Relax `set -u`
+  # only around ROS's setup.bash, which references unbound vars internally.
+  cd "$REPO_DIR"
+  set +u
+  source /opt/ros/jazzy/setup.bash
+  source install/setup.bash
+  set -u
+  export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0
+}
+
+reset_home() {
+  echo '=== [reset-home] drive the robot back to home_base (mirrors the sim janitor) ==='
+  require_ip
+  ws_source
+  # The nominal rung ends AT the sphere (mission2 has no return leg). Before the react rungs
+  # the robot must start from home_base — drive it there via the go_home mission (a single
+  # navigate leg; mission_runner clears both costmaps first, exactly like the sim tests'
+  # _drive_home_after janitor). Teleporting is forbidden: it breaks AMCL + the costmaps.
+  # Bare-metal on the Jetson (a plain nav needs no container image). 180s: one nav leg.
+  # Retry up to 3x: go_home is a COLD first goal (fresh mission_runner process, idle Nav2),
+  # the case most exposed to a transient flake where bt_navigator's FollowPath call times
+  # out waiting for the cold controller_server to acknowledge — the plan succeeds but the
+  # handoff misses its ack window (observed live 2026-07-18: ~2 of 3 cold home-goal attempts
+  # flaked; a warm goal in an already-running process, e.g. yellow's retreat, does not). Each
+  # failed attempt aborts in ~0.2 s, so the retries are cheap. This is an UNJUDGED reset leg,
+  # so retrying is safe — it never masks a react-rung regression (those stay single-shot).
+  local rc=0 attempt
+  for attempt in 1 2 3; do
+    rc=0
+    timeout 180 ssh -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}" \
+      "$JENV && cd ${JETSON_REPO} && RUNNER_TYPE=hil_jetson POWER_MODE=${POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner go_home" \
+      2>&1 | tee "$STATE_DIR/reset_home.out" || rc=$?
+    [ "$rc" -eq 0 ] && break
+    echo "WARN: drive-home reset attempt ${attempt} failed (rc=${rc}) — retry after 5s settle" >&2
+    sleep 5
+  done
+  if [ "$rc" -ne 0 ]; then
+    echo "FATAL: drive-home reset failed after retries (rc=${rc})" >&2
+    return "$rc"
+  fi
+  # Confirm the robot actually reached home before the next rung runs off a bad pose.
+  python3 -m tools.mission2_harness assert-home
+}
+
+run_mission2_react() {
+  # HIL react rung (spec §8): deterministic ball beside the green sphere, mission2 on the
+  # Jetson, judged workstation-side. Shared by the yellow and red rungs — only the color,
+  # the judge verb, and the reaction reaction differ. Mirrors tests/test_mission2.py's
+  # red/yellow variants: assert home -> spawn at BALL_AT_SPHERE_XY -> run -> judge -> remove
+  # + settle. Reuses the sim + Nav2 that `run` (mission1) left up (launches neither).
+  local color="${1:?run_mission2_react needs a color}"
+  echo "=== [mission2-${color}] deterministic ${color}-ball react rung on the Jetson (budget 300s) ==="
+  require_ip
+  ws_source
+  # Precondition (mirrors _assert_at_home_base): a failed drive-home must abort here, not
+  # silently displace the rung's placement/travel geometry.
+  python3 -m tools.mission2_harness assert-home
+  # Deterministic spawn beside the green sphere (mirrors spawn_ball(color, *BALL_AT_SPHERE_XY)).
+  local spawn ballx bally ballname
+  spawn=$(python3 -m tools.mission2_harness spawn-at --color "$color")
+  ballx=$(printf '%s' "$spawn" | python3 -c 'import json,sys; print(json.load(sys.stdin)["x"])')
+  bally=$(printf '%s' "$spawn" | python3 -c 'import json,sys; print(json.load(sys.stdin)["y"])')
+  ballname=$(printf '%s' "$spawn" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')
+  echo "=== [mission2-${color}] spawned ${ballname} at (${ballx}, ${bally}) ==="
+  # Workstation ground-truth poller: captures the reaction point (closest approach to the
+  # ball) DURING the mission. Required for yellow, which drives home after reacting — its
+  # reaction point can't be recovered from any post-mission sample. Backgrounded; killed
+  # (SIGTERM) once the mission ssh returns, at which point it writes its JSON.
+  local watch="$STATE_DIR/mission2_${color}_watch.json"
+  rm -f "$watch"
+  python3 -m tools.mission2_harness watch --ball-x "$ballx" --ball-y "$bally" \
+      --out "$watch" --max-s 300 &
+  local watch_pid=$!
+  # Run mission2 on the Jetson — same container-vs-bare-metal shape as mission()/nominal.
+  local mission_cmd
+  if [ "${HIL_CONTAINER:-0}" = "1" ]; then
+    echo "=== [mission2-${color}] in-container: ${HIL_IMAGE:?HIL_CONTAINER=1 requires HIL_IMAGE} ==="
+    mission_cmd="docker run --rm --name hil_mission2 --network host --ipc host \
+      -v \$HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
+      -e RUNNER_TYPE=hil_jetson -e POWER_MODE=${POWER_MODE_LABEL} \
+      -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp -e ROS_DOMAIN_ID=0 \
+      ${HIL_IMAGE} \
+      bash -c 'source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && python3 -m nav_fleet.mission_runner mission2'"
+  else
+    mission_cmd="$JENV && cd ${JETSON_REPO} && RUNNER_TYPE=hil_jetson POWER_MODE=${POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner mission2"
+  fi
+  local mrc=0
+  timeout 300 ssh -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}" "$mission_cmd" \
+      2>&1 | tee "$STATE_DIR/mission2_${color}.out" || mrc=$?
+  # Stop the poller (it writes its JSON in a SIGTERM handler).
+  kill -TERM "$watch_pid" 2>/dev/null || true
+  wait "$watch_pid" 2>/dev/null || true
+  # Pull the reaction photo to the workstation — mirrors verify()'s scp existence check.
+  # The bind-mounted reports dir puts it on the Jetson host; the judge globs it locally.
+  local photo
+  photo=$(grep -oP 'photo saved: \K\S+' "$STATE_DIR/mission2_${color}.out" \
+      | grep "reaction_${color}" | tail -1 || true)
+  if [ -n "$photo" ]; then
+    scp -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}:autonomous-fleet-testbed/${photo}" \
+        "$STATE_DIR/" || echo "WARN: reaction photo ${photo} not on the Jetson" >&2
+  else
+    echo "WARN: no reaction_${color} photo path in mission output (judge will flag it)" >&2
+  fi
+  # Workstation-side judge (ground truth is here). Tag the judged verdict row as a HIL run.
+  local jrc=0
+  RUNNER_TYPE=hil_jetson POWER_MODE="${POWER_MODE_LABEL}" \
+  python3 -m tools.mission2_harness "judge-${color}" \
+      --ball-x "$ballx" --ball-y "$bally" \
+      --mission-log "$STATE_DIR/mission2_${color}.out" \
+      --watch-file "$watch" \
+      --photo-glob "$STATE_DIR/mission2_reaction_${color}_*.png" || jrc=$?
+  # Ball swap hygiene: remove the ball and settle >=3 s (ghost-ball gotcha) so the next rung
+  # can't react to this one's ball. Done after judging (the judge needs the world unchanged).
+  python3 -m tools.mission2_harness remove "$ballname" >/dev/null 2>&1 || true
+  sleep "$BALL_REMOVAL_SETTLE_S"
+  if [ "$mrc" -ne 0 ]; then
+    echo "FATAL: mission2 (${color}) self-reported failure on the Jetson (rc=${mrc})" >&2
+    return "$mrc"
+  fi
+  return "$jrc"
+}
+
 teardown() {
   echo '=== [teardown] both sides ==='
   if [ -n "${JETSON_IP:-}" ]; then
@@ -342,7 +476,7 @@ restore_checkout() {
   echo '=== [restore-checkout] Jetson repo back on main ==='
 }
 
-cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|mission2-nominal|teardown|restore-checkout}"
+cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|mission2-nominal|reset-home|mission2-yellow|mission2-red|teardown|restore-checkout}"
 shift || true
 case "$cmd" in
   discover)         discover ;;
@@ -350,6 +484,9 @@ case "$cmd" in
   sync)             sync "$@" ;;
   run)              run ;;
   mission2-nominal) run_mission2_nominal ;;
+  reset-home)       reset_home ;;
+  mission2-yellow)  run_mission2_react yellow ;;
+  mission2-red)     run_mission2_react red ;;
   teardown)         teardown ;;
   restore-checkout) restore_checkout ;;
   *) echo "FATAL: unknown subcommand '$cmd'" >&2; exit 1 ;;
