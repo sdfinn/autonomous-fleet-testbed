@@ -3748,6 +3748,16 @@ Nav2's own mechanisms — no custom BT).
       procedure remains as the debugging path)
 - [ ] Every Piece 3 item closed or explicitly re-deferred with a written reason
 
+> **STOPPED 2026-07-17 (Mike) — mid-plan, pickup point.** Tasks 1–9 of the Mission 2
+> plan are complete on branch `mission2-camera-reactive` (Task 9 ended with the
+> deterministic-placement pivot + observed GUI runs; per-color triggers red 1.3 m /
+> yellow 0.8 m; shadows off). Branch pushed; **draft PR #4** open; **full CI green
+> first try incl. stage-4 HIL on the Jetson** (run 29626889652). **REMAINING to close
+> Session 16:** Task 10 (wire `tests/test_mission2.py` into stage-2), Tasks 11–12
+> (Mission 2 HIL rungs: ignorable → red → yellow), final whole-branch review (include
+> the per-task carry-forward findings ledger), un-draft + merge PR #4. Authoritative
+> resume state: `.superpowers/sdd/progress.md`.
+
 ---
 
 ## Session 17 — Harden, Stabilize & Review (pre-robot gate)
@@ -3756,6 +3766,12 @@ Nav2's own mechanisms — no custom BT).
 > (16) and *hardening/reviewing* (17) don't share a session; absorbed the review-flavored
 > items from 16's old tidy-up list plus the drift/reports/AI review. Prior Session 17
 > (Real Robot) → 18; prior 18+ → 19+.
+>
+> **Refreshed 2026-07-17 (planning session with Mike, from MikesNotes.md):** new Piece 1
+> (Onboarding & ease of use — the "stranger onboards" test), docs pass + second review
+> round added to the code-review piece, Python logging framework + debug modes added to
+> logging, real-robot report parity added to reporting, Session 16 observed-run findings
+> folded in as concrete carry-ins. Pieces renumbered 1–6 (Onboarding first).
 
 **Purpose:** harden, stabilize, and where sensible speed up the whole pipeline, then
 answer one question with evidence: **"Have we done everything we can to make the robot
@@ -3763,7 +3779,32 @@ good to go right out of the gate?"** Session 18 puts the Jetson in a chassis in 
 world — after that, every bug costs a hardware session to find and a room to walk to.
 This is the last cheap chance to find them at a desk.
 
-### Piece 1 — Full code review + performance + reuse
+### Piece 1 — Onboarding & ease of use (the "stranger onboards" test)
+
+> Frame: a competent ROS2 developer who has never seen this repo clones it today. Can
+> they install, run a sim mission, and understand what they're looking at from README.md
+> alone — without archaeology through session docs?
+
+- [ ] Walk the onboarding path yourself, literally: fresh clone in a scratch directory,
+      follow README.md verbatim, note every point where it lies, omits, or assumes
+      tribal knowledge. Fix the README (or the code) at each.
+- [ ] "Kick off a run" ergonomics: is there ONE documented command each for (a) unit
+      tests, (b) a full local sim mission, (c) the dashboard? If any needs a paragraph
+      of caveats, wrap it in a script/make target instead.
+- [ ] **Future-proofing review (audit only, no implementation):** could a user *configure*
+      a mission? a world? add to a world? change or add robots? Much of this is
+      deliberately not implemented in R1 — the check is that R1 decisions don't make it
+      HARDER later (hardcoded robot_001 strings, missions only as Python literals,
+      worlds only as hand-edited SDF). Write the gaps down; placement decisions belong
+      to Session 20. Feeds the long-term "world request / mission request" pipeline
+      vision (BLUEPRINT / 10x blueprint).
+- [ ] Terminology glossary in BLUEPRINT.md — we are inconsistent across *sessions,
+      pieces, tasks, steps, stages, todos* (Mike, 2026-07-17). Define the hierarchy once
+      (proposal: **Session** = one work sitting → contains **Pieces** = thematic chunks →
+      containing **Tasks** = checkboxes; **Stage** = CI pipeline jobs ONLY; retire
+      "steps"/"todos" in docs), then sweep the docs to match.
+
+### Piece 2 — Full code review + performance + reuse
 
 - [ ] Whole-repo code review (`/code-review` at high effort, or `/code-review ultra` for
       the multi-agent cloud pass). Triage every finding: fix now / defer with reason /
@@ -3777,8 +3818,24 @@ This is the last cheap chance to find them at a desk.
 - [ ] Delete dead code found along the way — starting with the `headless` launch arg
       (moved here from Session 16: wire it to `gz sim` or delete it in both
       `sim_launch.py` and `sim_only_launch.py`).
+- [ ] Docs pass (Mike 2026-07-17): review all docs, consolidate overlapping ones, delete
+      stale ones. Includes applying the Piece 1 terminology glossary.
+- [ ] **Second review round with a different model** after the first round's fixes land
+      (Mike 2026-07-17) — fresh eyes, different blind spots; `/code-review` or ultra.
+- [ ] **Carry-ins from Session 16's observed runs (2026-07-17):**
+      - Green-photo content verification: add a *green* HSV band to the detector config
+        and make the nominal-variant judge assert the sphere photo actually CONTAINS
+        green pixels (found live: the "photograph the sphere" photo captured the bed —
+        sphere below camera FOV at the 0.5 m standoff + `rotate_to_heading_min_angle`
+        0.3 rad lets the final heading point ~17° off; judge only checked existence).
+      - `sphere_approach` dresser clearance: robot's stop leaves <10 cm edge clearance
+        to the dresser and the nominal goal tolerance can't catch it — nudge the goal,
+        add a clearance judge, or accept-with-reason.
+      - Final-review triage of the accumulated per-task Minor findings + tonight's
+        deterministic-pivot record in `.superpowers/sdd/progress.md` (this may fold
+        into finishing Session 16's branch instead — whichever comes first).
 
-### Piece 2 — Logging: can we debug the robot from the workstation?
+### Piece 3 — Logging: can we debug the robot from the workstation?
 
 > Design question for every item: a mission fails on the real robot in another room —
 > can you determine **why**, from the workstation, after the fact, without re-running it?
@@ -3797,8 +3854,12 @@ This is the last cheap chance to find them at a desk.
 - [ ] Failure taxonomy in telemetry: FAIL rows should say *what kind* of failure — nav
       timeout, goal rejected, no camera frame, detector timeout, crash — one enum column,
       so reports can answer "why", not just "failed".
+- [ ] **Python `logging` framework with a debug switch** (Mike 2026-07-17): tools and
+      nodes currently print; move to `logging` with per-module loggers, a single
+      documented way to flip debug verbosity on the workstation AND on the robot
+      (env var or launch arg), file handlers where Piece items above need persistence.
 
-### Piece 3 — Reporting & user-friendliness
+### Piece 4 — Reporting & user-friendliness
 
 > Frame: could a less-technical reader (or future-you, six months out) answer "did last
 > night's runs pass, and if not, why?" in under a minute, without writing SQL?
@@ -3812,8 +3873,11 @@ This is the last cheap chance to find them at a desk.
       directory.
 - [ ] Drift alerts readable by a human: "mean_position_error is 3.2σ above baseline
       (0.19 m vs 0.06 m typical)" beats a bare sigma number.
+- [ ] **Real-robot report parity** (Mike 2026-07-17): confirm reports/dashboard work as
+      well for `hil_jetson`/real rows as for sim rows — same one-minute answerability
+      for "did last night's REAL runs pass, and why not?"
 
-### Piece 4 — Drift detection, reports & AI loop review
+### Piece 5 — Drift detection, reports & AI loop review
 
 > State today, recorded for review honesty: `baseline_monitor` = sigma-vs-rolling-baseline
 > over `fleet_runs.db`, thresholds as data in `config/drift_config.yaml`; `agentic_loop` =
@@ -3835,7 +3899,7 @@ This is the last cheap chance to find them at a desk.
 - [ ] `ai_test_generator`: is it earning its keep? Run it against the accumulated DB;
       keep, fix, or park it with a written reason.
 
-### Piece 5 — Repo hygiene (candidate, time permitting)
+### Piece 6 — Repo hygiene (candidate, time permitting)
 
 - [ ] The pre-public cleanup pass (repo is private; personal/career context in docs is
       fine today but needs a sweep before any public flip) — this session is a natural
@@ -4106,19 +4170,53 @@ This is the last cheap chance to find them at a desk.
 
 ---
 
-## Session 19+ — Agentic Loop on Real Hardware + Advanced Missions
+## Session 19 — Real-Robot Expansion & Deferred Capability (pick-list)
 
-> **Renumbered 17+→18+ on 2026-07-12, then 18+→19+ in the same day's evening restructure.**
-> Expand this section when Session 18 is complete. At this point the agentic loop from
-> Session 13 runs against real robot telemetry instead of simulated data. The learning
-> loop feeds live results back into both sim improvement and nav parameter tuning.
+> **Renumbered 17+→18+ on 2026-07-12, then 18+→19+ the same evening. Rewritten
+> 2026-07-17 (planning session with Mike, from MikesNotes.md):** this is now a MENU,
+> not a commitment — pick items by how much time remains before/around the robot's
+> arrival (~2026-07-31); any or all can be pushed to future releases via Session 20.
+> Ordering principle: **what most de-risks robot day, soonest, with hardware already
+> in hand** — items 1–4 are doable pre-chassis, item 5 is anytime, item 6 is
+> post-Session-18 by definition.
 
-**Direction for Session 19:**
-- ~~**Feed the real `nav2_params.yaml` into `diagnose()`'s prompt (gap found 2026-07-06).**~~
-  **Pulled forward into Session 17 Piece 4 (2026-07-12)** — the fix shouldn't wait for
-  real hardware. (Original note: Claude infers a plausible-sounding `current_value` for
-  `propose_nav_param_change` instead of reading the actual file — verified wrong once
-  already, claimed 0.55 for `inflation_radius` when the real value is 0.25.)
+**1. Real-camera tier (webcam → Jetson; HIGHEST value, doable today).** The biggest
+sim-to-real unknown in Mission 2: HSV bands were tuned on rendered pixels; real
+lighting/hue is where they break. Plug the webcam into the Jetson, run ball_detector
+against the real croquet balls (hue and lighting factors — Mike's note), measure a real
+`hsv_realcam.yaml` + real `range_k` with the Session 16 calibration tool. (Matches the
+Mission 2 spec's deferred "webcam manual tier".)
+
+**2. WiFi module bring-up (small, hardware in hand).** Install/enable the Jetson's WiFi
+module, verify DDS discovery + topics over WiFi (the untethered link everything later
+depends on). Quick win; do early.
+
+**3. Physical test protocol code (code now, validate on robot day).** Operator-paced
+harness prompts ("place red ball on the marked spot, press enter" — Mike is the
+actuator, never timed); taped-X conventions for home base (place robot, face marked
+heading, THEN power on) and the ball spot beside the sphere position; **boot-mode
+switch** — autonomous mode (boot → localize → run configured mission, zero network) vs
+testbed mode (boot → localize → idle, await harness), designed 2026-07-17; systemd
+autostart per "Going untethered" below.
+
+**4. Deferred Nav2 capability ladder (sim work, time-boxed pieces).** See "Deferred
+Nav2 capability" below — kept verbatim, its methodology is hard-won. Order: AMCL
+stuck-near-furniture regression → collision_monitor (cmd_vel self-lock aware) →
+footprint-aware planning → recovery behaviors last (root-cause the CostmapSubscriber
+bug first). Note: recovery is also the BR-03 traceability gap — finishing even one rung
+retires the CI `continue-on-error` wart.
+
+**5. Mission evolution (valuable, not robot-blocking).** Area-of-interest concept (the
+bedroom zone between bed↔dresser and PC↔wall as "area to clean/detect");
+"ignore red/yellow if not in your path / area of interest" behavior (Mike 2026-07-17);
+seeded placement fuzzing RETURNS here, constrained to the AOI — placement bounds are
+spec, not tuning knobs (lesson of 2026-07-17: the fuzzer was quietly tuned into
+determinism to chase green). Possible new mission.
+
+**6. Agentic loop on real telemetry (inherently last — needs Session 18 data).**
+- ~~Feed the real `nav2_params.yaml` into `diagnose()`'s prompt (gap found 2026-07-06)~~
+  — **pulled forward into Session 17 Piece 5 (2026-07-12)**; Claude inferred a wrong
+  `current_value` once already (claimed 0.55 for `inflation_radius`; real value 0.25).
 - Run `tools/agentic_loop.py` against real run reports (`sim_engine: 'real'`)
 - Claude compares real vs sim metrics, identifies sim fidelity gaps, proposes sim
   parameter updates to close the gap
@@ -4231,6 +4329,51 @@ actually understood. Get a green nav test after each single addition before laye
 next — the Session 11/12 mistake was combining all of these at once with no working baseline
 underneath, which made it impossible to tell a real bug (recovery) apart from a tuning problem
 (footprint sizing) apart from a false positive (AMCL).
+
+---
+
+## Session 20 — Future Release Planning (the decisions session)
+
+> **Created 2026-07-17 (planning session with Mike).** This session's WORK is planning:
+> every future-release candidate gets placed — **R4 / R2 / R3 / cut** (priority order:
+> the 2026-06-27 reprioritization pulled R4, the agentic & alignment layer, ahead of
+> R2/R3 in execution order — see BLUEPRINT decisions log) — with a written reason.
+> Nominally runs after Session 19, but can pull earlier if the robot slips.
+
+**Purpose:** reconcile two pulls the docs currently hold in tension, under the standing
+guiding principle from MikesNotes.md: *keep thinking 10x — best for career prospects and
+truly creating something unique and needed.* The candidate list leans robot-ambition
+(second robot, more worlds, remote cameras); BLUEPRINT's decided strategy puts the
+differentiator on the infrastructure axis (agentic test/heal, sim-to-real alignment,
+local-first economics). Session 20 decides what that means item by item.
+
+**Inputs (read/collect before deciding):**
+- [ ] MikesNotes.md "FUTURE RELEASE" list (~13 items: more autonomy; SLAM wake-up;
+      hardened navigation; Arduino UNO Q bumper bot fed instructions by the Jetson;
+      living-room + outdoor-basketball worlds; remote stationary WiFi camera as a robot
+      resource; user-INPUT missions/worlds/robots through the pipeline; AMCL/recovery/
+      footprint completion; multi-robot launch parameterization; NVIDIA Cosmos 3 Edge;
+      "all the stuff from the blueprint")
+- [ ] BLUEPRINT.md "What's Next — Release 3 and Beyond" backlog (MQTT, RaaS framing,
+      safety-cert framing, dynamic SLAM, VLA, SelfPath, fleet expansion, video series)
+- [ ] Session-17-inputs memory (2026-07-17 collection): Cosmos positioning paragraph
+      for BLUEPRINT; Cosmos-Edge-as-alternative-perception-node spike behind the same
+      Detection2DArray interface; workstation↔Jetson "above-paygrade inference" split;
+      pluggable test-reset strategy (drive-home vs teleport+re-init vs full restart —
+      full restart likely preferable for multi-robot resets); content-verified
+      photography; boot-mode switch follow-ons
+- [ ] Whatever Session 19's pick-list didn't get picked
+- [ ] Re-read `robotics_cicd_10x_blueprint.md` end to end (Mike's standing refresher)
+
+**Outputs:**
+- [ ] Updated BLUEPRINT.md roadmap table + decisions-log entries — every candidate
+      placed (R4 / R2 / R3 / cut) with a reason; no silent drops
+- [ ] **Consider renaming/renumbering the releases so numbers match execution order
+      again** (R4-before-R2 is a standing confusion; a rename like R2=agentic layer
+      would fix it — decide, don't drift)
+- [ ] Session sections beyond 18 renumbered/rewritten to match the decisions
+- [ ] R1 close-out check: confirm what "r1-complete" still requires (Session 18's tag)
+      and whether anything currently labeled R1 should move out
 
 ---
 
