@@ -2,9 +2,22 @@
 
 ## Project
 Open-source CI/CD-native fleet simulation testing framework for autonomous robots.
-Master strategic brief: BLUEPRINT.md (working doc — vision, roadmap, decisions).
-robotics_cicd_10x_blueprint.md is reference-only source dialogue, not for coding.
-Execute from Release1Todo.md (session plans); code from .superpowers/sdd/ specs.
+**Release1Todo.md is THE go-to doc** (Mike, 2026-07-18): session plans AND the roadmap —
+its **Session 20 section (end of file) is the LIVING working plan for releases R2–R5**,
+including the four Standing Disciplines (10x check; coaching contract; LLM-leverage
+ramp; demo-first — a release without its shipped demo is not done). Execute sessions
+from it; code from .superpowers/sdd/ specs.
+**Releases relabeled 2026-07-17: numbers now = execution order.** The agentic &
+alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean today's
+R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
+Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
+BLUEPRINT.md holds strategy background + the decisions log (change history), synced
+copy of the roadmap; Release1Todo.md leads.
+`LearningLog.md` (repo root) = Mike's teach-back/curriculum record — append each
+session's 3–5 new concepts (coaching contract, Standing Discipline #2); at session
+start, check it for pending teach-backs.
+robotics_cicd_10x_blueprint.md is reference-only source dialogue, not for coding —
+re-read at every release kickoff (standing).
 
 ## Development workflow — tier 1 first
 
@@ -230,6 +243,30 @@ docker buildx build --platform linux/arm64 \
   ~1.5 s to appear in camera frames.** Found 2026-07-17 (Mission 2 calibration): a fixed
   `sleep(1.0)` after `gz service` spawn is flaky; poll-until-detected (≤5 s, 0.5 s steps) is
   the pattern for any test/tool that spawns a model then expects the camera to see it.
+  **Removal lags too** (found same evening): a REMOVED model lingers in rendered camera
+  frames for seconds — back-to-back tests reacted to the previous test's "ghost" ball.
+  Hence `BALL_REMOVAL_SETTLE_S = 3.0` after `remove_ball` in tests/test_mission2.py.
+- **`pkill -f`/`pgrep -f` SELF-MATCH: the pattern matches the invoking shell's own command
+  line.** Bit twice on 2026-07-17: a teardown containing `pkill -INT -f "ros2 launch …"`
+  plus a relaunch of that same string SIGINT'd its own shell (exit 144) and never killed the
+  target; a `pgrep -f "gz sim -g"` check listed itself. Rules: derive PIDs with
+  `ps -eo pid,cmd | grep/awk` + `grep -v grep` (or `awk '/[r]os2 launch/'` bracket trick),
+  kill by explicit PID, and never put the literal pattern in the same command that greps
+  for it.
+- **CI triggers ONLY on push-to-main and PRs targeting main** — pushing a feature branch
+  runs nothing. To exercise CI from a branch, open a (draft) PR; that's what draft PR #4
+  is for on `mission2-camera-reactive` (2026-07-17: full 8-job green first try, incl.
+  stage-4 HIL on the Jetson, run 29626889652).
+- **Mission 2 state (post-2026-07-17):** DETERMINISTIC ball placement (`BALL_AT_SPHERE_XY`
+  = (0.3, 3.7) beside the green sphere) replaced seeded random placement — Mike's call;
+  seeded fuzzing returns in Session 19 constrained to the area-of-interest, and placement
+  bounds are SPEC, not tuning knobs (the fuzzer had been quietly tuned into determinism to
+  chase green). Per-color triggers: red 1.3 m (stop), yellow 0.8 m (closer look, then home).
+  Judges enforce min-travel (≥0.5 m before a reaction counts) + start-position
+  preconditions. World sun `cast_shadows` is now FALSE (observability; detection
+  revalidated live shadow-free). Detector ignores frame-edge-clipped bboxes (clipped
+  width corrupts the range estimate). `-k red`-style pytest filters are substring matches
+  — the ignore test was renamed after `-k red` matched `…is_ignoRED`.
 - **nav_runner goal stamp:** Use `Time().to_msg()` (zero timestamp = "use latest TF") for the
   NavigateToPose goal header stamp. Wall-clock `get_clock().now()` will be rejected by Nav2
   which uses sim time (far-future wall timestamp has no TF data in Nav2's buffer).
