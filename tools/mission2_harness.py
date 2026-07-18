@@ -28,6 +28,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src', 'nav_fleet'))
 
 from nav_fleet.ground_truth import get_ground_truth_xy  # noqa: E402
+from nav_fleet.image_io import photo_similarity  # noqa: E402
 from nav_fleet.missions import REACTION_RANGE_M  # noqa: E402
 from nav_fleet.semantic_map import MARKER_XY, SEMANTIC_MAP  # noqa: E402
 from tools.telemetry_logger import log_run  # noqa: E402
@@ -98,9 +99,18 @@ MIN_SPAWN_DIST_M = MAX_REACTION_RANGE_M + 0.3  # react ball must spawn this far 
 # (robot + ball radii, not the trigger threshold), so it doesn't need a per-color split.
 BAND_NEAR = 0.3                    # reaction band vs ball truth, near edge (spec §3)
 BAND_FAR = {color: r + 0.3 for color, r in REACTION_RANGE_M.items()}  # per-color far edge
-HOME_TOL = 0.3                     # yellow: final pose vs home_base
-SPHERE_NEAR, SPHERE_FAR = 0.25, 0.75  # ignore: final pose vs the green sphere
+HOME_TOL = 0.3                     # nominal/yellow: final pose vs home_base
 STATIONARY_TOL = 0.05              # red: max drift between two truth samples
+# Return-fidelity threshold (Task 13 §3): max mean-abs grayscale diff [0..1] between the
+# home reference photo (taken at spawn, before moving) and the home arrival photo (taken
+# after the mission drives itself back). Above this, the round trip did not return the robot
+# faithfully to its start POSE. Expected variance the threshold must absorb: Nav2 goal
+# tolerance (a few cm of position) + RPP rotate_to_heading residual (up to ~17 deg of final
+# yaw -> the arrival frame is a parallaxed/rotated view of the same scene). CALIBRATED from
+# real sim runs (>=3 pairs) 2026-07-18 — see tools/mission2_day self-test / task-13b-report:
+# observed nominal pairs clustered at diff ~<CAL> with a max of ~<CAL_MAX>; threshold set
+# with headroom above that. Placeholder pending live calibration in this task's live phase.
+HOME_PAIR_MAX_DIFF = 0.18
 # Task 9 fix (2026-07-17): minimum start->reaction displacement for red/yellow judges —
 # a robot that "reacts" without actually driving (see MIN_SPAWN_DIST_M above for the
 # placement-side half of this fix) must not pass. 0.5 m is comfortably below
@@ -232,14 +242,19 @@ def _dist(a, b):
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
-def judge_red(ball_xy, events, photo_paths, truth_start, truth_a, truth_b):
+def judge_red(ball_xy, events, photo_paths, truth_start, truth_a, truth_b,
+              home_arrival_photos=None):
     """PASS = red event fired in-band + robot actually drove there + photo exists +
-    robot stationary (spec §3). truth_start is ground truth captured BEFORE
-    run_mission — its distance from truth_a (captured right after) is the
-    minimum-travel check (Task 9 fix, 2026-07-17): without it, a ball placed inside the
-    trigger radius of the robot's start pose produces a vacuous PASS (see
+    robot stationary + NO home-arrival photo (spec §3; Task 13: red STOPS mid-room and must
+    not return home, so a home_arrival photo means it wrongly drove home). truth_start is
+    ground truth captured BEFORE run_mission — its distance from truth_a (captured right
+    after) is the minimum-travel check (Task 9 fix, 2026-07-17): without it, a ball placed
+    inside the trigger radius of the robot's start pose produces a vacuous PASS (see
     MIN_SPAWN_DIST_M in solve_placement) with no drive at all."""
     fails = []
+    if home_arrival_photos:
+        fails.append(f'red took a home-arrival photo {home_arrival_photos} — it must stop '
+                     'mid-room, not return home')
     red = [e for e in events if e['color'] == 'red']
     if not red:
         fails.append('no red reaction event fired')
@@ -264,12 +279,13 @@ def judge_red(ball_xy, events, photo_paths, truth_start, truth_a, truth_b):
     return fails
 
 
-def judge_yellow(ball_xy, events, photo_paths, truth_start, final_truth):
-    """PASS = yellow event in-band + robot actually drove there + photo + physically
-    home (spec §3). truth_start is ground truth captured BEFORE run_mission — reuses
-    the reaction event's own truth_xy (already captured by _execute_reaction) rather
-    than adding new instrumentation, same minimum-travel intent as judge_red (Task 9
-    fix, 2026-07-17)."""
+def judge_yellow(ball_xy, events, photo_paths, truth_start, final_truth, similarity=None):
+    """PASS = yellow event in-band + robot actually drove there + reaction photo + physically
+    home (spec §3) + home-photo pair PASS (Task 13 §3 — yellow now self-returns and takes a
+    home arrival photo, so the return-fidelity pair check applies to it too). truth_start is
+    ground truth captured BEFORE run_mission — reuses the reaction event's own truth_xy
+    (already captured by _execute_reaction) rather than adding new instrumentation, same
+    minimum-travel intent as judge_red (Task 9 fix, 2026-07-17)."""
     fails = []
     yellow = [e for e in events if e['color'] == 'yellow']
     if not yellow:
@@ -292,20 +308,51 @@ def judge_yellow(ball_xy, events, photo_paths, truth_start, final_truth):
     elif _dist(final_truth, SEMANTIC_MAP['home_base']) > HOME_TOL:
         fails.append(f'not home: {final_truth} is '
                      f"{_dist(final_truth, SEMANTIC_MAP['home_base']):.2f} m from home")
+    fails += judge_home_pair(similarity)
     return fails
 
 
-def judge_ignore(events, final_truth):
-    """PASS = zero reactions + nominal stop-short of the green sphere (spec §3)."""
+def home_pair_similarity(ref_photos, arrival_photos):
+    """Return-fidelity score for the NEWEST home reference + home arrival photo, or None if
+    either is missing/unreadable (Task 13 §3). Kept separate from the verdict so callers can
+    log the raw score as telemetry (home_photo_similarity) even when it fails the check."""
+    if not ref_photos or not arrival_photos:
+        return None
+    try:
+        return photo_similarity(sorted(ref_photos)[-1], sorted(arrival_photos)[-1])
+    except (OSError, ValueError):
+        return None
+
+
+def judge_home_pair(similarity):
+    """Verdict fails for the home-photo pair given a precomputed similarity score (Task 13
+    §3). None (missing/unreadable pair) fails; a score above HOME_PAIR_MAX_DIFF fails as a
+    poor return. Composed into the nominal and yellow verdicts (red never returns home)."""
+    if similarity is None:
+        return ['home-photo pair missing/unreadable (reference or arrival)']
+    if similarity > HOME_PAIR_MAX_DIFF:
+        return [f'home photo pair mismatch: {similarity:.4f} > {HOME_PAIR_MAX_DIFF} '
+                '(robot did not return faithfully to its start pose)']
+    return []
+
+
+def judge_nominal(events, final_truth, marker_photos, similarity):
+    """Nominal (no-ball) round-trip verdict (Task 13 §3, Option B): PASS = zero reactions +
+    marker photo exists + ended HOME (ground truth) + home-photo pair PASS. The old
+    stop-short-of-the-sphere check is gone — the nominal mission now drives itself home, so
+    the final pose is judged against home_base, and reaching the marker is verified by the
+    marker photo's existence (per-waypoint checklist model)."""
     fails = []
     if events:
         fails.append(f'spurious reaction(s): {events}')
-    sphere = SEMANTIC_MAP['bedroom_goal']
     if final_truth is None:
-        fails.append('no ground truth for sphere check')
-    elif not SPHERE_NEAR <= _dist(final_truth, sphere) <= SPHERE_FAR:
-        fails.append(f'final pose {final_truth} outside sphere band '
-                     f'[{SPHERE_NEAR}, {SPHERE_FAR}] m of {sphere}')
+        fails.append('no ground truth for home check')
+    elif _dist(final_truth, SEMANTIC_MAP['home_base']) > HOME_TOL:
+        fails.append(f'not home: {final_truth} is '
+                     f"{_dist(final_truth, SEMANTIC_MAP['home_base']):.2f} m from home")
+    if not marker_photos:
+        fails.append('no marker photo saved (robot did not reach/photograph the marker)')
+    fails += judge_home_pair(similarity)
     return fails
 
 
@@ -364,9 +411,11 @@ def _reaction_events_with_truth(log_text, color, reaction_xy):
     return events
 
 
-def log_variant_row(variant, seed, ok, runner=None):
+def log_variant_row(variant, seed, ok, runner=None, home_photo_similarity=None):
     """One telemetry row per judged variant run — the row's result is the JUDGED verdict
-    (ground-truth honest), which may be stricter than the mission's self-report."""
+    (ground-truth honest), which may be stricter than the mission's self-report.
+    home_photo_similarity (Task 13 §3) is the return-fidelity score for nominal/yellow (None
+    for red and off-sim), trended by baseline_monitor as drift-detection material."""
     nav = getattr(runner, 'nav', None)
     log_run(
         scenario=f'mission2_{variant}',
@@ -382,6 +431,7 @@ def log_variant_row(variant, seed, ok, runner=None):
         nav_success_rate=1.0 if ok else 0.0,
         power_mode=os.environ.get('POWER_MODE'),
         seed=seed,
+        home_photo_similarity=home_photo_similarity,
     )
 
 
@@ -442,7 +492,14 @@ def _cmd_watch(args):
     and records the CLOSEST approach to the ball (= the reaction point: the robot reacts
     then stops/retreats, so it never gets closer afterward), plus the first sample (start,
     ~home) and last sample (final). Writes its JSON on SIGTERM/SIGINT (bash kills it once
-    the mission ssh returns) or when --max-s elapses."""
+    the mission ssh returns) or when --max-s elapses.
+
+    DESIGN NOTE (closest-approach == reaction point): this equivalence holds ONLY because
+    Mission 2's path never loops back past the ball after reacting — the robot reacts, then
+    either stops (red) or retreats home (yellow), monotonically increasing its distance to
+    the ball from the reaction point onward. A future mission whose path passes the same ball
+    twice (a loop / figure-8) would record the WRONG sample as the reaction point; revisit
+    this poller (e.g. gate on the reaction-event timestamp) before reusing it there."""
     ball = (args.ball_x, args.ball_y)
     state = {'start_xy': None, 'reaction_xy': None, 'reaction_dist': None,
              'final_xy': None, 'n_samples': 0}
@@ -473,27 +530,36 @@ def _cmd_watch(args):
 
 
 def _cmd_judge_nominal(args):
-    # Deterministic pivot (Mike, 2026-07-17): HIL rung 1 is the NO-BALL nominal mission —
-    # navigate to the sphere, take a picture, react to nothing. This mirrors
-    # tests/test_mission2.py::test_mission2_nominal_green_sphere_only. judge_ignore()'s
-    # semantics (zero reactions + ground truth stopped short of the green sphere) are
-    # exactly the nominal checks, so it is reused as-is; only the CLI verb (no seed, no
-    # ball) differs from the seeded design in the Task 11 brief.
+    # HIL rung 1 is the NO-BALL nominal round trip (Task 13 Option B): home_ref photo ->
+    # navigate to the marker -> marker photo -> navigate HOME -> home_arrival photo, reacting
+    # to nothing. judge_nominal checks zero reactions + marker photo exists + ended HOME
+    # (workstation ground truth) + home-photo pair PASS. Mirrors
+    # tests/test_mission2.py::test_mission2_nominal. Photos were scp'd to STATE_DIR by
+    # hil_stage.sh (the Jetson has no Gazebo, so the pair check runs here).
     with open(args.mission_log) as f:
         log_text = f.read()
-    fails = judge_ignore(parse_reaction_events(log_text), get_ground_truth_xy())
+    marker_photos = sorted(glob.glob(args.marker_glob))
+    similarity = home_pair_similarity(sorted(glob.glob(args.home_ref_glob)),
+                                      sorted(glob.glob(args.home_arrival_glob)))
+    fails = judge_nominal(parse_reaction_events(log_text), get_ground_truth_xy(),
+                          marker_photos, similarity)
+    ok = not fails
+    log_variant_row('nominal', None, ok=ok, home_photo_similarity=similarity)
     for fail in fails:
         print(f'JUDGE FAIL: {fail}')
-    print(f'mission2_nominal: {"PASS" if not fails else "FAIL"}')
-    raise SystemExit(0 if not fails else 1)
+    print(f'home_photo_similarity: {similarity}')
+    print(f'mission2_nominal: {"PASS" if ok else "FAIL"}')
+    raise SystemExit(0 if ok else 1)
 
 
 def _cmd_judge_react(args):
-    """HIL judge for a react rung (red or yellow). Reuses judge_red/judge_yellow verbatim,
+    """HIL judge for a react rung (red or yellow). Reuses judge_red/judge_yellow,
     supplying ground truth from the WORKSTATION (the Jetson log's truth_xy is None): the
     reaction point comes from the concurrent poller (`--watch-file`), and red's stationary
     check takes two fresh samples 2 s apart in-process (the robot is stopped at the ball
-    once photo_then_stop returns)."""
+    once photo_then_stop returns). Yellow additionally runs the return-fidelity pair check
+    on its home_ref/home_arrival photos (scp'd to STATE_DIR); red asserts NO home-arrival
+    photo exists (it must stop mid-room, not return home)."""
     with open(args.mission_log) as f:
         log_text = f.read()
     watch = _load_watch(args.watch_file)
@@ -501,17 +567,22 @@ def _cmd_judge_react(args):
     truth_start = _as_tuple(watch.get('start_xy'))
     events = _reaction_events_with_truth(log_text, args.color, reaction_xy)
     photos = sorted(glob.glob(args.photo_glob))
+    home_arrival = sorted(glob.glob(args.home_arrival_glob)) if args.home_arrival_glob else []
     ball_xy = (args.ball_x, args.ball_y)
+    similarity = None
     if args.color == 'red':
         truth_a, truth_b = _sample_two_ground_truths()
-        fails = judge_red(ball_xy, events, photos, truth_start, truth_a, truth_b)
+        fails = judge_red(ball_xy, events, photos, truth_start, truth_a, truth_b,
+                          home_arrival_photos=home_arrival)
     else:
         final_truth = get_ground_truth_xy()
-        fails = judge_yellow(ball_xy, events, photos, truth_start, final_truth)
+        similarity = home_pair_similarity(
+            sorted(glob.glob(args.home_ref_glob)) if args.home_ref_glob else [], home_arrival)
+        fails = judge_yellow(ball_xy, events, photos, truth_start, final_truth, similarity)
     ok = not fails
     # Workstation-side JUDGED HIL verdict row (deferred here from Task 11) — the honest,
     # ground-truth-checked result, distinct from the Jetson's own mission self-report.
-    log_variant_row(args.color, None, ok=ok)
+    log_variant_row(args.color, None, ok=ok, home_photo_similarity=similarity)
     for fail in fails:
         print(f'JUDGE FAIL: {fail}')
     print(f'mission2_{args.color}: {"PASS" if ok else "FAIL"}')
@@ -555,10 +626,13 @@ def main():
     p_watch.add_argument('--max-s', type=float, default=300.0)
     p_watch.set_defaults(func=_cmd_watch)
 
-    p_nom = sub.add_parser('judge-nominal', help='judge a nominal (no-ball) HIL run: '
-                                                 'expects zero reactions + ground truth '
-                                                 'stopped short of the green sphere')
+    p_nom = sub.add_parser('judge-nominal', help='judge a nominal (no-ball) HIL round trip: '
+                                                 'zero reactions + marker photo + ended home '
+                                                 '+ home-photo pair (Task 13 Option B)')
     p_nom.add_argument('--mission-log', required=True)
+    p_nom.add_argument('--marker-glob', required=True)
+    p_nom.add_argument('--home-ref-glob', required=True)
+    p_nom.add_argument('--home-arrival-glob', required=True)
     p_nom.set_defaults(func=_cmd_judge_nominal)
 
     for color in ('red', 'yellow'):
@@ -569,6 +643,11 @@ def main():
         pj.add_argument('--mission-log', required=True)
         pj.add_argument('--watch-file', required=True)
         pj.add_argument('--photo-glob', required=True)
+        # Task 13 return-fidelity plumbing: yellow pairs home_ref vs home_arrival; red
+        # asserts NO home_arrival photo exists. Optional so a bare local invocation still
+        # runs; the CI/HIL path always passes them.
+        pj.add_argument('--home-ref-glob', default=None)
+        pj.add_argument('--home-arrival-glob', default=None)
         pj.set_defaults(func=_cmd_judge_react, color=color)
 
     args = parser.parse_args()

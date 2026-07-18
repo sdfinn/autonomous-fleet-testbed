@@ -107,12 +107,24 @@ def test_judge_red_fails_when_robot_did_not_drive():
 def test_judge_yellow_checks_reaction_point_and_home():
     from tools.mission2_harness import judge_yellow
     events = [{'color': 'yellow', 'reaction': 'photo_then_home', 'truth_xy': (0.0, 2.4)}]
+    # similarity=0.0 => a perfect home-photo pair, so the pair check contributes no fail.
     ok = judge_yellow(ball_xy=(0.0, 3.0), events=events, photo_paths=['p.png'],
-                      truth_start=(-1.276, 1.2), final_truth=(-1.2, 1.25))
+                      truth_start=(-1.276, 1.2), final_truth=(-1.2, 1.25), similarity=0.0)
     assert ok == []
     far = judge_yellow(ball_xy=(0.0, 3.0), events=events, photo_paths=['p.png'],
-                       truth_start=(-1.276, 1.2), final_truth=(0.0, 3.0))
+                       truth_start=(-1.276, 1.2), final_truth=(0.0, 3.0), similarity=0.0)
     assert any('home' in f for f in far)
+
+
+def test_judge_yellow_fails_on_bad_home_pair():
+    """Task 13 §3: yellow self-returns and takes a home arrival photo, so a poor return
+    (similarity above threshold) must fail even when everything else is good."""
+    from tools.mission2_harness import HOME_PAIR_MAX_DIFF, judge_yellow
+    events = [{'color': 'yellow', 'reaction': 'photo_then_home', 'truth_xy': (0.0, 2.4)}]
+    fails = judge_yellow(ball_xy=(0.0, 3.0), events=events, photo_paths=['p.png'],
+                         truth_start=(-1.276, 1.2), final_truth=(-1.2, 1.25),
+                         similarity=HOME_PAIR_MAX_DIFF + 0.05)
+    assert any('home photo pair mismatch' in f for f in fails)
 
 
 def test_judge_yellow_fails_when_robot_did_not_drive():
@@ -154,20 +166,66 @@ def test_parse_reaction_events_ignores_unparseable_truth():
     assert events == [{'color': 'red', 'reaction': 'photo_then_stop', 'truth_xy': None}]
 
 
-def test_parse_reaction_events_feeds_judge_ignore_spurious_reaction():
+def test_parse_reaction_events_feeds_judge_nominal_spurious_reaction():
     """The nominal judge greps these lines expecting zero — a recovered event must make
-    judge_ignore report a spurious reaction (integration of parse + judge)."""
-    from tools.mission2_harness import judge_ignore, parse_reaction_events
+    judge_nominal report a spurious reaction (integration of parse + judge)."""
+    from nav_fleet.semantic_map import SEMANTIC_MAP
+    from tools.mission2_harness import judge_nominal, parse_reaction_events
     events = parse_reaction_events("  reaction: red -> photo_then_stop at None\n")
-    fails = judge_ignore(events, final_truth=(0.0, 3.2))
+    fails = judge_nominal(events, final_truth=SEMANTIC_MAP['home_base'],
+                          marker_photos=['m.png'], similarity=0.0)
     assert any('reaction' in f for f in fails)
 
 
-def test_judge_ignore_zero_reactions_and_sphere_band():
-    from tools.mission2_harness import judge_ignore
-    assert judge_ignore(events=[], final_truth=(0.0, 3.2)) == []
-    fails = judge_ignore(
+def test_judge_nominal_passes_good_round_trip():
+    """Task 13 Option B: zero reactions + marker photo + ended home + good home pair."""
+    from nav_fleet.semantic_map import SEMANTIC_MAP
+    from tools.mission2_harness import judge_nominal
+    assert judge_nominal(events=[], final_truth=SEMANTIC_MAP['home_base'],
+                         marker_photos=['m.png'], similarity=0.02) == []
+
+
+def test_judge_nominal_fails_not_home_no_marker_and_bad_pair():
+    from tools.mission2_harness import HOME_PAIR_MAX_DIFF, judge_nominal
+    fails = judge_nominal(
         events=[{'color': 'red', 'reaction': 'photo_then_stop', 'truth_xy': None}],
-        final_truth=(0.0, 1.0))
-    assert any('reaction' in f for f in fails)
-    assert any('sphere' in f for f in fails)
+        final_truth=(0.0, 3.5), marker_photos=[], similarity=HOME_PAIR_MAX_DIFF + 0.1)
+    assert any('reaction' in f for f in fails)      # spurious reaction
+    assert any('not home' in f for f in fails)      # ended at the marker, not home
+    assert any('marker photo' in f for f in fails)  # never photographed the marker
+    assert any('home photo pair' in f for f in fails)
+
+
+def test_judge_red_fails_if_returned_home():
+    """Task 13 §3: red must STOP mid-room — a home-arrival photo means it wrongly drove
+    home, which the red judge now catches explicitly."""
+    from tools.mission2_harness import judge_red
+    events = [{'color': 'red', 'reaction': 'photo_then_stop', 'truth_xy': (0.0, 2.4)}]
+    fails = judge_red(ball_xy=(0.0, 3.0), events=events,
+                      photo_paths=['reports/photos/x.png'],
+                      truth_start=(-1.276, 1.2), truth_a=(0.0, 2.4), truth_b=(0.0, 2.41),
+                      home_arrival_photos=['mission2_home_arrival_x.png'])
+    assert any('home-arrival photo' in f for f in fails)
+
+
+def test_home_pair_similarity_and_judge(tmp_path):
+    """photo_similarity: identical images -> 0.0; a very different image -> above threshold.
+    home_pair_similarity picks the newest of each glob; judge_home_pair thresholds it."""
+    from PIL import Image
+    from tools.mission2_harness import (HOME_PAIR_MAX_DIFF, home_pair_similarity,
+                                        judge_home_pair)
+    ref = tmp_path / 'mission2_home_ref_1.png'
+    same = tmp_path / 'mission2_home_arrival_1.png'
+    diff = tmp_path / 'mission2_home_arrival_2.png'
+    Image.new('RGB', (40, 40), (30, 60, 90)).save(ref)
+    Image.new('RGB', (40, 40), (30, 60, 90)).save(same)
+    Image.new('RGB', (40, 40), (240, 240, 240)).save(diff)
+    s_same = home_pair_similarity([str(ref)], [str(same)])
+    s_diff = home_pair_similarity([str(ref)], [str(diff)])
+    assert s_same == pytest.approx(0.0, abs=1e-6)
+    assert s_diff > HOME_PAIR_MAX_DIFF
+    assert judge_home_pair(s_same) == []
+    assert any('mismatch' in f for f in judge_home_pair(s_diff))
+    # Missing photo -> None -> a clean fail, never a crash.
+    assert home_pair_similarity([], [str(same)]) is None
+    assert any('missing' in f for f in judge_home_pair(None))
