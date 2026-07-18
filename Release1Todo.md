@@ -3867,6 +3867,15 @@ This is the last cheap chance to find them at a desk.
 
 ### Piece 2 — Full code review + performance + reuse
 
+- [ ] **Container-mode pre-flight hardening** (Mike, 2026-07-18 — from the sign-off
+      false start): in HIL container mode, verify the image tag exists LOCALLY on the
+      Jetson before the day starts and fail with ONE loud line naming the tag —
+      instead of three silent 2-second mission corpses (wrong tag → GHCR pull denied
+      → docker run dies instantly, robot never moves). Also document the tag gotcha:
+      pull_request CI builds tag the image with the synthetic MERGE-commit sha
+      (GITHUB_SHA), NOT the branch head sha — manual container runs must read the tag
+      from the CI run's env or `docker images`, never construct it from `git rev-parse`.
+
 - [ ] Whole-repo code review (`/code-review` at high effort, or `/code-review ultra` for
       the multi-agent cloud pass). Triage every finding: fix now / defer with reason /
       reject with reason — no silent drops.
