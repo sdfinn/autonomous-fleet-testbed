@@ -3970,6 +3970,16 @@ This is the last cheap chance to find them at a desk.
       value is 0.25). Must be fixed before the loop ever runs against real-robot data.
 - [ ] `ai_test_generator`: is it earning its keep? Run it against the accumulated DB;
       keep, fix, or park it with a written reason.
+- [ ] **Pipeline self-health metrics** (Mike, 2026-07-18 — "fast, robust, repeatable"
+      needs tracking, not vibes): a checkout step took 5 min (normal ~10 s) and we could
+      only shrug "transient" because nothing baselines the pipeline itself. Collect
+      per-job AND per-step durations for every CI run (GitHub API has them — small
+      collector into the fleet DB, e.g. a `ci_steps` table, run from stage-5 or a cron),
+      then point `baseline_monitor` at them like any other metric: sigma alarms on
+      checkout/build/sim-test/HIL durations, queue-wait, and job failure rates. The
+      pipeline gets the same drift detection it gives the robot — and slow-step claims
+      become checkable. (Seed of R5's self-testing-fleet idea, arriving early because
+      it earned its keep today.)
 
 ### Piece 6 — Repo hygiene (candidate, time permitting)
 
