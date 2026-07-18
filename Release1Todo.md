@@ -3932,6 +3932,14 @@ This is the last cheap chance to find them at a desk.
 - [ ] **Real-robot report parity** (Mike 2026-07-17): confirm reports/dashboard work as
       well for `hil_jetson`/real rows as for sim rows — same one-minute answerability
       for "did last night's REAL runs pass, and why not?"
+- [ ] **Fair-weather reporting fix** (Mike 2026-07-18, run 29653564095 finding): the
+      pipeline loses failure data twice — (a) `stage-5-reports-hw` has `needs:` with no
+      `if:` so it SKIPS when stage-4 FAILS (add `if: ${{ !cancelled() }}`; upstream-
+      skipped on docs-only pushes stays a correct skip); (b) the HIL row-ship step lives
+      in a phase that never runs after a failed gate — move it to the always-run
+      teardown/evidence path so FAIL rows reach the drift DB; (c) report/dashboard must
+      render failed runs prominently. Failure telemetry is the highest-value data for
+      drift + R2 test/heal — today it's filtered out exactly when it matters.
 
 ### Piece 5 — Drift detection, reports & AI loop review
 
@@ -3961,6 +3969,28 @@ This is the last cheap chance to find them at a desk.
       fine today but needs a sweep before any public flip) — this session is a natural
       slot since the repo gets read end-to-end anyway. Includes deciding the
       `reports/photos/` tracking policy (currently untracked in the workstation repo).
+- [ ] **Image/disk purge strategy** (Mike 2026-07-18): CI pushes a uniquely-tagged arm64
+      image per build to GHCR (accumulates forever) + docker layer caches grow on BOTH
+      hosts. Keep-last-N GHCR tags (retention policy or cleanup job) + scheduled selective
+      prune on workstation and Jetson — must SPARE the registry-cache layers stage-3's
+      warm 150 s builds depend on (a naive `prune -a` costs us ~8 min/build).
+- [ ] **Stage-tiered mission matrix, remaining half** (Mike 2026-07-18): stage-4 already
+      runs ONLY the deployment mission (shipped in Session 16 Task 13); finish the design
+      by making "current/deployment mission" a DECLARED pipeline input (env/profile
+      config, not hardcode) — deliberately the first seed of R3 input-ization — and
+      center stage-5 reports on that mission with regression results summarized.
+
+### Piece 7 — Demo prep (Mike, 2026-07-18)
+
+> Frame: the R1 demo video films the Mission 2 day. Anything the film needs that the
+> robot does NOT need to wait for gets built in sim NOW — don't stack demo polish into
+> robot week.
+
+- [ ] **Kill the inter-run dead air** (observed in the 2026-07-18 narrated GUI day): the
+      gaps between runs are serial bookkeeping — judging, photo scp, telemetry, next
+      mission-process startup. Overlap the bookkeeping with the next run's startup (keep
+      verdict print ORDER stable) so the filmed sequence flows run-to-run without a
+      visible "nothing is happening" stretch. Sim-testable now; robot day inherits it.
 
 ### Session Complete When
 - [ ] The gate question — **"have we done everything we can so the robot is good to go
