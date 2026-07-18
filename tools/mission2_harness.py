@@ -29,33 +29,39 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src', 'nav_fle
 
 from nav_fleet.ground_truth import get_ground_truth_xy  # noqa: E402
 from nav_fleet.missions import REACTION_RANGE_M  # noqa: E402
-from nav_fleet.semantic_map import SEMANTIC_MAP  # noqa: E402
+from nav_fleet.semantic_map import MARKER_XY, SEMANTIC_MAP  # noqa: E402
 from tools.telemetry_logger import log_run  # noqa: E402
 
 WORLD = 'bedroom'
 BALL_RADIUS = 0.043           # 86 mm croquet ball (spec §6) — never inflate
 
 # Deterministic placement (Task 9 rework, 2026-07-17 — Mike's decision, supersedes seeded
-# placement for the live tests below): 0.3 m in +x beside the green sphere/goal_marker at
-# (0.0, 3.7) in worlds/bedroom_simple.sdf. Verified clear of every static footprint in that
-# SDF: goal_marker itself (0.0381 m radius sphere — 0.3 m center distance clears
-# BALL_RADIUS + sphere radius with room to spare, and satisfies the >=0.25 m spec floor),
-# Dresser (center (0.0074, 2.7583), 0.813x0.457 box -> y in [2.530, 2.987], well south of
-# y=3.7), Bed (center (0.8130, 5.4360), 1.524x2.032 box -> y in [4.420, 6.452], well north
-# of y=3.7), and Wall_East (x in [1.600, 1.650], far from x=0.3).
+# placement for the live tests below): 0.3 m in +x beside the floor MARKER. DERIVED from
+# MARKER_XY (semantic_map.py, = bedroom_goal (0.0, 3.7)) so placement moves WITH the marker
+# and is never tuned independently (Task 13 spec): BALL = (MARKER_X + 0.3, MARKER_Y). The
+# marker did not move in Task 13 (it's already at the clear-zone centre); only the APPROACH
+# moved north to clear the dresser squeeze — so this spot is unchanged (0.3, 3.7) and the
+# color/size range_k calibration and reaction bands carry over untouched.
+#
+# Verified clear of every static footprint in bedroom_simple.sdf: the floor marker itself
+# (0.10 m radius disc — 0.3 m centre distance clears BALL_RADIUS + disc radius and the
+# >=0.25 m spec floor), Dresser (center (0.0074, 2.7583), 0.813x0.457 box -> y in
+# [2.530, 2.987], well south of y=3.7), Bed (center (0.8130, 5.4360), 1.524x2.032 box ->
+# y in [4.420, 6.452], well north of y=3.7), and Wall_East (x in [1.600, 1.650], far from
+# x=0.3).
 #
 # Trigger geometry sanity (Task 9 rework brief): distance from home_base (-1.276, 1.2) to
 # this spot is ~2.955 m — far outside either color's REACTION_RANGE_M at mission start, so
-# the reaction cannot fire at t=0. sphere_approach (0.0, 3.2), mission2's nav goal, is only
-# ~0.583 m from the ball — inside REACTION_RANGE_M for BOTH colors (red 1.3 m, yellow
+# the reaction cannot fire at t=0. sphere_approach (0.0, 3.5), mission2's nav goal, is only
+# ~0.361 m from the ball — inside REACTION_RANGE_M for BOTH colors (red 1.3 m, yellow
 # 0.8 m) — so the robot's final approach to the goal necessarily brings it into trigger
-# range for whichever color is spawned; the robot travels ~2.5 m (home -> doorway ->
+# range for whichever color is spawned; the robot travels ~2.7 m (home -> doorway ->
 # sphere_approach) before that can happen, comfortably above MIN_TRAVEL_M. That same
-# 0.583 m closest-approach distance sits inside both per-color bands [BAND_NEAR,
+# 0.361 m closest-approach distance sits inside both per-color bands [BAND_NEAR,
 # BAND_FAR[color]] = [0.3, 1.6] (red) and [0.3, 1.1] (yellow), so judge_red's and
 # judge_yellow's band checks are both satisfiable from the real approach path (Task 9
 # final batch, 2026-07-17 — per-color REACTION_RANGE_M).
-BALL_AT_SPHERE_XY = (0.3, 3.7)
+BALL_AT_SPHERE_XY = (round(MARKER_XY[0] + 0.3, 4), round(MARKER_XY[1], 4))
 
 # Task 9 final batch (2026-07-17): REACTION_RANGE_M is now per-color ({'red': 1.3,
 # 'yellow': 0.8} — missions.py). Placement-side geometry below (IGNORE_MARGIN,
