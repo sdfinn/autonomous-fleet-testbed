@@ -3989,6 +3989,11 @@ This is the last cheap chance to find them at a desk.
       pipeline gets the same drift detection it gives the robot — and slow-step claims
       become checkable. (Seed of R5's self-testing-fleet idea, arriving early because
       it earned its keep today.)
+- [ ] **Scheduled deliberate cold build** (Mike, 2026-07-18): a monthly (or so) cron
+      workflow that builds the arm64 image with NO cache — a standing reproducibility
+      proof ("could we rebuild the robot's brain from nothing today?") that catches
+      dependency drift and vanished base images before an emergency does. Record its
+      duration in the health metrics (the cold-build baseline: 568 s on 2026-07-13).
 
 ### Piece 6 — Repo hygiene (candidate, time permitting)
 

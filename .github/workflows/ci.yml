@@ -408,7 +408,7 @@ jobs:
   # they're logically independent but not truly wall-clock-parallel with each other or with
   # stage-4 — only stage-3-arm64 (a separate Jetson runner) gets real hardware parallelism.
   stage-5-reports-sim:
-    name: "Stage 5 — Reports + Dashboard (sim path)"
+    name: "Stage 5 — Workstation Reports + Dashboard"
     # Runs on the self-hosted runner, not ubuntu-latest: stage-2's nav tests write
     # telemetry to this runner's local disk (FLEET_DB above), so a hosted job's fresh
     # checkout would have no run data — it would PDF an empty database.
@@ -449,7 +449,7 @@ jobs:
   # same as it effectively did in the Isaac era. Phase 2 (Task 13): ship that row into the
   # workstation FLEET_DB so drift tracking sees real HIL runs, not just this re-report.
   stage-5-reports-hw:
-    name: "Stage 5 — Reports + Dashboard (hardware path)"
+    name: "Stage 5 — HIL Reports + Dashboard"
     runs-on: [self-hosted, x86, gpu, rtx5080]
     needs: stage-4-hil
     env:
