@@ -3720,6 +3720,14 @@ Nav2's own mechanisms — no custom BT).
       the poller's closest-approach point is the reaction point. Both react rungs
       LIVE-PROVEN on the real Jetson 2026-07-18: yellow reaction @0.64 m returned home,
       red reaction @1.31 m stayed stationary, both judge PASS. draft PR #4.)
+      **(2026-07-18, later same day — Task 13 fix wave: Mission 2 became the Option B
+      verified-round-trip day.** Mission 2 is now one self-returning mission (home-ref
+      photo → reactive navigate → marker photo → self-drive home → home-arrival photo,
+      paired against the reference); the no-ball scenario is renamed `mission2_no_ball`;
+      `tools/mission2_day.py` is the single day orchestrator (no_ball → yellow → red, ball
+      swaps mid-return) used by stage-4-hil, the GUI demo, and the future robot day.
+      HIL day PASS 3/3 first-attempt. See CLAUDE.md "Mission 2 state" for the full detail
+      and `.superpowers/sdd/task-13-fixes-report.md` for the evidence.)
 - [ ] **Real-camera tier (manual by design — stays OUT of CI):** USB UVC webcam on the
       Jetson via `ros-jazzy-v4l2-camera` (or `usb_cam`), publishing on its **own topic —
       do NOT reuse `/robot_001/camera/image_raw`**, the Gazebo bridge owns that in sim;
