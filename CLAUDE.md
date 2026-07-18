@@ -2,9 +2,22 @@
 
 ## Project
 Open-source CI/CD-native fleet simulation testing framework for autonomous robots.
-Master strategic brief: BLUEPRINT.md (working doc — vision, roadmap, decisions).
-robotics_cicd_10x_blueprint.md is reference-only source dialogue, not for coding.
-Execute from Release1Todo.md (session plans); code from .superpowers/sdd/ specs.
+**Release1Todo.md is THE go-to doc** (Mike, 2026-07-18): session plans AND the roadmap —
+its **Session 20 section (end of file) is the LIVING working plan for releases R2–R5**,
+including the four Standing Disciplines (10x check; coaching contract; LLM-leverage
+ramp; demo-first — a release without its shipped demo is not done). Execute sessions
+from it; code from .superpowers/sdd/ specs.
+**Releases relabeled 2026-07-17: numbers now = execution order.** The agentic &
+alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean today's
+R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
+Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
+BLUEPRINT.md holds strategy background + the decisions log (change history), synced
+copy of the roadmap; Release1Todo.md leads.
+`LearningLog.md` (repo root) = Mike's teach-back/curriculum record — append each
+session's 3–5 new concepts (coaching contract, Standing Discipline #2); at session
+start, check it for pending teach-backs.
+robotics_cicd_10x_blueprint.md is reference-only source dialogue, not for coding —
+re-read at every release kickoff (standing).
 
 ## Development workflow — tier 1 first
 
@@ -15,7 +28,8 @@ source install/setup.bash
 python -m pytest tests/ -v \
   --ignore=tests/test_ros2_contracts.py \
   --ignore=tests/test_navigation.py \
-  --ignore=tests/test_mission_run.py    # seconds — run Python unit tests
+  --ignore=tests/test_mission_run.py \
+  --ignore=tests/test_mission2.py    # seconds — run Python unit tests
 ros2 launch nav_fleet sim_launch.py    # Session 09+ — Gazebo + Nav2 locally
 # nav_runner, metrics_collector, drift check all run here
 ```
@@ -30,6 +44,8 @@ Commit to CI only when the x86 pipeline is clean. See BLUEPRINT.md "Tiered devel
 - Colcon workspace: ~/autonomous-fleet-testbed/ (build from here)
 - `ros-jazzy-robot-localization` (ekf_node) required on BOTH machines since Session 16 —
   workstation + Jetson (`sudo apt install ros-jazzy-robot-localization` on a rebuilt Jetson)
+- `ros-jazzy-vision-msgs` required on BOTH machines since Session 16 Plan B (ball_detector) —
+  `sudo apt install ros-jazzy-vision-msgs`
 
 ## Key Commands
 ```bash
@@ -40,7 +56,8 @@ ros2 launch src/nav_fleet/launch/sim_launch.py   # Session 09+ — Gazebo locall
 
 # Run Python unit tests (venv auto-activated by .bashrc)
 python -m pytest tests/ -v --ignore=tests/test_ros2_contracts.py \
-  --ignore=tests/test_navigation.py --ignore=tests/test_mission_run.py
+  --ignore=tests/test_navigation.py --ignore=tests/test_mission_run.py \
+  --ignore=tests/test_mission2.py
 
 # Run a mission (repo root; sim must be up — see launch commands above)
 python -m nav_fleet.mission_runner mission1
@@ -140,7 +157,10 @@ docker buildx build --platform linux/arm64 \
   until Session 11/12 caught it. It's correctly run as an integration test in
   `stage-2-gazebo`/`stage-4-isaac`, where live ROS2 actually exists. If a new test file imports
   `rclpy` at module level, it needs the same `--ignore` treatment in `stage-1-quality` — this
-  has now bitten twice.
+  has now bitten twice. `tests/test_mission2.py` (Session 16+ Plan B camera-reactive Mission 2)
+  is the same shape — live ROS2 + a running sim — and got the `--ignore` treatment in
+  `stage-1-quality` up front this time (commit 0b77e10), correctly running instead as an
+  integration test in `stage-2-gazebo`.
 - **CI stage-0's traceability gate has `continue-on-error: true` — this is a live, ongoing gap,
   not stale.** Session 10 added `test_navigation.py`, but 2 of its 3 test function names never
   matched `requirements/traceability.yaml`'s placeholder names (fixed in Session 11/12: BR-01/
@@ -224,6 +244,51 @@ docker buildx build --platform linux/arm64 \
   domain number (or running on 0, like CI) collides with them. From a Claude Code shell,
   subagent-spawned leftovers may not respond to sandboxed pkill — kill by explicit PID with
   sandbox disabled if the pattern kill reports success but pgrep still shows them.
+- **Headless Gazebo here renders via llvmpipe (software) — a newly spawned model takes up to
+  ~1.5 s to appear in camera frames.** Found 2026-07-17 (Mission 2 calibration): a fixed
+  `sleep(1.0)` after `gz service` spawn is flaky; poll-until-detected (≤5 s, 0.5 s steps) is
+  the pattern for any test/tool that spawns a model then expects the camera to see it.
+  **Removal lags too** (found same evening): a REMOVED model lingers in rendered camera
+  frames for seconds — back-to-back tests reacted to the previous test's "ghost" ball.
+  Hence `BALL_REMOVAL_SETTLE_S = 3.0` after `remove_ball` in tests/test_mission2.py.
+- **`pkill -f`/`pgrep -f` SELF-MATCH: the pattern matches the invoking shell's own command
+  line.** Bit twice on 2026-07-17: a teardown containing `pkill -INT -f "ros2 launch …"`
+  plus a relaunch of that same string SIGINT'd its own shell (exit 144) and never killed the
+  target; a `pgrep -f "gz sim -g"` check listed itself. Rules: derive PIDs with
+  `ps -eo pid,cmd | grep/awk` + `grep -v grep` (or `awk '/[r]os2 launch/'` bracket trick),
+  kill by explicit PID, and never put the literal pattern in the same command that greps
+  for it.
+- **CI triggers ONLY on push-to-main and PRs targeting main** — pushing a feature branch
+  runs nothing. To exercise CI from a branch, open a (draft) PR; that's what draft PR #4
+  is for on `mission2-camera-reactive` (2026-07-17: full 8-job green first try, incl.
+  stage-4 HIL on the Jetson, run 29626889652).
+- **Mission 2 state (post-2026-07-18, Task 13 Option B):** Mission 2 is now ONE
+  self-returning mission — a verified round trip, not a one-way drive. Five steps: (1) home
+  reference photo BEFORE any movement, (2) navigate to the floor marker with reactions armed
+  (red 1.3 m -> `photo_then_stop`, yellow 0.8 m -> `photo_then_home`), (3) marker photo,
+  (4) navigate itself HOME (no external reset leg), (5) home arrival photo — must MATCH the
+  reference (see `tools/mission2_harness.judge_home_pair` / `HOME_PAIR_MAX_DIFF`, a
+  gross-failure guard, not a precision instrument — see its comment in
+  `tools/mission2_harness.py`). The mission's own per-waypoint checklist (`runner.checklist`,
+  printed by `mission_runner.main()`) IS the verdict. A fired reaction SHORTENS the mission
+  (Option B): red stops in place after its photo (no further steps); yellow folds its own
+  return-and-arrival-photo into the reaction, so the pair check still applies. The no-ball
+  scenario is renamed `mission2_no_ball` (was `mission2_nominal`) — old telemetry rows keep
+  their old name, only new rows use the new one. Marker (0.9, 3.90) / ball (1.2, 3.90) now
+  sit EAST of the dresser (Mike's GUI review, 2026-07-18) — see `semantic_map.py`'s
+  `sphere_approach`/`MARKER_XY` comments for the clearance math. `tools/mission2_day.py` is
+  THE single day orchestrator — it is stage-4's only Mission 2 step, the GUI demo command,
+  and the future real-robot-day runner, all running the SAME sequence (no_ball -> yellow ->
+  red). Ball placement is pluggable (`GzBallOps` for sim/HIL, `OperatorBallOps` for a human
+  on the real robot) and mid-return placement is part of the choreography: the yellow ball
+  is placed DURING no_ball's return leg, and yellow is swapped for red DURING yellow's
+  return leg (both behind the retreating robot, after a settle — reactions are
+  outbound-only, so this can't self-trigger). Judges enforce min-travel (≥0.5 m before a
+  reaction counts) + start-position preconditions. World sun `cast_shadows` is FALSE
+  (observability; detection revalidated live shadow-free). Detector ignores
+  frame-edge-clipped bboxes (clipped width corrupts the range estimate). `-k red`-style
+  pytest filters are substring matches — the ignore test was renamed after `-k red` matched
+  `…is_ignoRED`.
 - **nav_runner goal stamp:** Use `Time().to_msg()` (zero timestamp = "use latest TF") for the
   NavigateToPose goal header stamp. Wall-clock `get_clock().now()` will be rejected by Nav2
   which uses sim time (far-future wall timestamp has no TF data in Nav2's buffer).
@@ -249,6 +314,39 @@ docker buildx build --platform linux/arm64 \
   producing north-first paths. SMAC 2D uses equal cost for all 8 directions — it naturally
   routes diagonally toward the goal. Use SMAC when diagonal paths matter for controller heading
   error. Plugin: `nav2_smac_planner::SmacPlanner2D`.
+- **bt_navigator `default_server_timeout` 20ms → 1000ms is the ROOT FIX for the cold-goal
+  abort storm** (Task 13 fix wave, 2026-07-18): on a fresh mission_runner process, the FIRST
+  goal was sometimes accepted then aborted in ~0.1-0.25s before the robot moved. Cause: the
+  BT's internal goal-ack window (20ms default) is too short on a loaded Jetson — the
+  controller_server's ack legitimately takes longer than that under load, so bt_navigator
+  gives up on a goal that was actually fine. Worse, the controller could go on to EXECUTE the
+  delivered path after bt_navigator had already aborted the handle — a "zombie goal": the
+  robot drives with no supervising mission, a real safety issue on hardware. Fix has two
+  parts: the timeout bump (root fix, `src/nav_fleet/config/nav2_params.yaml`
+  `default_server_timeout: 1000`) removes the race at the source; `nav_runner.py`'s bounded
+  cold-start retry (escalating `sleep(2.0 * (attempt+1))` backoff, `COLD_ABORT_RETRIES`) is
+  now just a safety net for whatever the timeout doesn't catch, not the primary fix; and a
+  cancel-on-failure guard (`NavRunner._last_goal_handle`) cancels any still-outstanding goal
+  before reporting failure, so a giving-up mission can never leave an unsupervised robot
+  driving.
+- **`yaw_goal_tolerance` tightened 0.5 → 0.15 rad** (`src/nav_fleet/config/nav2_params.yaml`):
+  needed for home-pose squareness — Mike observed the robot arriving home visibly
+  off-heading (nosed left) even though the old 0.5 rad (~29°) tolerance called it arrived.
+  0.15 rad (~8.6°) is what makes Mission 2's home-arrival photo actually match the reference
+  pose (see `HOME_PAIR_MAX_DIFF` in `tools/mission2_harness.py` for why photo similarity
+  alone can't police this).
+- **stage-4-hil runs ONLY the deployment mission** — the day orchestrator
+  (`tools/mission2_day.py`), invoked via `scripts/hil_stage.sh day`. Mission 1 stays in
+  stage-2 (sim regression, `tests/test_mission_run.py`); it is no longer run on hardware as
+  a warm-up. `hil_stage.sh run` is now just the stack-up gate (sim + Nav2, no mission, no
+  retry) — a mission failure must surface RED, so all harness-level whole-mission retries
+  were removed (the in-process cold-goal retry above is the only retry left anywhere).
+- **GUI-watched Mission 2 day, the command sequence:** bring the HIL stack up with
+  `scripts/hil_stage.sh run`, view it with the scrubbed-env `gz sim -g` recipe above (the
+  snap/glibc GUI-crash workaround), then run `DAY_HOLD_S=10 scripts/hil_stage.sh day` — the
+  env var reaches `tools/mission2_day.py --hold-s` and keeps the robot in place after the
+  final red run so an observer sees an unambiguous "done" instead of the process exiting
+  mid-frame.
 
 ## Isaac Sim Gotchas (Session 11+)
 - **Version:** `isaacsim==6.0.1.0` is the correct pip package (`isaacsim[all,extscache]==6.0.1.0`

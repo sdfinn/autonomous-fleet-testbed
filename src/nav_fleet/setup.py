@@ -13,7 +13,8 @@ setup(
          ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/config',
-         ['config/nav2_params.yaml', 'config/drift_config.yaml']),
+         ['config/nav2_params.yaml', 'config/drift_config.yaml',
+          'config/hsv_gazebo.yaml', 'config/ekf.yaml']),
         (os.path.join('share', package_name, 'launch'),
          glob('launch/*.py')),
         (os.path.join('share', package_name, 'urdf'),
@@ -33,6 +34,7 @@ setup(
         'console_scripts': [
             'nav_runner = nav_fleet.nav_runner:main',
             'metrics_collector = nav_fleet.metrics_collector:main',
+            'ball_detector = nav_fleet.ball_detector:main',
         ],
     },
 )

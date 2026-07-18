@@ -6,10 +6,20 @@
 #   discover          print the Jetson's current IP (mDNS first, ip-neigh fallback), verify SSH
 #   power-mode        set nvpmodel mode $POWER_MODE_ID on the Jetson and print it
 #   sync <sha>        fetch+checkout <sha> on the Jetson and colcon build --base-paths src
-#   run               full HIL test: sim-up -> nav2-up -> mission -> verify (+1 retry on
-#                     a discovery-shaped failure, after full teardown + 5s DDS settle)
+#   run               HIL STACK GATE (Task 13b): clean STATE_DIR, then sim-up (workstation
+#                     Gazebo) -> nav2-up (Jetson). NO mission, NO retry — a mission failure
+#                     must be RED (the in-process nav_runner cold-goal retry, Task 13a, is the
+#                     only retry left; harness-level whole-mission retries were removed).
+#   day               THE Mission 2 day (Task 13d): runs tools/mission2_day.py in HIL mode
+#                     against the stack `run` brought up — no_ball -> yellow (swap to red
+#                     during its return) -> red (stays). The mission executes on the Jetson;
+#                     ball ops + ground-truth judging stay workstation-side. Judged verdicts +
+#                     per-waypoint checklists print per run; photos land in reports/photos/ AND
+#                     STATE_DIR (CI evidence). This is the ONE stage-4 test step.
+#   reset-home        drive the robot to home_base (go_home mission) — RETAINED for manual
+#                     use, but NOT a CI step: the day's no_ball/yellow missions self-return.
 #   teardown          kill both sides (safe to run any time; used by CI's if:always() step)
-#   restore-checkout  checkout main on the Jetson (run once at the very end, not mid-retry)
+#   restore-checkout  checkout main on the Jetson (run once at the very end)
 set -euo pipefail
 
 JETSON_USER="${JETSON_USER:-mike}"
@@ -19,6 +29,10 @@ SIM_LOG="${STATE_DIR}/sim.log"
 NAV2_LOG=/tmp/nav2_hil.log   # on the Jetson
 JETSON_REPO='~/autonomous-fleet-testbed'
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Ghost-ball settle (CLAUDE.md Gotchas, 2026-07-17): the headless llvmpipe renderer keeps a
+# REMOVED model in camera frames for seconds — wait this long after remove_ball so the next
+# rung never reacts to the previous rung's ball. Mirrors tests/test_mission2.py's constant.
+BALL_REMOVAL_SETTLE_S="${BALL_REMOVAL_SETTLE_S:-3}"
 
 # Every remote ROS command must source its own env — non-interactive SSH skips .bashrc.
 JENV='source /opt/ros/jazzy/setup.bash && source ~/autonomous-fleet-testbed/install/setup.bash && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0'
@@ -58,6 +72,14 @@ sync() {
   local sha="${1:?usage: hil_stage.sh sync <git-sha>}"
   jssh "cd ${JETSON_REPO} && git fetch origin ${sha} && git checkout --detach FETCH_HEAD"
   jssh "source /opt/ros/jazzy/setup.bash && cd ${JETSON_REPO} && colcon build --symlink-install --base-paths src"
+}
+
+clean_state() {
+  # STATE_DIR hygiene (Task 13g): the self-hosted runner's STATE_DIR persists across runs, so
+  # a prior local-prove run's photos/logs/JSON otherwise contaminate this run's CI evidence
+  # artifact and can even satisfy a judge's photo-presence check with stale data. Wipe first.
+  mkdir -p "$STATE_DIR"
+  rm -f "$STATE_DIR"/*.png "$STATE_DIR"/*.out "$STATE_DIR"/*.json 2>/dev/null || true
 }
 
 sim_up() {
@@ -114,140 +136,75 @@ nav2_up() {
   echo '=== [nav2-up] managed nodes active ==='
 }
 
-mission() {
-  echo '=== [mission] running mission1 on the Jetson (budget 300s) ==='
-  require_ip
-  local before_id
-  before_id=$(jssh "python3 - <<'PY'
-import os
-import sqlite3
-try:
-    c = sqlite3.connect(os.path.expanduser('~/autonomous-fleet-testbed/reports/fleet_runs.db'))
-    print(c.execute('SELECT COALESCE(MAX(id),0) FROM runs').fetchone()[0])
-except sqlite3.OperationalError:
-    print(0)
-PY")
-  echo "$before_id" > "$STATE_DIR/before_id"
-  # HIL_CONTAINER=1 (stage-4-hil phase 2): run the mission executor INSIDE the stage-3
-  # arm64 GHCR image on the Jetson instead of the Jetson's bare-metal workspace — this is
-  # what finally makes the arm64→HIL pipeline edge consume the image it built. The reports
-  # dir is bind-mounted so the photo + telemetry row still land on the host exactly as the
-  # bare-metal path leaves them (verify()/before_id read the host DB either way). DDS is
-  # host-networked (--network host --ipc host) so the container sees Gazebo over enp6s0.
-  local mission_cmd
-  if [ "${HIL_CONTAINER:-0}" = "1" ]; then
-    echo "=== [mission] in-container execution: ${HIL_IMAGE:?HIL_CONTAINER=1 requires HIL_IMAGE} ==="
-    mission_cmd="docker run --rm --name hil_mission --network host --ipc host \
-      -v \$HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
-      -e RUNNER_TYPE=hil_jetson -e POWER_MODE=${POWER_MODE_LABEL} \
-      -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp -e ROS_DOMAIN_ID=0 \
-      ${HIL_IMAGE} \
-      bash -c 'source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && python3 -m nav_fleet.mission_runner mission1'"
-  else
-    mission_cmd="$JENV && cd ${JETSON_REPO} && RUNNER_TYPE=hil_jetson POWER_MODE=${POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner mission1"
-  fi
-  local rc=0
-  timeout 300 ssh -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}" "$mission_cmd" \
-    2>&1 | tee "$STATE_DIR/mission.out" || rc=$?
-  return "$rc"
-}
-
-verify() {
-  echo '=== [verify] photo + telemetry row ==='
-  require_ip
-  local photo before_id row
-  photo=$(grep -oP 'photo saved: \K\S+' "$STATE_DIR/mission.out" | tail -1 || true)
-  [ -n "$photo" ] || { echo 'FATAL: no photo path in mission output' >&2; return 1; }
-  scp -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}:autonomous-fleet-testbed/${photo}" "$STATE_DIR/" \
-    || { echo "FATAL: photo ${photo} missing on the Jetson" >&2; return 1; }
-  before_id=$(cat "$STATE_DIR/before_id")
-  row=$(jssh "python3 - <<PY
-import os
-import sqlite3
-c = sqlite3.connect(os.path.expanduser('~/autonomous-fleet-testbed/reports/fleet_runs.db'))
-r = c.execute(\"SELECT id, scenario, result, runner_type, sim_engine, power_mode, \"
-              \"mean_time_to_goal, mean_position_error FROM runs \"
-              \"WHERE id > ${before_id} AND runner_type='hil_jetson' \"
-              \"ORDER BY id DESC LIMIT 1\").fetchone()
-print(r if r else 'MISSING')
-PY")
-  echo "HIL telemetry row: ${row}"
-  [ "$row" != "MISSING" ] || { echo 'FATAL: no new hil_jetson telemetry row' >&2; return 1; }
-  echo "$row" | grep -q "'PASS'" || { echo 'FATAL: telemetry row is not PASS' >&2; return 1; }
-  echo '=== [verify] OK ==='
-
-  # Ship the row (design §2): SELECT the just-logged hil_jetson row over SSH → INSERT it
-  # into the workstation drift DB. We ship the ROW, never the DB file — the Jetson and the
-  # workstation keep independent histories and schema authority stays on the workstation.
-  # Only runs when FLEET_DB is set (CI + the local scratch-DB test); a bare local run skips
-  # shipping. Placed after the OK gate above, so a PASS hil_jetson row is known to exist —
-  # the remote SELECT can never hit a None row (keeps set -e safe).
-  if [ -n "${FLEET_DB:-}" ]; then
-    echo '=== [verify] shipping HIL row to workstation drift DB ==='
-    # before_id was read from the state file above; quoting mirrors the SELECT just above
-    # (escaped double-quotes wrap the SQL, plain single-quotes inside — proven pattern).
-    jssh "python3 - <<PY
-import json, os, sqlite3
-c = sqlite3.connect(os.path.expanduser('~/autonomous-fleet-testbed/reports/fleet_runs.db'))
-c.row_factory = sqlite3.Row
-r = c.execute(\"SELECT * FROM runs WHERE id > ${before_id} AND runner_type='hil_jetson' \"
-              \"ORDER BY id DESC LIMIT 1\").fetchone()
-print(json.dumps({k: r[k] for k in r.keys() if k != 'id'}))
-PY" > "$STATE_DIR/hil_row.json"
-    # Local INSERT into FLEET_DB. Subshell cd's to the repo so `tools.telemetry_logger`
-    # imports; init_db creates/migrates the schema; we keep only columns present locally so
-    # power_mode (and every other shipped field) survives intact into the workstation DB.
-    ( cd "$REPO_DIR"
-      STATE_DIR="$STATE_DIR" FLEET_DB="$FLEET_DB" python3 - <<'PY'
-import json, os, sqlite3, sys
-row = json.load(open(os.path.join(os.environ['STATE_DIR'], 'hil_row.json')))
-sys.path.insert(0, '.')
-from tools.telemetry_logger import init_db
-db = os.environ['FLEET_DB']
-init_db(db)
-conn = sqlite3.connect(db)
-cols = {r[1] for r in conn.execute('PRAGMA table_info(runs)')}
-row = {k: v for k, v in row.items() if k in cols}
-conn.execute("INSERT INTO runs ({}) VALUES ({})".format(
-    ','.join(row), ','.join('?' * len(row))), list(row.values()))
-conn.commit()
-print('shipped HIL row into %s — runner_type=%r power_mode=%r'
-      % (db, row.get('runner_type'), row.get('power_mode')))
-PY
-    )
-    echo '=== [verify] shipped ==='
-  fi
-}
-
-run_once() {
-  sim_up && nav2_up && mission && verify
-}
-
 run() {
-  mkdir -p "$STATE_DIR"
-  rm -f "$STATE_DIR/mission.out"
-  if run_once; then return 0; fi
-  # Retry-once policy (design doc §3): only for a discovery-shaped failure.
-  if grep -qE 'Nav2 action server unavailable|Goal rejected after all retries|no camera frame' \
-       "$STATE_DIR/mission.out" 2>/dev/null; then
-    local reason_line
-    reason_line=$(grep -oE 'Nav2 action server unavailable|Goal rejected after all retries|no camera frame' \
-        "$STATE_DIR/mission.out" 2>/dev/null | head -1 || true)
-    echo "HIL RETRY: first attempt failed (${reason_line}) — retrying once"
-    echo '=== discovery-shaped failure: full both-sides teardown, 5s settle, ONE retry ==='
-    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-      {
-        echo '### HIL retry occurred'
-        echo "First attempt failed (${reason_line}) — retried once after full teardown + 5s DDS settle."
-      } >> "$GITHUB_STEP_SUMMARY"
-    fi
-    teardown
+  # HIL stack GATE (Task 13b): clean state, bring up the workstation Gazebo half and the
+  # Jetson Nav2. NO mission, NO verify, NO retry — the `day` orchestrator runs the missions,
+  # and a mission failure must surface RED. The only retry left anywhere is nav_runner's
+  # in-process cold-goal retry (Task 13a); all harness-level whole-mission retries were removed.
+  clean_state
+  sim_up && nav2_up
+}
+
+day() {
+  # THE Mission 2 day (Task 13d) — tools/mission2_day.py in HIL mode against the stack `run`
+  # brought up. The mission runs on the Jetson (bare-metal, or in the stage-3 arm64 image when
+  # HIL_CONTAINER=1 — both inherited from the environment); ball ops + ground-truth judging +
+  # telemetry all stay workstation-side. The orchestrator scps each run's photos to
+  # reports/photos/ AND STATE_DIR (CI evidence) and prints per-run judged verdicts + waypoint
+  # checklists. FLEET_DB (when set) receives the JUDGED rows directly here — no SSH row-
+  # shipping, because the judge runs on the workstation where FLEET_DB lives.
+  require_ip
+  ws_source
+  RUNNER_TYPE=hil_jetson POWER_MODE="${POWER_MODE_LABEL}" JETSON_IP="${JETSON_IP}" \
+    JETSON_USER="${JETSON_USER}" STATE_DIR="${STATE_DIR}" \
+    PYTHONUNBUFFERED=1 python3 -u -m tools.mission2_day --executor jetson --no-launch \
+      --hold-s "${DAY_HOLD_S:-0}"
+}
+
+ws_source() {
+  # Workstation-side ROS env (mirrors sim_up): cd the repo so `python3 -m tools.mission2_harness`
+  # resolves and `gz` is on PATH for ground truth; source ROS + overlay; set DDS. Relax `set -u`
+  # only around ROS's setup.bash, which references unbound vars internally.
+  cd "$REPO_DIR"
+  set +u
+  source /opt/ros/jazzy/setup.bash
+  source install/setup.bash
+  set -u
+  export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0
+}
+
+reset_home() {
+  echo '=== [reset-home] drive the robot back to home_base (mirrors the sim janitor) ==='
+  require_ip
+  ws_source
+  # RETAINED for manual use (Task 13): under Option B the nominal/yellow missions self-return
+  # home, so CI no longer runs this between rungs. When invoked manually it drives the robot
+  # to home_base via the go_home mission (a single navigate leg; mission_runner clears both
+  # costmaps first). Teleporting is forbidden: it breaks AMCL + the costmaps.
+  # Bare-metal on the Jetson (a plain nav needs no container image). 180s: one nav leg.
+  # Retry up to 3x: go_home is a COLD first goal (fresh mission_runner process, idle Nav2),
+  # the case most exposed to a transient flake where bt_navigator's FollowPath call times
+  # out waiting for the cold controller_server to acknowledge — the plan succeeds but the
+  # handoff misses its ack window (observed live 2026-07-18: ~2 of 3 cold home-goal attempts
+  # flaked; a warm goal in an already-running process, e.g. yellow's retreat, does not). Each
+  # failed attempt aborts in ~0.2 s, so the retries are cheap. This is an UNJUDGED reset leg,
+  # so retrying is safe — it never masks a react-rung regression (those stay single-shot).
+  local rc=0 attempt
+  for attempt in 1 2 3; do
+    rc=0
+    timeout 180 ssh -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}" \
+      "$JENV && cd ${JETSON_REPO} && RUNNER_TYPE=hil_jetson POWER_MODE=${POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner go_home" \
+      2>&1 | tee "$STATE_DIR/reset_home.out" || rc=$?
+    [ "$rc" -eq 0 ] && break
+    echo "WARN: drive-home reset attempt ${attempt} failed (rc=${rc}) — retry after 5s settle" >&2
     sleep 5
-    run_once
-  else
-    echo '=== non-discovery failure: no retry (a second run would mask a real regression) ==='
-    return 1
+  done
+  if [ "$rc" -ne 0 ]; then
+    echo "FATAL: drive-home reset failed after retries (rc=${rc})" >&2
+    return "$rc"
   fi
+  # Confirm the robot actually reached home before the next rung runs off a bad pose.
+  python3 -m tools.mission2_harness assert-home
 }
 
 teardown() {
@@ -258,7 +215,18 @@ teardown() {
     # invisible to the host-side pkill above. A fixed --name (hil_mission) lets teardown
     # reach it directly. Best-effort: no-op when docker is absent or nothing is running,
     # and must never fail teardown itself.
-    jssh "command -v docker >/dev/null 2>&1 && docker rm -f hil_mission >/dev/null 2>&1 || true" || true
+    jssh "command -v docker >/dev/null 2>&1 && docker rm -f hil_mission hil_mission2 >/dev/null 2>&1 || true" || true
+  fi
+  # Safety net (Task 11): remove any Mission 2 ball still in the workstation Gazebo before
+  # we kill it, so an aborted react run (Task 12+) never leaves a ball in the world for the
+  # next job. Only attempt while a Gazebo server is actually up — a `gz service` against a
+  # dead server would block on its 5s timeout per name. Bracket-trick pgrep so the pattern
+  # never self-matches. Rung 1 (nominal) spawns no ball, so this is normally a no-op.
+  if pgrep -f '[g]z sim' >/dev/null 2>&1; then
+    ( cd "$REPO_DIR" 2>/dev/null || exit 0
+      for ball in ball_red ball_yellow; do
+        python3 -m tools.mission2_harness remove "$ball" >/dev/null 2>&1 || true
+      done ) || true
   fi
   local launch_pid
   launch_pid=$(pgrep -f '[s]im_only_launch' | head -1 || true)
@@ -283,13 +251,15 @@ restore_checkout() {
   echo '=== [restore-checkout] Jetson repo back on main ==='
 }
 
-cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|teardown|restore-checkout}"
+cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|day|reset-home|teardown|restore-checkout}"
 shift || true
 case "$cmd" in
   discover)         discover ;;
   power-mode)       power_mode ;;
   sync)             sync "$@" ;;
   run)              run ;;
+  day)              day ;;
+  reset-home)       reset_home ;;
   teardown)         teardown ;;
   restore-checkout) restore_checkout ;;
   *) echo "FATAL: unknown subcommand '$cmd'" >&2; exit 1 ;;

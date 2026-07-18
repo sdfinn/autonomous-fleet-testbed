@@ -27,3 +27,33 @@ def test_log_run_power_mode_defaults_null(tmp_path):
     row = sqlite3.connect(db).execute(
         "SELECT power_mode FROM runs ORDER BY id DESC LIMIT 1").fetchone()
     assert row[0] is None
+
+
+def test_log_run_stores_seed(db_path):
+    """Seed column stores integer placement seed for Mission 2 harness."""
+    from tools.telemetry_logger import log_run
+    run_id = log_run(scenario="mission2_red", steps=1, final_x=0.0, final_y=3.0,
+                     result="PASS", step_log=[], db_path=db_path, seed=123456789)
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT seed FROM runs WHERE id = ?", (run_id,)).fetchone()
+    assert row == (123456789,)
+
+
+def test_log_run_seed_defaults_null(db_path):
+    """Seed column defaults to NULL when not supplied."""
+    from tools.telemetry_logger import log_run
+    run_id = log_run(scenario="mission1", steps=3, final_x=0.0, final_y=0.0,
+                     result="PASS", step_log=[], db_path=db_path)
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT seed FROM runs WHERE id = ?", (run_id,)).fetchone()
+    assert row == (None,)
+
+
+def test_schema_accepts_seed_column(db_path):
+    """Pandera schema validates runs with seed column."""
+    from tools.telemetry_logger import log_run
+    from tools.validate_telemetry import validate_runs, detect_schema_drift
+    log_run(scenario="mission2_ignore", steps=1, final_x=0.0, final_y=3.3,
+            result="PASS", step_log=[], db_path=db_path, seed=42)
+    assert validate_runs(db_path) is True
+    assert detect_schema_drift(db_path) is True

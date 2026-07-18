@@ -85,6 +85,16 @@ amcl:
 bt_navigator:
   ros__parameters:
     use_sim_time: true
+    # ROOT FIX for the cold-goal abort storm (diagnosed 2026-07-18, Jetson nav2_hil.log):
+    # the BT's action clients waited only the default ~20 ms for the planner/controller
+    # servers to ACK a goal ("Timed out while waiting for action server to acknowledge
+    # goal request for compute_path_to_pose/follow_path"). On a loaded 25 W Jetson that
+    # window misses ~half the time; worse, the controller often EXECUTES the path anyway
+    # after bt_navigator aborts the handle — an unsupervised "zombie goal" that drove the
+    # robot with no mission attached. A 1 s ack window removes the race at the source;
+    # nav_runner's bounded cold-retry remains only as a safety net.
+    default_server_timeout: 1000
+    wait_for_service_timeout: 5000
     global_frame: map
     robot_base_frame: base_link
     # EKF-fused odometry (Session 16 Task 9e) — not the raw wheel odom, whose yaw-rate
@@ -128,7 +138,14 @@ controller_server:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.15
-      yaw_goal_tolerance: 0.5
+      # Tightened 0.5 -> 0.15 rad (Task 13f, 2026-07-18). The old ±28.6° let a goal be
+      # declared "reached" with a heading Mike could see was skewed — the return-home leg
+      # settled nosed LEFT of north yet still passed. RPP's final rotate-to-goal-heading
+      # (use_rotate_to_heading: true) drives yaw down until the goal checker is satisfied, so
+      # a tighter checker => a tighter final heading (±8.6°, below visible skew). Applies to
+      # every goal's final heading (marker approach + home), all of which want it tight; the
+      # reaction legs cancel mid-path and never reach a goal checker.
+      yaw_goal_tolerance: 0.15
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
       desired_linear_vel: 0.3   # slower than Jetbot (0.5) — ugv_pt is larger
