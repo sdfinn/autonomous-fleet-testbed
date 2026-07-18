@@ -28,7 +28,8 @@ source install/setup.bash
 python -m pytest tests/ -v \
   --ignore=tests/test_ros2_contracts.py \
   --ignore=tests/test_navigation.py \
-  --ignore=tests/test_mission_run.py    # seconds — run Python unit tests
+  --ignore=tests/test_mission_run.py \
+  --ignore=tests/test_mission2.py    # seconds — run Python unit tests
 ros2 launch nav_fleet sim_launch.py    # Session 09+ — Gazebo + Nav2 locally
 # nav_runner, metrics_collector, drift check all run here
 ```
@@ -55,7 +56,8 @@ ros2 launch src/nav_fleet/launch/sim_launch.py   # Session 09+ — Gazebo locall
 
 # Run Python unit tests (venv auto-activated by .bashrc)
 python -m pytest tests/ -v --ignore=tests/test_ros2_contracts.py \
-  --ignore=tests/test_navigation.py --ignore=tests/test_mission_run.py
+  --ignore=tests/test_navigation.py --ignore=tests/test_mission_run.py \
+  --ignore=tests/test_mission2.py
 
 # Run a mission (repo root; sim must be up — see launch commands above)
 python -m nav_fleet.mission_runner mission1
@@ -155,7 +157,10 @@ docker buildx build --platform linux/arm64 \
   until Session 11/12 caught it. It's correctly run as an integration test in
   `stage-2-gazebo`/`stage-4-isaac`, where live ROS2 actually exists. If a new test file imports
   `rclpy` at module level, it needs the same `--ignore` treatment in `stage-1-quality` — this
-  has now bitten twice.
+  has now bitten twice. `tests/test_mission2.py` (Session 16+ Plan B camera-reactive Mission 2)
+  is the same shape — live ROS2 + a running sim — and got the `--ignore` treatment in
+  `stage-1-quality` up front this time (commit 0b77e10), correctly running instead as an
+  integration test in `stage-2-gazebo`.
 - **CI stage-0's traceability gate has `continue-on-error: true` — this is a live, ongoing gap,
   not stale.** Session 10 added `test_navigation.py`, but 2 of its 3 test function names never
   matched `requirements/traceability.yaml`'s placeholder names (fixed in Session 11/12: BR-01/
