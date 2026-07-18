@@ -104,10 +104,11 @@ def test_image_msg_to_png_rejects_unknown_encoding(tmp_path):
 
 
 def test_semantic_map_has_sphere_approach():
-    from nav_fleet.semantic_map import SEMANTIC_MAP
-    # Task 13 (2026-07-18): moved (0.0, 3.2) -> (0.0, 3.5) to clear the dresser squeeze —
-    # the robot stops 0.2 m short of the floor marker at bedroom_goal (0.0, 3.7).
-    assert SEMANTIC_MAP['sphere_approach'] == (0.0, 3.5)
+    from nav_fleet.semantic_map import MARKER_XY, SEMANTIC_MAP
+    # Task 13e (2026-07-18): rigid +0.35 m north move — the robot stops deeper at (0.0, 3.85),
+    # 0.20 m short of the floor marker MARKER_XY (0.0, 4.05); bedroom_goal (BR-01) stays 3.7.
+    assert SEMANTIC_MAP['sphere_approach'] == (0.0, 3.85)
+    assert MARKER_XY == (0.0, 4.05)
 
 
 def test_mission2_shape():
@@ -118,7 +119,7 @@ def test_mission2_shape():
     # home_ref (before moving) -> navigate to marker (reactions armed) -> marker photo ->
     # navigate home -> home_arrival photo (pairs with home_ref for the return-fidelity
     # check). A fired reaction short-circuits run_mission from inside the navigate step,
-    # so the nominal (no-ball) path is the only one that runs all five waypoints.
+    # so the no_ball path is the only one that runs all five waypoints.
     assert [s.action for s in steps] == [
         'take_picture', 'navigate', 'take_picture', 'navigate', 'take_picture']
     assert [s.photo_tag for s in steps if s.action == 'take_picture'] == [

@@ -206,19 +206,21 @@
     </model>
 
     <!-- ═══ NAVIGATION TARGET MARKER ════════════════════════════════════ -->
-    <!-- FLAT floor disc at the BR-01 nav goal (0.0, 3.7) — Task 13 (2026-07-18) replaced
-         the raised 76mm green sphere with a floor-level marker: the robot navigates by AMCL
-         coordinates, so this marker exists purely for human observers watching the run. A
-         thin green cylinder (radius 0.10m, height 5mm) lying on the floor — deliberately
-         GREEN, kept OUT of the detector's red/yellow colour space so it can never be mistaken
-         for a reaction ball. No collision geometry, and its 5mm top (z=0.005m) sits far below
-         the lidar scan plane (z=0.225m) so Nav2 never sees it. Centre of the bedroom floor,
-         clear of all furniture: 0.71m from Dresser (north face y=2.99), 0.72m from Bed
-         (south face y=4.42) — the clear-zone centre, which is why sphere_approach moved
-         toward IT (north) to clear the dresser squeeze, not the other way. -->
+    <!-- FLAT floor disc = the Mission 2 human-observability marker — Task 13 (2026-07-18)
+         replaced the raised 76mm green sphere with a floor-level marker: the robot navigates
+         by AMCL coordinates, so this marker exists purely for human observers watching the
+         run. A thin green cylinder (radius 0.10m, height 5mm) lying on the floor —
+         deliberately GREEN, kept OUT of the detector's red/yellow colour space so it can never
+         be mistaken for a reaction ball. No collision geometry, and its 5mm top (z=0.005m)
+         sits far below the lidar scan plane (z=0.225m) so Nav2 never sees it.
+         Task 13e moved it 0.35m DEEPER — (0.0, 3.7) -> (0.0, 4.05) — to sit close to the bed
+         (south face y=4.420 -> 0.37m clearance) "well past the dresser" (north face y=2.987 ->
+         1.06m), matching Mike's HIL note that the robot stopped too shallow. Kept x=0 so it is
+         dead-ahead in the robot's northward-facing photo. Must stay in lockstep with
+         semantic_map.MARKER_XY (0.0, 4.05); the reaction ball is derived from it. -->
     <model name="goal_marker">
       <static>true</static>
-      <pose>0.0 3.7 0.0025 0 0 0</pose>
+      <pose>0.0 4.05 0.0025 0 0 0</pose>
       <link name="link">
         <visual name="v">
           <geometry><cylinder><radius>0.10</radius><length>0.005</length></cylinder></geometry>
