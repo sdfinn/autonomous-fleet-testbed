@@ -41,7 +41,7 @@ SEMANTIC_MAP = {
     # Going deeper (y>3.9) pushes the centre inside the bed's inflation and RPP can't settle.
     # Dresser north face y=2.987 -> 0.863 m south clearance; the approach from doorway_center
     # still routes WEST of the dresser's NW corner; Wall_East x=1.600 is >1.5 m east.
-    'sphere_approach': (0.0, 3.85),
+    'sphere_approach': (0.9, 3.70),
 }
 
 # Mission 2 floor marker = the human-observability point of interest the robot approaches and
@@ -54,4 +54,10 @@ SEMANTIC_MAP = {
 # 2 ball is placed relative to THIS point (tools.mission2_harness.BALL_AT_SPHERE_XY = MARKER +
 # 0.3 m in +x = (0.3, 4.05)), so ball placement moves WITH the marker by construction, never
 # tuned independently (spec) — and the rigid move keeps the 0.36 m ball-to-stop geometry.
-MARKER_XY = (0.0, 4.05)
+MARKER_XY = (0.9, 3.90)
+
+# 2026-07-18 (Mike, GUI review): marker relocated EAST of the dresser toward the far wall —
+# the open pocket between the dresser NE corner and the bed SW corner. (0.9, 3.90) marker,
+# (0.9, 3.70) stop: 0.72 m south of the bed face at that x (plannable with ~0.18 m to spare
+# past inflation), ~0.9 m NE of the dresser face, 0.7 m from Wall_East. Ball = MARKER+0.3x
+# = (1.2, 3.90). Deeper (y>4.0) at this x enters the bed's inflation band - see Bed box above.

@@ -105,10 +105,11 @@ def test_image_msg_to_png_rejects_unknown_encoding(tmp_path):
 
 def test_semantic_map_has_sphere_approach():
     from nav_fleet.semantic_map import MARKER_XY, SEMANTIC_MAP
-    # Task 13e (2026-07-18): rigid +0.35 m north move — the robot stops deeper at (0.0, 3.85),
-    # 0.20 m short of the floor marker MARKER_XY (0.0, 4.05); bedroom_goal (BR-01) stays 3.7.
-    assert SEMANTIC_MAP['sphere_approach'] == (0.0, 3.85)
-    assert MARKER_XY == (0.0, 4.05)
+    # 2026-07-18 GUI review (Mike): marker EAST of the dresser toward the far wall — the
+    # pocket between dresser NE and bed SW. Stop (0.9, 3.70), marker (0.9, 3.90); ball moves
+    # with it by construction (BALL_AT_SPHERE_XY = MARKER + 0.3x). bedroom_goal (BR-01) stays.
+    assert SEMANTIC_MAP['sphere_approach'] == (0.9, 3.70)
+    assert MARKER_XY == (0.9, 3.90)
 
 
 def test_mission2_shape():

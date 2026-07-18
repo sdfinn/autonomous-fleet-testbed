@@ -269,12 +269,12 @@ class _ReactionPoller(threading.Thread):
         super().__init__(daemon=True)
         self._ball = ball_xy
         self._poll_s = poll_s
-        self._stop = threading.Event()
+        self._halt = threading.Event()
         self.reaction_xy = None
         self._best = None
 
     def run(self):
-        while not self._stop.is_set():
+        while not self._halt.is_set():
             xy = get_ground_truth_xy()
             if xy is not None:
                 d = (xy[0] - self._ball[0]) ** 2 + (xy[1] - self._ball[1]) ** 2
@@ -284,7 +284,7 @@ class _ReactionPoller(threading.Thread):
             time.sleep(self._poll_s)
 
     def stop(self):
-        self._stop.set()
+        self._halt.set()
         self.join(timeout=5)
 
 
