@@ -113,13 +113,21 @@ def test_mission2_shape():
     import math
     from nav_fleet.missions import MISSIONS
     steps = MISSIONS['mission2']
-    # Task 9 rework (2026-07-17): a take_picture step follows the reactive navigate leg —
-    # reached only on the nominal (no-ball) path, since a fired reaction short-circuits
-    # run_mission from inside the navigate step (see mission_runner.run_mission).
-    assert [s.action for s in steps] == ['navigate', 'take_picture']
-    assert steps[0].location == 'sphere_approach'
-    assert steps[0].yaw == pytest.approx(math.pi / 2)  # face north, toward the sphere
-    assert steps[0].reactions == {'red': 'photo_then_stop', 'yellow': 'photo_then_home'}
+    # Task 13 Option B (2026-07-18): ONE mission = a verified round trip with THREE photos.
+    # home_ref (before moving) -> navigate to marker (reactions armed) -> marker photo ->
+    # navigate home -> home_arrival photo (pairs with home_ref for the return-fidelity
+    # check). A fired reaction short-circuits run_mission from inside the navigate step,
+    # so the nominal (no-ball) path is the only one that runs all five waypoints.
+    assert [s.action for s in steps] == [
+        'take_picture', 'navigate', 'take_picture', 'navigate', 'take_picture']
+    assert [s.photo_tag for s in steps if s.action == 'take_picture'] == [
+        'home_ref', 'marker', 'home_arrival']
+    navs = [s for s in steps if s.action == 'navigate']
+    assert navs[0].location == 'sphere_approach'
+    assert navs[0].yaw == pytest.approx(math.pi / 2)  # face north, toward the marker
+    assert navs[0].reactions == {'red': 'photo_then_stop', 'yellow': 'photo_then_home'}
+    assert navs[1].location == 'home_base'            # the mission owns its return leg
+    assert navs[1].yaw == pytest.approx(math.pi / 2)  # restore spawn heading (north)
 
 
 def test_validate_rejects_unknown_reaction():
@@ -149,5 +157,6 @@ def test_reaction_range_is_per_color():
     assert REACTION_RANGE_M == {'red': 1.3, 'yellow': 0.8}
     # Every color mission2 declares a reaction for must have a threshold —
     # mission_runner._detection_cb indexes this dict directly (KeyError = config bug).
-    for color in MISSIONS['mission2'][0].reactions:
+    reactions = next(s.reactions for s in MISSIONS['mission2'] if s.reactions)
+    for color in reactions:
         assert color in REACTION_RANGE_M

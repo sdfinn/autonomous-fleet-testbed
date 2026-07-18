@@ -56,6 +56,13 @@ class MissionStep:
     location: str = None  # SEMANTIC_MAP key — required for 'navigate'
     yaw: float = None    # optional final heading (radians, map frame) for 'navigate'
     reactions: dict = None  # navigate only: detected color -> VALID_REACTIONS entry
+    # take_picture only: stable semantic tag for the saved PNG (`{mission}_{photo_tag}`).
+    # Lets a waypoint's photo be found by MEANING (home_ref / marker / home_arrival) rather
+    # than by a fragile step index — the return-fidelity pair check (Task 13, Option B) pairs
+    # the `home_ref` and `home_arrival` photos regardless of where they land in the sequence
+    # (nominal takes home_arrival as step 5; yellow's reaction takes it mid-mission). When
+    # absent, the runner falls back to the `{mission}_step{i}` label (Mission 1 unchanged).
+    photo_tag: str = None
 
 
 MISSIONS = {
@@ -70,18 +77,44 @@ MISSIONS = {
         # turn at the arch (observed eyes-on 2026-07-15). Spawn faces north (pi/2).
         MissionStep('navigate', 'return to start', 'home_base', math.pi / 2),
     ),
-    # Mission 2 (Session 16 Plan B): drive toward the green sphere and stop short of it,
-    # reacting to croquet balls come across en route (spec §1-2). If a reaction fires,
-    # mission_runner.run_mission returns from inside the navigate step (see its
-    # `if triggered is not None: return self._execute_reaction(...)`) — the take_picture
-    # step below never runs on a reaction leg; it's reached only on the clean/no-ball
-    # (nominal) path, mirroring Mission 1's navigate -> take_picture pattern (Task 9
-    # rework, 2026-07-17, Mike's deterministic-placement decision).
+    # Mission 2 (Session 16 Plan B, Task 13 Option B — Mike, 2026-07-18): ONE mission =
+    # a verified round trip. Each waypoint carries its own verification (a checklist);
+    # the mission verdict IS the checklist. The red/yellow/no-ball variants are the SAME
+    # mission under different WORLD STATES — a reaction legitimately SHORTENS the path,
+    # and the shortened path is judged against its own expected waypoints. (R3 lineage:
+    # this hand-built five-waypoint sequence is the concrete precursor to the
+    # input-ised / DSL-driven missions R3 will generalise — deliberately NOT a generalised
+    # verification DSL here; Mission 2's four concrete checks only: photo, photo-match,
+    # position, reaction.)
+    #
+    # Sequence (Option B): the mission OWNS its return home and takes THREE photos —
+    #   1. home reference photo BEFORE any movement (return-fidelity anchor: spawn pose,
+    #      facing north/pi_2, doorway just to the right);
+    #   2. navigate to the floor marker (reactions armed — red photo_then_stop,
+    #      yellow photo_then_home);
+    #   3. marker photo;
+    #   4. navigate HOME (the robot always drives itself home — no external reset leg);
+    #   5. home arrival photo — must MATCH photo 1 (see the return-fidelity pair check in
+    #      tools/mission2_harness.judge_home_pair).
+    # Variant endings (same mission, different world state):
+    #   nominal (no ball) — all 5 steps; pair-check photo 1 vs photo 5.
+    #   yellow — reaction interrupts step 2 -> reaction photo -> self-return home ->
+    #     home arrival photo (photo_then_home now takes the arrival photo too, so the pair
+    #     check applies to yellow); steps 3 is skipped, 4/5 are folded into the reaction.
+    #   red — reaction interrupts step 2 -> reaction photo -> STOPS; steps 3-5 never run,
+    #     no second home photo. PASS for nominal/yellow requires the whole round trip.
+    # A fired reaction short-circuits run_mission from inside the navigate step (see
+    # mission_runner.run_mission `if triggered is not None: return self._execute_reaction`).
     'mission2': (
-        MissionStep('navigate', 'drive toward the green sphere, watching for balls',
+        MissionStep('take_picture', 'reference photo at home (return-fidelity anchor)',
+                    photo_tag='home_ref'),
+        MissionStep('navigate', 'drive toward the floor marker, watching for balls',
                     'sphere_approach', math.pi / 2,
                     reactions={'red': 'photo_then_stop', 'yellow': 'photo_then_home'}),
-        MissionStep('take_picture', 'photograph the green sphere'),
+        MissionStep('take_picture', 'photograph the floor marker', photo_tag='marker'),
+        MissionStep('navigate', 'return home', 'home_base', math.pi / 2),
+        MissionStep('take_picture', 'arrival photo at home (must match the reference)',
+                    photo_tag='home_arrival'),
     ),
     # Reset leg (Session 16 HIL rungs, Task 12): drive straight back to home_base. Used
     # between HIL react rungs to return the robot home WITHOUT teleporting (a teleport

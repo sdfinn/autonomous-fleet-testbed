@@ -68,6 +68,10 @@ class MissionRunner(Node):
             for srv in CLEAR_COSTMAP_SERVICES
         }
         self.reaction_events = []
+        # Per-waypoint verdict list (Task 13, Option B): one (label, verdict) per executed
+        # step — 'PASS'/'FAIL'/'REACTION'. The mission verdict IS this checklist; main()
+        # prints it as the round-trip audit trail.
+        self.checklist = []
         self._watch = None  # active only during a reactive navigate leg
         self.create_subscription(
             Detection2DArray, '/robot_001/detections', self._detection_cb, 10
@@ -150,10 +154,20 @@ class MissionRunner(Node):
             else:
                 w['counts'][color] = 0
 
+    def _print_leg_truth(self, name, label):
+        """Sim-only per-leg audit trail (Task 13 §5): where the robot PHYSICALLY is right
+        after a navigate leg. None on the real robot (no Gazebo) — callers treat None as
+        'no ground truth', never a failure. Kept out of the verdict; it's a log line."""
+        truth = get_ground_truth_xy()
+        self.get_logger().info(f'[{name}] leg done "{label}": ground truth = {truth}')
+        return truth
+
     def _execute_reaction(self, name, reaction, color):
         """Run the declared reaction on existing primitives (spec §2): the goal is
         already cancelled (robot stopped). Photo first — document the hazard — then
-        photo_then_home retreats (no reactions during the retreat, by design)."""
+        photo_then_home retreats (no reactions during the retreat, by design) and, per
+        Task 13 Option B, takes a home ARRIVAL photo so the return-fidelity pair check
+        applies to yellow too. photo_then_stop (red) stays put and takes NO home photo."""
         truth = get_ground_truth_xy()  # robot's OWN pose snapshot (None off-sim) — the
         # harness judges the reaction point against it; ball positions stay unknown here.
         self.get_logger().warning(f'[{name}] REACTION: {color} ball -> {reaction}')
@@ -164,11 +178,15 @@ class MissionRunner(Node):
             self._clear_costmaps()
             hx, hy = SEMANTIC_MAP['home_base']
             ok = self.nav.send_goal(hx, hy, timeout=NAV_TIMEOUT_S, yaw=math.pi / 2) and ok
+            self._print_leg_truth(name, 'return home (reaction)')
+            # Home arrival photo — the return-fidelity anchor's partner (pair check).
+            ok = self.take_picture(f'{name}_home_arrival') and ok
         return ok
 
     def run_mission(self, name):
         steps = MISSIONS[name]
         validate_mission(steps)
+        self.checklist = []
         for i, step in enumerate(steps, start=1):
             self.get_logger().info(f'[{name}] step {i}/{len(steps)}: {step.label}')
             if step.action == 'navigate':
@@ -183,10 +201,22 @@ class MissionRunner(Node):
                         spin_extra=self)
                     triggered, self._watch = self._watch['triggered'], None
                     if triggered is not None:
-                        return self._execute_reaction(
+                        # Reaction SHORTENS the mission (Option B): this navigate waypoint's
+                        # verdict is the reaction outcome; the remaining waypoints are not
+                        # expected (red stops here; yellow folds return+arrival into the
+                        # reaction). Record it in the checklist and short-circuit.
+                        self.checklist.append((f'{step.label} -> reaction {triggered}',
+                                               'REACTION'))
+                        react_ok = self._execute_reaction(
                             name, step.reactions[triggered], triggered)
+                        self.checklist.append(
+                            (f'reaction {triggered} completed',
+                             'PASS' if react_ok else 'FAIL'))
+                        return react_ok
                 else:
                     ok = self.nav.send_goal(x, y, timeout=NAV_TIMEOUT_S, yaw=step.yaw)
+                if ok:
+                    self._print_leg_truth(name, step.label)  # per-leg audit (sim only)
                 # FAIL-leg policy (Session 16): a failed/timed-out leg's duration measures
                 # the timeout, not the robot — keep it out of the row's aggregate metrics.
                 # (An interrupted leg returns False, so it stays out automatically.)
@@ -196,7 +226,9 @@ class MissionRunner(Node):
                     if self.nav.last_position_error is not None:
                         self.nav_errors.append(self.nav.last_position_error)
             else:  # take_picture — validate_mission guarantees the action set
-                ok = self.take_picture(f'{name}_step{i}')
+                label = f'{name}_{step.photo_tag}' if step.photo_tag else f'{name}_step{i}'
+                ok = self.take_picture(label)
+            self.checklist.append((step.label, 'PASS' if ok else 'FAIL'))
             if not ok:
                 self.get_logger().error(f'[{name}] step {i} ({step.label}) FAILED')
                 return False
@@ -262,6 +294,11 @@ def main():
         print(f'  photo: {p}')
     for ev in (runner.reaction_events if runner is not None else []):
         print(f"  reaction: {ev['color']} -> {ev['reaction']} at {ev['truth_xy']}")
+    # Per-waypoint checklist (Task 13 Option B): the mission verdict IS this checklist.
+    if runner is not None and runner.checklist:
+        print(f'  waypoint checklist ({args.mission}):')
+        for label, verdict in runner.checklist:
+            print(f'    [{verdict:^8}] {label}')
     raise SystemExit(0 if ok else 1)
 
 
