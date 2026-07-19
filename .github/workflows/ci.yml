@@ -173,8 +173,11 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:${{ github.sha }}
             ghcr.io/${{ github.repository }}:latest
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max
+          # buildcache-v2 (2026-07-18): ref bumped to force the deliberate COLD build —
+          # bumping the ref is the reliable cold lever when the token can't delete GHCR
+          # cache versions. Old :buildcache is orphaned (S17 purge sweep).
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache-v2
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache-v2,mode=max
 
       - name: Record build time
         run: |
