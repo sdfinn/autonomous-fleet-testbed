@@ -381,6 +381,17 @@ jobs:
           echo "Stage 4 HIL wall time: ${HIL_S}s"
           echo "### Stage 4 HIL wall time: ${HIL_S}s" >> $GITHUB_STEP_SUMMARY
 
+      - name: Fetch Jetson Nav2 logs (the autopsy — MUST precede the artifact upload)
+        if: always()
+        run: |
+          # The per-run Nav2 logs live only in the Jetson's /tmp (wiped on reboot) and were
+          # never uploaded — the 2026-07-18 yellow-bug crash autopsies were lost exactly this
+          # way, twice. clean_state wipes stale copies at stack-up, so anything fetched here
+          # belongs to this run (or survived on the Jetson from a run whose evidence we want
+          # anyway — per-run names keep them apart). Best-effort: never fail the job.
+          scp -o BatchMode=yes ${JETSON_USER}@${JETSON_IP}:/tmp/nav2_hil_*.log /tmp/hil_stage/ || true
+          ls -la /tmp/hil_stage/nav2_hil_*.log 2>/dev/null || echo "no Jetson nav2 logs fetched"
+
       - name: Upload mission evidence artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -392,6 +403,7 @@ jobs:
             /tmp/hil_stage/day_no_ball.out
             /tmp/hil_stage/day_yellow.out
             /tmp/hil_stage/day_red.out
+            /tmp/hil_stage/nav2_hil_*.log
             reports/photos/*.png
           if-no-files-found: warn
 
