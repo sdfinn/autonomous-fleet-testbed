@@ -460,6 +460,10 @@ jobs:
     name: "Stage 5 — HIL Reports + Dashboard"
     runs-on: [self-hosted, x86, gpu, rtx5080]
     needs: stage-4-hil
+    # Fair-weather fix part (a) (2026-07-18, pulled forward from S17 after biting twice in
+    # one evening): run on stage-4 FAILURE too — failure telemetry is the most valuable
+    # kind — but still skip when stage-4 was SKIPPED (docs-only pushes).
+    if: ${{ !cancelled() && needs.stage-4-hil.result != 'skipped' }}
     env:
       FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
       REPORT_PATH: reports/latest_report.pdf

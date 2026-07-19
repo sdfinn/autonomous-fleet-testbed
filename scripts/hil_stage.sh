@@ -37,7 +37,10 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BALL_REMOVAL_SETTLE_S="${BALL_REMOVAL_SETTLE_S:-3}"
 
 # Every remote ROS command must source its own env — non-interactive SSH skips .bashrc.
-JENV='source /opt/ros/jazzy/setup.bash && source ~/autonomous-fleet-testbed/install/setup.bash && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0'
+# MAGICK_THREAD_LIMIT/OMP: GraphicsMagick (nav2 map_server's image loader) SIGSEGVs on the
+# Jetson's ARM build under threading — killed Nav2 twice on 2026-07-18 (once mid-day during
+# lifecycle respawn-recovery, once at startup). Single-threading it is the known workaround.
+JENV='source /opt/ros/jazzy/setup.bash && source ~/autonomous-fleet-testbed/install/setup.bash && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1'
 
 case "$POWER_MODE_ID" in
   0) POWER_MODE_LABEL=15W ;;
