@@ -347,6 +347,26 @@ docker buildx build --platform linux/arm64 \
   env var reaches `tools/mission2_day.py --hold-s` and keeps the robot in place after the
   final red run so an observer sees an unambiguous "done" instead of the process exiting
   mid-frame.
+- **`hil_stage.sh sync` works only with PUSHED shas** (`git fetch origin <sha>` of an
+  unpushed commit fails "not our ref") — and the Jetson's local `main` only advances via
+  `restore-checkout`, which fast-forwards since d3bb66e (2026-07-19; before that it sat on
+  week-old code and silently invalidated a bare-metal bug repro). Manual Jetson runs:
+  sync to `$(git rev-parse origin/main)`, and verify with `git log -1` on the Jetson.
+- **A "CI-exact" local HIL run must export `POWER_MODE_ID=0` (15W) for the run/day steps.**
+  ci.yml's stage-4 builds at 25W then drops to 15W for the mission (deployment power,
+  2026-07-14); `hil_stage.sh`'s default is 1 (25W) — a full local day at the default
+  silently tests a faster Jetson than CI does (this masked the 15W axis during the
+  2026-07-19 yellow-bug forensics).
+- **The 2026-07-18 "yellow bug" is an UNREPRODUCED INTERMITTENT, instrumented not fixed:**
+  post-merge stage-4 died 3/3 that night (goal-end abort → bt_navigator bond drop →
+  lifecycle cascade → GraphicsMagick SIGSEGV in recovery map-load), then 2026-07-19 went
+  12/12 local + 1/1 CI green at the same sha with every code suspect exonerated. Leading
+  theory: accumulated Jetson uptime/load state (reboots preceded every green). Since
+  d3bb66e stage-4 uploads the Jetson `nav2_hil_*.log` in the mission-evidence artifact —
+  on any recurrence, pull the artifact FIRST; full dossier + forensics in
+  `.superpowers/sdd/progress.md` ("FORENSICS DAY 2026-07-19"). The GraphicsMagick env
+  knobs (`MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1`) are VERIFIED delivered to the Nav2
+  processes (/proc/environ) — if the SIGSEGV recurs, the knob is insufficient, not missing.
 
 ## Isaac Sim Gotchas (Session 11+)
 - **Version:** `isaacsim==6.0.1.0` is the correct pip package (`isaacsim[all,extscache]==6.0.1.0`
@@ -502,7 +522,8 @@ and **proven by a full 8-job-green CI cycle (run 29301726080)**. **Session 14 is
 (2026-07-14):** step 14's closeout + `Mike@`→`mike@` doc sweep done, and step 13c — the
 manual HIL run on the NVMe install — **passed first-attempt 2026-07-14** (multicast DDS
 across the link, mission PASS, photo + `hil_jetson` telemetry row on the Jetson; results
-in the runbook at 13c). Next: Session 16 (`stage-4-hil` + Mission 2).
+in the runbook at 13c). **Session 16 SIGNED OFF 2026-07-19** (`stage-4-hil` live, Mission 2
+merged, GUI day + clean CI run 29697469463) — next: Session 17 scoping (see Release1Todo).
 Confirmed-for-this-board state, not guesses: username **`mike`** (lowercase, matches the
 workstation — the SD era's capital-M `Mike` is gone; old docs saying `Mike@` predate
 2026-07-13), hostname **`jetson`** — **`ssh mike@jetson.local` works via mDNS** (needed
@@ -510,8 +531,8 @@ the post-hostname reboot; fresh installs also ship NO `127.0.1.1` line in `/etc/
 one was added; don't put a static entry on the workstation, the DHCP lease moves). IP
 still `10.42.0.217` (lease — re-check with `ip neigh show dev enp6s0`), rootfs on NVMe
 `/dev/nvme0n1p1` (456G, 421G free), GUI off (`multi-user.target`, idle RAM 433 MB), CUDA
-still intentionally absent (OS-only flash). The microSD is the untouched rollback — stored
-until Session 16's `stage-4-hil` is 3× green. GHCR pulls on the Jetson need
+still intentionally absent (OS-only flash). The microSD rollback was released 2026-07-15
+(stage-4-hil 3×-green condition met). GHCR pulls on the Jetson need
 `gh auth refresh -s read:packages` then `gh auth token | docker login ghcr.io -u sdfinn
 --password-stdin` (the image is private; gh's default scopes lack packages).
 - **Power mode: pinned to 25W (`sudo nvpmodel -m 1`) on 2026-07-12.** Orin Nano Super modes:

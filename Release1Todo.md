@@ -31,7 +31,7 @@ holds strategy background and the decisions log; nothing here requires reading i
 | 13 | Agentic Test Loop in Sim | ✅ |
 | 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | ✅ (2026-07-14 — NVMe fresh install executed 2026-07-13, runner re-registered, full 8-job CI cycle green (run 29301726080), manual HIL run on the NVMe install PASS first-attempt 2026-07-14; see `docs/runbooks/JetsonInstallSession14.md`) |
 | 15 | Gazebo + Real Jetson Hardware-in-the-Loop (Mission 1) | ✅ (2026-07-11 — Mission 1 PASS on x86 sim AND real-Jetson HIL, merged to main; CI stage designed but not yet implemented — see `docs/runbooks/Mission1HILSession15.md` + `docs/session15-hil-ci-stage-design.md`) |
-| 16 | HIL CI Stage with Gazebo + Mission 2 | ⬜ (created 2026-07-12, rescoped same evening — implement `stage-4-hil` from `docs/session15-hil-ci-stage-design.md`, retire `stage-4-isaac`; + Mission 2 camera-reactive incl. real USB camera manual tier; tidy-up review work moved to Session 17) |
+| 16 | HIL CI Stage with Gazebo + Mission 2 | ✅ (SIGNED OFF 2026-07-19 — `stage-4-hil` live (container mission, 25W-build/15W-mission), Mission 2 Option B verified round trip shipped + merged (PR #4, 7a86150); sign-off bar met: Mike-watched GUI container day GREEN + clean full-pipeline CI run 29697469463 + cold rebuild proven (659s, run 29667247639); real-USB-camera tier re-deferred → Session 19 tier #1; the 2026-07-18 "yellow bug" did NOT reproduce (12/12 local + 1/1 CI green) — instrumented, see Session 16 sign-off block) |
 | 17 | Harden, Stabilize & Review (pre-robot gate) | ⬜ (created 2026-07-12 evening — code review, perf, reuse, robot-debuggable logging, report UX, drift/AI review; gate: "robot good to go out of the gate?") |
 | 18 | Real Robot: Deploy + Sim-to-Real Comparison | ⬜ (was 16 until 2026-07-12, then 17 until the same evening) |
 | 19 | Real-Robot Expansion & Deferred Capability (pick-list) | ⬜ (rewritten 2026-07-17 as a menu ordered by robot-day de-risking; was "Agentic Loop on Real Hardware + Advanced Missions") |
@@ -3818,6 +3818,31 @@ Nav2's own mechanisms — no custom BT).
 > (Mission 2 HIL rungs: ignorable → red → yellow), final whole-branch review (include
 > the per-task carry-forward findings ledger), un-draft + merge PR #4. Authoritative
 > resume state: `.superpowers/sdd/progress.md`.
+
+> **✅ SIGNED OFF 2026-07-19 (Mike).** Everything above the STOPPED note shipped:
+> PR #4 merged 2026-07-18 (7a86150, work continues on main until R1 releases). The bar
+> Mike set on 2026-07-18 was met as follows: **(1) GUI day** — Mike-watched container-mode
+> day GREEN 2026-07-19 (CI image at ce173d4, digest-verified fresh GHCR pull, DAY_HOLD_S=10);
+> ran at 25W — Mike accepted the 25W watched day + the 15W CI green (below) as jointly
+> covering deployment power; an optional 15W watched day remains a Session 17 warm-up
+> candidate. **(2) Cold run** — done 2026-07-18 (run 29667247639: stage-3 cold rebuild
+> 659s from a bare Jetson). Plus **clean full-pipeline CI run 29697469463** (2026-07-19,
+> all 8 jobs, incl. stage-4 at 15W on post-merge code — the first-ever green for that
+> combination). **The 2026-07-18 "yellow bug"** (goal-end abort → bt_navigator bond drop →
+> lifecycle cascade → GraphicsMagick recovery SIGSEGV, 3/3 CI reds that night): did NOT
+> reproduce on 2026-07-19 — 12/12 local mission runs green at the exact failing sha
+> (bare-metal, container, GUI-watched, CI-sequence) plus the 1/1 real CI run. All code
+> suspects exonerated (yaw 0.15, zombie-guard cancel, container executor); leading residual
+> theory is accumulated-uptime + load state (Friday's Jetson had a marathon day behind it;
+> reboots preceded every green). Status: **unreproduced intermittent, now instrumented** —
+> stage-4 uploads the Jetson Nav2 autopsy log in the mission-evidence artifact on every run
+> (fix d3bb66e), so a single recurrence yields the root cause. Full forensics record:
+> `.superpowers/sdd/progress.md` "FORENSICS DAY 2026-07-19" + `.superpowers/sdd/forensics/`
+> (local-only). Open checkboxes above: power-modes-in-telemetry shipped; real-camera tier
+> re-deferred to Session 19 (tier #1, per the 2026-07-17 rewrite); runbook CI-stage note
+> folded into the runbook policy (no per-session runbooks). **NEXT: Session 17 — full
+> scoping pass FIRST (brainstorm → spec → plan, reviewed with Mike) per the 2026-07-17
+> directive; inputs: `MikesNotes.md` (committed d3bb66e) + the Session 17 section below.**
 
 ---
 

@@ -790,3 +790,13 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   loop's credibility requires trustworthy nav signals. R1 boundary confirmed:
   `r1-complete` at Session 18; S19 pick-list = post-R1 bridge work credited to R2-era.
   Standing principle recorded from MikesNotes.md: keep thinking 10x.
+- **2026-07-19 — Session 16 SIGNED OFF (Mike).** `stage-4-hil` live (container mission at
+  15W deployment power, 25W builds); Mission 2 Option B merged (PR #4, 7a86150). Bar met:
+  Mike-watched GUI container day green + clean full-pipeline CI run 29697469463 (first-ever
+  green for post-merge code at 15W stage-4) + Friday's proven 659s cold rebuild. The
+  2026-07-18 "yellow bug" closed as **unreproduced intermittent, instrumented not fixed**:
+  12/12 local + 1/1 CI green at the exact failing sha exonerated every code suspect
+  (residual theory: accumulated Jetson uptime/load); stage-4 now ships the Jetson Nav2
+  autopsy log in the CI evidence artifact (d3bb66e) so one recurrence yields root cause.
+  Real-USB-camera tier re-deferred → Session 19 tier #1. Next: Session 17 full scoping
+  pass first (2026-07-17 directive), inputs = MikesNotes.md + Release1Todo S17 section.

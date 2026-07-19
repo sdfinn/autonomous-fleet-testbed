@@ -101,3 +101,25 @@ aborted handle.
    called it arrived → yaw tightened to 0.15. Sharpened: the logs weren't wrong — they
    only answer the questions we thought to ask; eyes catch the unasked ones (why the
    GUI-observation standing rule exists).
+
+## 2026-07-19 — Session 16 close: the forensics day (bug hunt by elimination)
+
+**Concepts introduced (teach-back pending — answer at next session start):**
+
+1. **The discriminating experiment:** we ran bare-metal BEFORE container, both at the
+   exact failing sha. Why that order — what did each green result *eliminate*, and why
+   is changing one variable at a time the whole game?
+2. **"Didn't reproduce" ≠ "fixed":** the yellow bug never fired today, so we shipped
+   no fix — what DID we ship instead, and why does instrumenting an intermittent beat
+   guess-fixing it?
+3. **Power modes as a timing variable:** which of today's runs were 25W and which
+   15W, why does CI deliberately run the mission at 15W, and how can a slower clock
+   turn a working system into a flaky one?
+4. **Stale checkouts lie:** the Jetson was silently running July-13 code — how did it
+   get there (what does CI's sync actually check out, and what did restore-checkout
+   fail to do), and why does a repro on the wrong code prove nothing?
+
+**Carried re-queues:** Q2 Docker layers (+bonus: docs-only push — which layers
+rebuild, and why is that a trick question in our pipeline?), Q4 zombie goal,
+ROS_LOCALHOST_ONLY (+follow-up: Jetson powered on but Nav2 not running — do you need
+the flag for a local sim session?).
