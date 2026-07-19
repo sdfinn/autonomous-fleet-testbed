@@ -46,3 +46,27 @@ Task 9 arc), the five commits `703469e..0b77e10`, reaction photos in `reports/ph
    sharpened: the two stateful components are AMCL's particle filter and the costmaps'
    accumulated obstacle marks; drive-home transfers to the real robot, teleport can't.
    → PASSED with sharpening.
+
+## 2026-07-18 — Session 16 close: merge day, the collision postmortems, the yellow bug
+
+**Concepts introduced (teach-back pending — answer at next session start):**
+
+1. **Branch → PR → merge:** we never pushed to main until tonight — what is a feature
+   branch, what does "merging PR #4" actually do, and why did main stay frozen for a
+   week while 46 commits piled up next to it?
+2. **Docker layer caching & the cold build:** why did the same image build take 659 s,
+   114 s, and 52 s at different times today? Which layer does a source-code change
+   invalidate, and what three caches did we flush to force the cold build?
+3. **The concurrency collision:** the merge fired TWO pipeline runs at once and they
+   destroyed each other — why does GitHub allow that, what physical fact about OUR
+   runners makes it fatal, and what one workflow block prevents it forever?
+4. **The zombie goal:** the robot drove to the marker AFTER its mission had died —
+   trace the chain (BT ack-timeout → aborted handle → controller still executing) and
+   say why cancel-on-failure matters more on a real robot than in sim.
+5. **Observation beats logs (4 events today):** name the four times your eyes
+   overruled the recorded evidence today, and what each one changed.
+
+**Open bug carried to tomorrow (the dossier is in progress.md):** post-merge, HIL
+runs die around goal end/cancel — bond-drop lifecycle cascade + GraphicsMagick
+recovery segfault. Prime suspects: yaw 0.15 tolerance, zombie-guard cancel on an
+aborted handle.
