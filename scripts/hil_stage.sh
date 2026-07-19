@@ -84,7 +84,8 @@ clean_state() {
   # a prior local-prove run's photos/logs/JSON otherwise contaminate this run's CI evidence
   # artifact and can even satisfy a judge's photo-presence check with stale data. Wipe first.
   mkdir -p "$STATE_DIR"
-  rm -f "$STATE_DIR"/*.png "$STATE_DIR"/*.out "$STATE_DIR"/*.json 2>/dev/null || true
+  rm -f "$STATE_DIR"/*.png "$STATE_DIR"/*.out "$STATE_DIR"/*.json \
+        "$STATE_DIR"/nav2_hil_*.log 2>/dev/null || true
 }
 
 sim_up() {
@@ -252,8 +253,13 @@ teardown() {
 
 restore_checkout() {
   require_ip
-  jssh "cd ${JETSON_REPO} && git checkout main >/dev/null 2>&1 || true" || true
-  echo '=== [restore-checkout] Jetson repo back on main ==='
+  # Fast-forward main, don't just check it out: the Jetson's local main only ever advances
+  # here (CI syncs detached shas), and it silently sat on week-old code for days — any
+  # manual/bare run that trusted it was running a different program than it claimed
+  # (invalidated a bug-repro attempt on 2026-07-19). Best-effort: an offline Jetson still
+  # lands on main, just possibly stale — the pull failing must never fail the CI job.
+  jssh "cd ${JETSON_REPO} && git checkout main >/dev/null 2>&1 && git pull --ff-only origin main >/dev/null 2>&1 || true" || true
+  echo '=== [restore-checkout] Jetson repo back on main (fast-forwarded when reachable) ==='
 }
 
 cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|day|reset-home|teardown|restore-checkout}"
