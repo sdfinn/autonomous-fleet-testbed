@@ -140,7 +140,8 @@ docker buildx build --platform linux/arm64 \
 - Isaac Sim session (Session 11): requires NVIDIA driver 570+. Driver 595.71.05 already installed.
 - `requirements.txt` is a full pip freeze of the local ROS2 venv — NOT for CI use. Use `requirements-ci.txt` in CI jobs.
 - DB path env var is `FLEET_DB` (default: `reports/fleet_runs.db`) — used by telemetry_logger,
-  validate_telemetry, ai_test_generator, dashboard, baseline_monitor, generate_test_report, agentic_loop
+  validate_telemetry, dashboard, baseline_monitor, generate_test_report, agentic_loop
+  (ai_test_generator/scenario_analyzer deleted 2026-07-19 — S17 review CR-05, rebuilt fresh in R2)
 - **`ANTHROPIC_API_KEY` in `.bashrc` doesn't reach non-interactive shells/tools.** Ubuntu's
   default `.bashrc` has an early guard (`case $- in *i*) ;; *) return;; esac`) that skips
   the entire rest of the file when the shell isn't interactive — which includes Claude

@@ -132,29 +132,7 @@ def log_run(scenario: str, steps: int, final_x: float, final_y: float,
     return run_id
 
 
-class TelemetryLogger:
-    def __init__(self, db_path=DB_PATH):
-        self.db_path = db_path
-
-    def log_sensor_summary(self, run_id: int, lidar_min: float, lidar_max: float,
-                           obstacles_detected: int):
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("""
-            UPDATE runs SET
-                lidar_min_range = ?,
-                lidar_max_range = ?,
-                num_obstacles_detected = ?
-            WHERE id = ?
-        """, (lidar_min, lidar_max, obstacles_detected, run_id))
-        conn.commit()
-        conn.close()
-
-    def mark_scenario_complete(self, ai_scenario_id, status):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE ai_scenarios SET test_status = ? WHERE id = ?",
-            (status, ai_scenario_id)
-        )
-        conn.commit()
-        conn.close()
+# The old TelemetryLogger class was removed in the Session 17 code review fix wave
+# (CR-05/CR-14, 2026-07-19): `mark_scenario_complete` belonged to the deleted
+# ai_scenarios subsystem and `log_sensor_summary` had no callers anywhere. Telemetry
+# is a functions-only module — one write path (log_run), one schema authority below.
