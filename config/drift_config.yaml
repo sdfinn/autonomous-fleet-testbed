@@ -1,63 +1,55 @@
-  # Drift detection thresholds. Edit here — never hardcode in Python.
-  history_window: 20
+# Drift detection configuration — the single source of truth for baseline_monitor.
+# Edit here, never hardcode in Python (tools/baseline_monitor.load_config reads this;
+# tests/test_baseline.py::test_canonical_config_loads_and_is_valid guards the contract).
+#
+# Wired for real in the Session 17 code review fix wave (CR-02, 2026-07-19) — before
+# that, this file was aspirational and baseline_monitor hardcoded its own scheme.
+# Features the old file promised but nothing implements were REMOVED rather than left
+# lying (honesty rule); they are recorded at the bottom as deferred work.
 
-  sigma:
-    info: 2.0
-    warning: 3.0
-    error: 4.0
-    critical: 5.0
+# Rolling window of prior PASS runs (same runner_type/power_mode slice) per baseline.
+history_window: 20
 
-  post_merge_sensitivity:
-    runs: 5
-    multiplier: 0.7   # tighten thresholds for first 5 runs after a commit
+# Sigma severity bands. A run flags when its worse-direction deviation reaches `info`;
+# the report's `severity` field names the highest band reached.
+sigma:
+  info: 2.0
+  warning: 3.0
+  error: 4.0
+  critical: 5.0
 
-  metrics:
-    nav_success_rate:
-      direction: down     # lower = worse
-      threshold_fail: 0.05
-      requirement: BR-07
+# Watched metrics. `direction` = which way is WORSE ('down': lower is worse;
+# 'up': higher is worse). Improvements in the good direction never flag (CR-01).
+# `requirement` ties the metric to requirements/traceability.yaml for reporting.
+metrics:
+  nav_success_rate:
+    direction: down
+    requirement: BR-07
+  mean_position_error:
+    direction: up
+    requirement: BR-01
+  mean_time_to_goal:
+    direction: up
+  collision_rate:
+    direction: up
+    requirement: BR-02
+  odom_hz_mean:
+    direction: down
+    requirement: BR-04
+  lidar_hz_mean:
+    direction: down
+    requirement: SC-04
+  camera_hz_mean:
+    direction: down
+    requirement: SC-05
+  home_photo_similarity:
+    direction: up          # Mission 2 return fidelity — higher diff = worse return
 
-    mean_position_error:
-      direction: up       # higher = worse
-      threshold_fail: 0.03
-      requirement: BR-01
-
-    mean_time_to_goal:
-      direction: up
-      threshold_fail: 5.0
-
-    collision_rate:
-      direction: up
-      threshold_fail: 0.02
-      requirement: BR-02
-
-    odom_hz_mean:
-      direction: down
-      threshold_fail: 5.0
-      requirement: BR-04
-
-    lidar_hz_mean:
-      direction: down
-      threshold_fail: 1.0
-      requirement: SC-04
-
-    camera_hz_mean:
-      direction: down
-      threshold_fail: 1.0
-      requirement: SC-05
-
-    firmware_test_pass_rate:
-      direction: down
-      hard_threshold: true    # any failure = fail; bypasses sigma analysis
-      threshold_fail: 0.0
-      requirement: MCU-all
-
-    stage_2_arm64_build_s:
-      direction: up
-      threshold_warn: 60.0    # warn only — slow build is a signal, not a blocker
-      ci_health: true
-
-    stage_3_gazebo_s:
-      direction: up
-      threshold_warn: 30.0
-      ci_health: true
+# ── Deferred (removed 2026-07-19 because nothing implements them — do not re-add
+# without the implementation; see Session17CodeReview.md CR-02):
+#   post_merge_sensitivity (tighter thresholds right after a commit — needs the runs
+#     table to record the commit sha first)
+#   firmware_test_pass_rate hard_threshold (no firmware tests exist; ESP32 is R3+)
+#   ci-health stage-duration metrics (stage_*_s warn thresholds — S17 pipeline
+#     self-health idea, needs stage timings logged as runs columns first)
+#   per-metric absolute threshold_fail deltas (sigma bands cover R1's need)
