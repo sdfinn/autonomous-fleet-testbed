@@ -1,11 +1,20 @@
-# Copyright 2026 Mike. Licensed under MIT.
-"""Pandera schema validation for fleet telemetry database."""
+# Copyright 2026 Mike
+# SPDX-License-Identifier: Apache-2.0
+"""Pandera schema validation for fleet telemetry database.
+
+Column EXISTENCE comes from tools/telemetry_logger's registry (CR-15 — single source);
+value RULES live here in RunsModel. test_registry_is_single_source enforces that the
+model covers every registry column, so a column added to the registry without a rule
+here fails CI instead of sliding through unvalidated.
+"""
 import os
 import sqlite3
 import pandas as pd
 import pandera as pa
 from pandera import Check, Column, DataFrameModel, DataFrameSchema
 from pandera.typing import Series
+
+from tools.telemetry_logger import BASE_COLUMNS, RUNS_COLUMNS
 
 DB_PATH = os.environ.get("FLEET_DB", "reports/fleet_runs.db")
 
@@ -49,6 +58,9 @@ class RunsModel(DataFrameModel):
     # (seed-column precedent above): a follow-up column breaks CI the moment the first real
     # row arrives before the schema knows about it.
     home_photo_similarity: Series[float] = pa.Field(ge=0, le=1, nullable=True)
+    # power_mode: the Jetson nvpmodel label the run executed at (CR-13 — previously in
+    # the known-column set but value-unvalidated).
+    power_mode: Series[str] = pa.Field(isin=["15W", "25W", "MAXN_SUPER"], nullable=True)
 
 
 RUNS_SCHEMA = RunsModel.to_schema()
@@ -61,17 +73,8 @@ STEPS_SCHEMA = DataFrameSchema({
     "pos_y":  Column(float, Check.in_range(-150.0, 150.0)),
 }, coerce=True)
 
-KNOWN_RUNS_COLS = {
-    "id", "scenario", "timestamp", "steps", "final_x", "final_y", "result",
-    "runner_type", "robot_type", "robot_id", "sim_engine",
-    "nav_success_rate", "mean_position_error", "mean_time_to_goal", "collision_rate",
-    "odom_hz_mean", "lidar_hz_mean", "camera_hz_mean", "firmware_test_pass_rate",
-    "stage_timings_sec",
-    "lidar_min_range", "lidar_max_range", "num_obstacles_detected",
-    "power_mode",  # Session 16 Task 1 — Jetson nvpmodel mode the mission ran at (HIL)
-    "seed",  # Mission 2 placement seed (Session 16 Plan B)
-    "home_photo_similarity",  # Session 16 Task 13 — Mission 2 return-fidelity score
-}
+# Derived from the logger's registry (CR-15) — no second hand-maintained list.
+KNOWN_RUNS_COLS = set(BASE_COLUMNS) | set(RUNS_COLUMNS)
 
 
 def validate_runs(db_path=DB_PATH) -> bool:

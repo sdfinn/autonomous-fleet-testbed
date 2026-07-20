@@ -57,3 +57,39 @@ def test_schema_accepts_seed_column(db_path):
             result="PASS", step_log=[], db_path=db_path, seed=42)
     assert validate_runs(db_path) is True
     assert detect_schema_drift(db_path) is True
+
+
+# ── CR-15 (S17 review): one column registry, consumed by logger AND validator ──────────
+
+
+def test_log_run_rejects_unknown_metric(db_path):
+    """A typo'd metric kwarg must raise, not silently vanish (the old 20-kwarg
+    signature caught typos; the registry-driven one must too)."""
+    import pytest
+    with pytest.raises(TypeError, match="unknown telemetry column"):
+        log_run(scenario="s", steps=1, final_x=0.0, final_y=0.0, result="PASS",
+                step_log=[], db_path=db_path, nav_sucess_rate=1.0)  # note the typo
+
+
+def test_registry_is_single_source():
+    """CR-15: adding a column must be ONE edit. The validator's known-column set and
+    the pandera model must both derive from / cover the logger's registry."""
+    from tools.telemetry_logger import BASE_COLUMNS, RUNS_COLUMNS
+    from tools.validate_telemetry import KNOWN_RUNS_COLS, RUNS_SCHEMA
+    assert set(BASE_COLUMNS) | set(RUNS_COLUMNS) == KNOWN_RUNS_COLS
+    # Every registry column is validated by the pandera model (id is DB-generated).
+    model_cols = set(RUNS_SCHEMA.columns)
+    missing = (set(RUNS_COLUMNS) - model_cols)
+    assert not missing, f"registry columns unvalidated by RunsModel: {missing}"
+
+
+def test_power_mode_values_validated(db_path):
+    """CR-13: power_mode carries real values (15W/25W/MAXN_SUPER) — garbage must fail
+    schema validation instead of passing unexamined."""
+    from tools.validate_telemetry import validate_runs
+    log_run(scenario="s", steps=1, final_x=0.0, final_y=0.0, result="PASS",
+            step_log=[], db_path=db_path, power_mode="15W")
+    assert validate_runs(db_path) is True
+    log_run(scenario="s", steps=1, final_x=0.0, final_y=0.0, result="PASS",
+            step_log=[], db_path=db_path, power_mode="9000W")
+    assert validate_runs(db_path) is False

@@ -1,8 +1,47 @@
+# Copyright 2026 Mike
+# SPDX-License-Identifier: Apache-2.0
+"""Fleet telemetry: one `runs` row per mission/test run into FLEET_DB (SQLite).
+
+Schema authority (CR-15, Session 17 review): RUNS_COLUMNS below is THE registry of
+optional telemetry columns. The logger's migration, log_run's accepted kwargs, and
+tools/validate_telemetry's known-column set all derive from it — adding a column is one
+edit here plus one pandera rule there (the model has a test-enforced coverage guard).
+History justified this: power_mode, hil_jetson, and seed each broke or nearly broke CI
+when one of the previously-four declaration sites lagged the others.
+"""
 import os
 import sqlite3
 import time
 
 DB_PATH = os.environ.get("FLEET_DB", "reports/fleet_runs.db")
+
+# Required per-run fields, created with the table (order matches the INSERT below).
+BASE_COLUMNS = ("id", "scenario", "timestamp", "steps", "final_x", "final_y", "result")
+
+# Optional telemetry columns: name -> sqlite type. THE single registry (see module doc).
+RUNS_COLUMNS = {
+    "runner_type": "TEXT",           # local | hil_jetson | jetson | qemu (legacy)
+    "robot_type": "TEXT",
+    "robot_id": "TEXT",
+    "sim_engine": "TEXT",            # gazebo | isaac | real
+    "nav_success_rate": "REAL",
+    "mean_position_error": "REAL",
+    "mean_time_to_goal": "REAL",
+    "collision_rate": "REAL",
+    "odom_hz_mean": "REAL",
+    "lidar_hz_mean": "REAL",
+    "camera_hz_mean": "REAL",
+    "firmware_test_pass_rate": "REAL",   # reserved: no firmware tests exist yet (R3+)
+    "stage_timings_sec": "TEXT",
+    "lidar_min_range": "REAL",
+    "lidar_max_range": "REAL",
+    "num_obstacles_detected": "INTEGER",
+    "power_mode": "TEXT",            # Jetson nvpmodel label the run executed at (15W/25W)
+    "seed": "INTEGER",               # Mission 2 placement seed (nullable)
+    # Mission 2 return-fidelity (Task 13 §3): mean-abs grayscale diff of the home
+    # reference vs home arrival photo [0..1]; NULL on non-mission2 rows and on red.
+    "home_photo_similarity": "REAL",
+}
 
 
 def init_db(db_path: str = DB_PATH):
@@ -15,21 +54,7 @@ def init_db(db_path: str = DB_PATH):
             steps                   INTEGER,
             final_x                 REAL,
             final_y                 REAL,
-            result                  TEXT,
-            runner_type             TEXT,
-            robot_type              TEXT,
-            nav_success_rate        REAL,
-            mean_position_error     REAL,
-            mean_time_to_goal       REAL,
-            collision_rate          REAL,
-            odom_hz_mean            REAL,
-            lidar_hz_mean           REAL,
-            camera_hz_mean          REAL,
-            firmware_test_pass_rate REAL,
-            stage_timings_sec       TEXT,
-            lidar_min_range         REAL,
-            lidar_max_range         REAL,
-            num_obstacles_detected  INTEGER
+            result                  TEXT
         )
     """)
     conn.execute("""
@@ -48,67 +73,26 @@ def init_db(db_path: str = DB_PATH):
 
 
 def _ensure_run_columns(conn):
-    expected_columns = {
-        "runner_type": "TEXT",
-        "robot_type": "TEXT",
-        "robot_id": "TEXT",
-        "sim_engine": "TEXT",
-        "nav_success_rate": "REAL",
-        "mean_position_error": "REAL",
-        "mean_time_to_goal": "REAL",
-        "collision_rate": "REAL",
-        "odom_hz_mean": "REAL",
-        "lidar_hz_mean": "REAL",
-        "camera_hz_mean": "REAL",
-        "firmware_test_pass_rate": "REAL",
-        "stage_timings_sec": "TEXT",
-        "lidar_min_range": "REAL",
-        "lidar_max_range": "REAL",
-        "num_obstacles_detected": "INTEGER",
-        "power_mode": "TEXT",
-        "seed": "INTEGER",
-        "home_photo_similarity": "REAL",
-    }
+    """Migrate an existing DB to the current registry (additive only)."""
     existing = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
-    for name, col_type in expected_columns.items():
+    for name, col_type in RUNS_COLUMNS.items():
         if name not in existing:
             conn.execute(f"ALTER TABLE runs ADD COLUMN {name} {col_type}")
 
 
 def log_run(scenario: str, steps: int, final_x: float, final_y: float,
-            result: str, step_log: list, db_path: str = DB_PATH,
-            robot_id: str = None, robot_type: str = None, runner_type: str = None,
-            sim_engine: str = None, nav_success_rate: float = None,
-            mean_position_error: float = None, mean_time_to_goal: float = None,
-            collision_rate: float = None, odom_hz_mean: float = None,
-            lidar_hz_mean: float = None, camera_hz_mean: float = None,
-            power_mode: str = None, seed: int = None,
-            home_photo_similarity: float = None):
-    """Insert one row into `runs`. Only `scenario`/`steps`/`final_x`/`final_y`/`result`
-    are required — every other field is optional telemetry attached to the same run,
-    left NULL when not supplied by the caller.
+            result: str, step_log: list, db_path: str = DB_PATH, **metrics):
+    """Insert one row into `runs`.
+
+    `scenario`/`steps`/`final_x`/`final_y`/`result` are required; every other field is
+    an optional telemetry column passed by name (must exist in RUNS_COLUMNS — a typo'd
+    name raises instead of silently vanishing). None values are left NULL.
     """
-    optional_fields = {
-        "robot_id": robot_id,
-        "robot_type": robot_type,
-        "runner_type": runner_type,
-        "sim_engine": sim_engine,
-        "nav_success_rate": nav_success_rate,
-        "mean_position_error": mean_position_error,
-        "mean_time_to_goal": mean_time_to_goal,
-        "collision_rate": collision_rate,
-        "odom_hz_mean": odom_hz_mean,
-        "lidar_hz_mean": lidar_hz_mean,
-        "camera_hz_mean": camera_hz_mean,
-        "power_mode": power_mode,
-        "seed": seed,
-        # Mission 2 return-fidelity (Task 13 §3): mean-abs grayscale diff of the home
-        # reference vs home arrival photo [0..1], nullable — NULL on every non-mission2 row
-        # and on red (which stops mid-room and takes no arrival photo). Trended by
-        # baseline_monitor as drift-detection material.
-        "home_photo_similarity": home_photo_similarity,
-    }
-    optional_fields = {k: v for k, v in optional_fields.items() if v is not None}
+    unknown = set(metrics) - set(RUNS_COLUMNS)
+    if unknown:
+        raise TypeError(f"unknown telemetry column(s): {sorted(unknown)} — "
+                        "add to RUNS_COLUMNS (tools/telemetry_logger.py) first")
+    optional_fields = {k: v for k, v in metrics.items() if v is not None}
 
     init_db(db_path)
     conn = sqlite3.connect(db_path)
@@ -135,4 +119,4 @@ def log_run(scenario: str, steps: int, final_x: float, final_y: float,
 # The old TelemetryLogger class was removed in the Session 17 code review fix wave
 # (CR-05/CR-14, 2026-07-19): `mark_scenario_complete` belonged to the deleted
 # ai_scenarios subsystem and `log_sensor_summary` had no callers anywhere. Telemetry
-# is a functions-only module — one write path (log_run), one schema authority below.
+# is a functions-only module — one write path (log_run), one schema authority above.
