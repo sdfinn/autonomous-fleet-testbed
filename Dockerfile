@@ -1,5 +1,6 @@
-# arm64 ROS2 Jazzy nav_fleet build
-# Used by Stage 2 CI: QEMU on GHA ubuntu-latest, native arm64 on Jetson runner (Phase B)
+# arm64 ROS2 Jazzy nav_fleet build — built natively on the Jetson runner (stage-3-arm64),
+# consumed by stage-4-hil (the mission executor runs inside this image on the Jetson).
+# (QEMU emulation retired 2026-07-10; header previously said "Stage 2 / QEMU" — stale.)
 FROM ros:jazzy-ros-base
 
 SHELL ["/bin/bash", "-c"]

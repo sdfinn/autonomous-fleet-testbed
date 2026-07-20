@@ -4,7 +4,8 @@ Validates message schemas for each topic the system publishes/subscribes.
 Isaac Sim must be running with Play pressed for /odom, /scan, /camera/image_raw tests.
 """
 import pytest
-import rclpy
+pytest.importorskip('rclpy', reason='live-ROS tier: needs a ROS2 environment (S17 review CR-23 safety net - a forgotten stage-1 ignore now skips instead of breaking the stage)')
+import rclpy  # noqa: E402
 from rclpy.node import Node
 
 

@@ -9,7 +9,8 @@ The pure classification logic is unit-tested separately in tests/test_goal_retry
 from types import SimpleNamespace
 
 import pytest
-import rclpy  # noqa: F401 — module-level import ensures collection fails without ROS2
+pytest.importorskip('rclpy', reason='live-ROS tier: needs a ROS2 environment (S17 review CR-23 safety net - a forgotten stage-1 ignore now skips instead of breaking the stage)')
+import rclpy  # noqa: F401,E402
 
 from nav_fleet.goal_retry import COLD_ABORT_RETRIES
 from nav_fleet.nav_runner import NavRunner

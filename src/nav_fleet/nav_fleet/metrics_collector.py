@@ -21,6 +21,13 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import Image, LaserScan
 
+# A scan return closer than this is scored as a collision (S17 review CR-10: was a bare
+# magic number). Derivation: the lidar sits inside the chassis footprint; the URDF's
+# body half-width is ~0.11 m, so a real obstacle can never legitimately return closer
+# than ~0.12 m — anything nearer means contact (or a self-return, which the URDF's
+# camera-geometry removal already prevents).
+COLLISION_RANGE_M = 0.12
+
 
 class MetricsCollector(Node):
     def __init__(self):
@@ -80,7 +87,7 @@ class MetricsCollector(Node):
             'scan_hz': round(hz(self._scan_times), 1),
             'camera_hz': round(hz(self._camera_times), 1),
             'min_scan_range_m': round(self._min_range, 3),
-            'collision_detected': self._min_range < 0.12
+            'collision_detected': self._min_range < COLLISION_RANGE_M
         }
         return self.last_metrics
 

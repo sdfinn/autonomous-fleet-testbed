@@ -16,7 +16,8 @@
 import os
 
 import pytest
-import rclpy  # noqa: F401 — module-level import ensures collection fails without ROS2
+pytest.importorskip('rclpy', reason='live-ROS tier: needs a ROS2 environment (S17 review CR-23 safety net - a forgotten stage-1 ignore now skips instead of breaking the stage)')
+import rclpy  # noqa: F401,E402
 
 from nav_fleet.nav_runner import NavRunner
 from nav_fleet.metrics_collector import MetricsCollector
