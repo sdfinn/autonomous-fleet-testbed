@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>autonomous-fleet-testbed — CI/CD &amp; Autonomy Architecture</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  background: #f5f4ef; color: #1a1a18; min-height: 100vh; padding: 24px 16px 48px;
+}
+h1 { font-size: 18px; font-weight: 600; text-align: center; margin-bottom: 3px; }
+.subtitle { font-size: 11px; color: #5f5e5a; text-align: center; margin-bottom: 20px; }
+.badge {
+  display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 8px;
+  border-radius: 99px; margin: 0 3px 12px; border: 1px solid;
+}
+.badges { text-align: center; margin-bottom: 20px; }
+.layout { display: flex; gap: 20px; align-items: flex-start; max-width: 1140px; margin: 0 auto; }
+.diagram-col { flex: 0 0 auto; }
+.detail-col {
+  flex: 1 1 auto; min-width: 300px; max-width: 440px;
+  background: #fff; border: 1px solid #d3d1c7; border-radius: 12px;
+  padding: 20px; position: sticky; top: 24px;
+}
+.detail-col .dtag {
+  display: inline-block; font-size: 10px; font-weight: 600;
+  padding: 2px 8px; border-radius: 99px; margin-bottom: 8px;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.detail-col h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.detail-col p { font-size: 12.5px; line-height: 1.65; color: #3d3d3a; margin-bottom: 10px; }
+.detail-col ul { padding-left: 16px; margin-bottom: 10px; }
+.detail-col li { font-size: 12px; line-height: 1.6; color: #3d3d3a; margin-bottom: 2px; }
+.detail-col pre {
+  background: #f4f3ee; border: 1px solid #d3d1c7; border-radius: 6px;
+  padding: 9px 11px; font-size: 10.5px; line-height: 1.55;
+  font-family: "Courier New", monospace; overflow-x: auto; margin-bottom: 10px; white-space: pre;
+}
+.detail-col h3 {
+  font-size: 10px; font-weight: 700; color: #5f5e5a; margin: 10px 0 4px;
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.req-row { display: flex; gap: 8px; margin-bottom: 4px; align-items: flex-start; }
+.req-id {
+  font-size: 10px; font-weight: 700; font-family: monospace;
+  background: #eeedfe; color: #534ab7; padding: 1px 5px; border-radius: 4px; white-space: nowrap;
+}
+.req-text { font-size: 12px; color: #3d3d3a; line-height: 1.5; }
+.placeholder { color: #888780; font-size: 13px; font-style: italic; }
+.node { cursor: pointer; }
+.node:hover rect { opacity: 0.78; }
+@media (max-width: 780px) {
+  .layout { flex-direction: column; }
+  .detail-col { position: static; max-width: 100%; }
+}
+</style>
+</head>
+<body>
+<h1>autonomous-fleet-testbed &#x2014; CI/CD &amp; Autonomy Architecture</h1>
+<p class="subtitle">As built &#xB7; click any node for what it does, why it exists, and the real commands behind it</p>
+<div class="badges">
+  <span class="badge" style="color:#0F6E56;background:#E1F5EE;border-color:#0F6E56">Ubuntu 24.04</span>
+  <span class="badge" style="color:#534AB7;background:#EEEDFE;border-color:#534AB7">ROS2 Jazzy</span>
+  <span class="badge" style="color:#0F6E56;background:#E1F5EE;border-color:#0F6E56">Gazebo Harmonic</span>
+  <span class="badge" style="color:#993C1D;background:#FAECE7;border-color:#993C1D">Jetson Orin Nano runner</span>
+  <span class="badge" style="color:#534AB7;background:#EEEDFE;border-color:#534AB7">RTX 5080 runner</span>
+  <span class="badge" style="color:#854F0B;background:#FAEEDA;border-color:#854F0B">Waveshare UGV PT (on order)</span>
+</div>
+
+<div class="layout">
+  <div class="diagram-col">
+<svg width="560" viewBox="0 0 560 1000" xmlns="http://www.w3.org/2000/svg" style="display:block;">
+<defs>
+  <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- Trigger -->
+<g class="node" id="n-trigger" onclick="showNode('trigger')">
+  <rect x="155" y="20" width="250" height="44" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+  <text x="280" y="37" text-anchor="middle" font-size="13" font-weight="600" fill="#444441" font-family="inherit">Push to main / PR to main</text>
+  <text x="280" y="54" text-anchor="middle" font-size="11" fill="#5f5e5a" font-family="inherit">runs queue &#xB7; docs-only skips 3&#x2013;4</text>
+</g>
+<line x1="280" y1="64" x2="280" y2="98" stroke="#888780" stroke-width="1.2" marker-end="url(#arr)"/>
+
+<!-- Stage 0 -->
+<rect x="30" y="98" width="500" height="90" rx="10" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.8"/>
+<text x="50" y="117" font-size="11" font-weight="600" fill="#633806" font-family="inherit">Stage 0 &#x2014; requirements traceability gate (hosted runner)</text>
+<g class="node" id="n-reqs" onclick="showNode('reqs')">
+  <rect x="48" y="126" width="148" height="48" rx="7" fill="#EF9F27" fill-opacity=".2" stroke="#BA7517" stroke-width="0.7"/>
+  <text x="122" y="145" text-anchor="middle" font-size="12" font-weight="600" fill="#633806" font-family="inherit">Requirements YAML</text>
+  <text x="122" y="161" text-anchor="middle" font-size="10" fill="#854F0B" font-family="inherit">BR + SC &#x2192; tests</text>
+</g>
+<g class="node" id="n-trace" onclick="showNode('trace')">
+  <rect x="206" y="126" width="148" height="48" rx="7" fill="#EF9F27" fill-opacity=".2" stroke="#BA7517" stroke-width="0.7"/>
+  <text x="280" y="145" text-anchor="middle" font-size="12" font-weight="600" fill="#633806" font-family="inherit">Traceability gate</text>
+  <text x="280" y="161" text-anchor="middle" font-size="10" fill="#854F0B" font-family="inherit">check_traceability.py</text>
+</g>
+<g class="node" id="n-br03" onclick="showNode('br03')">
+  <rect x="364" y="126" width="148" height="48" rx="7" fill="#EF9F27" fill-opacity=".2" stroke="#BA7517" stroke-width="0.7"/>
+  <text x="438" y="145" text-anchor="middle" font-size="12" font-weight="600" fill="#633806" font-family="inherit">Known gap: BR-03</text>
+  <text x="438" y="161" text-anchor="middle" font-size="10" fill="#854F0B" font-family="inherit">honest continue-on-error</text>
+</g>
+<line x1="280" y1="188" x2="280" y2="220" stroke="#888780" stroke-width="1.2" marker-end="url(#arr)"/>
+
+<!-- Stage 1 -->
+<rect x="30" y="220" width="500" height="90" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="50" y="239" font-size="11" font-weight="600" fill="#3C3489" font-family="inherit">Stage 1 &#x2014; code quality (hosted runner)</text>
+<g class="node" id="n-lint" onclick="showNode('lint')">
+  <rect x="48" y="248" width="148" height="48" rx="7" fill="#7F77DD" fill-opacity=".2" stroke="#534AB7" stroke-width="0.7"/>
+  <text x="122" y="267" text-anchor="middle" font-size="12" font-weight="600" fill="#3C3489" font-family="inherit">Lint</text>
+  <text x="122" y="283" text-anchor="middle" font-size="10" fill="#534AB7" font-family="inherit">flake8 &#xB7; ament tools</text>
+</g>
+<g class="node" id="n-unit" onclick="showNode('unit')">
+  <rect x="206" y="248" width="148" height="48" rx="7" fill="#7F77DD" fill-opacity=".2" stroke="#534AB7" stroke-width="0.7"/>
+  <text x="280" y="267" text-anchor="middle" font-size="12" font-weight="600" fill="#3C3489" font-family="inherit">Unit tests</text>
+  <text x="280" y="283" text-anchor="middle" font-size="10" fill="#534AB7" font-family="inherit">pytest &#xB7; no live ROS</text>
+</g>
+<g class="node" id="n-tiering" onclick="showNode('tiering')">
+  <rect x="364" y="248" width="148" height="48" rx="7" fill="#7F77DD" fill-opacity=".2" stroke="#534AB7" stroke-width="0.7"/>
+  <text x="438" y="267" text-anchor="middle" font-size="12" font-weight="600" fill="#3C3489" font-family="inherit">Test tiering</text>
+  <text x="438" y="283" text-anchor="middle" font-size="10" fill="#534AB7" font-family="inherit">which tests run where</text>
+</g>
+<line x1="280" y1="310" x2="280" y2="342" stroke="#888780" stroke-width="1.2" marker-end="url(#arr)"/>
+
+<!-- Stage 2 -->
+<rect x="30" y="342" width="500" height="112" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="50" y="361" font-size="11" font-weight="600" fill="#085041" font-family="inherit">Stage 2 &#x2014; Gazebo Harmonic sim navigation (self-hosted x86 GPU)</text>
+<g class="node" id="n-gazebo" onclick="showNode('gazebo')">
+  <rect x="48" y="370" width="148" height="70" rx="7" fill="#1D9E75" fill-opacity=".18" stroke="#0F6E56" stroke-width="0.7"/>
+  <text x="122" y="389" text-anchor="middle" font-size="12" font-weight="600" fill="#085041" font-family="inherit">Headless sim stack</text>
+  <text x="122" y="405" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">Gazebo + Nav2 + EKF</text>
+  <text x="122" y="419" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">bedroom world</text>
+  <text x="122" y="433" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">orphan sweep first</text>
+</g>
+<g class="node" id="n-navtests" onclick="showNode('navtests')">
+  <rect x="206" y="370" width="148" height="70" rx="7" fill="#1D9E75" fill-opacity=".18" stroke="#0F6E56" stroke-width="0.7"/>
+  <text x="280" y="389" text-anchor="middle" font-size="12" font-weight="600" fill="#085041" font-family="inherit">Nav + mission tests</text>
+  <text x="280" y="405" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">BR-01/02/10 asserts</text>
+  <text x="280" y="419" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">Mission 1 + Mission 2</text>
+  <text x="280" y="433" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">ground-truth arrival</text>
+</g>
+<g class="node" id="n-telemetry" onclick="showNode('telemetry')">
+  <rect x="364" y="370" width="148" height="70" rx="7" fill="#1D9E75" fill-opacity=".18" stroke="#0F6E56" stroke-width="0.7"/>
+  <text x="438" y="389" text-anchor="middle" font-size="12" font-weight="600" fill="#085041" font-family="inherit">Telemetry</text>
+  <text x="438" y="405" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">SQLite FLEET_DB</text>
+  <text x="438" y="419" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">one row per run</text>
+  <text x="438" y="433" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">runner + power mode</text>
+</g>
+<line x1="280" y1="454" x2="280" y2="486" stroke="#888780" stroke-width="1.2" marker-end="url(#arr)"/>
+
+<!-- Stage 3 -->
+<rect x="30" y="486" width="500" height="90" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="50" y="505" font-size="11" font-weight="600" fill="#3C3489" font-family="inherit">Stage 3 &#x2014; native arm64 build (self-hosted Jetson runner &#xB7; QEMU retired)</text>
+<g class="node" id="n-armbuild" onclick="showNode('armbuild')">
+  <rect x="48" y="514" width="148" height="48" rx="7" fill="#7F77DD" fill-opacity=".2" stroke="#534AB7" stroke-width="0.7"/>
+  <text x="122" y="533" text-anchor="middle" font-size="12" font-weight="600" fill="#3C3489" font-family="inherit">Docker build on-device</text>
+  <text x="122" y="549" text-anchor="middle" font-size="10" fill="#534AB7" font-family="inherit">the Jetson builds it</text>
+</g>
+<g class="node" id="n-cache" onclick="showNode('cache')">
+  <rect x="206" y="514" width="148" height="48" rx="7" fill="#7F77DD" fill-opacity=".2" stroke="#534AB7" stroke-width="0.7"/>
+  <text x="280" y="533" text-anchor="middle" font-size="12" font-weight="600" fill="#3C3489" font-family="inherit">Registry layer cache</text>
+  <text x="280" y="549" text-anchor="middle" font-size="10" fill="#534AB7" font-family="inherit">659s cold &#x2192; ~1&#x2013;2 min warm</text>
+</g>
+<g class="node" id="n-ghcr" onclick="showNode('ghcr')">
+  <rect x="364" y="514" width="148" height="48" rx="7" fill="#7F77DD" fill-opacity=".2" stroke="#534AB7" stroke-width="0.7"/>
+  <text x="438" y="533" text-anchor="middle" font-size="12" font-weight="600" fill="#3C3489" font-family="inherit">GHCR image :sha</text>
+  <text x="438" y="549" text-anchor="middle" font-size="10" fill="#534AB7" font-family="inherit">what Stage 4 deploys</text>
+</g>
+<line x1="280" y1="576" x2="280" y2="608" stroke="#888780" stroke-width="1.2" marker-end="url(#arr)"/>
+
+<!-- Stage 4 -->
+<rect x="30" y="608" width="500" height="112" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="50" y="627" font-size="11" font-weight="600" fill="#085041" font-family="inherit">Stage 4 &#x2014; hardware-in-the-loop (Gazebo on x86 &#x2194; Nav2 on the real Jetson)</text>
+<g class="node" id="n-hilgate" onclick="showNode('hilgate')">
+  <rect x="48" y="636" width="148" height="70" rx="7" fill="#1D9E75" fill-opacity=".18" stroke="#0F6E56" stroke-width="0.7"/>
+  <text x="122" y="655" text-anchor="middle" font-size="12" font-weight="600" fill="#085041" font-family="inherit">HIL stack gate</text>
+  <text x="122" y="671" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">sim on x86</text>
+  <text x="122" y="685" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">Nav2 on Jetson (SSH)</text>
+  <text x="122" y="699" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">multicast DDS link</text>
+</g>
+<g class="node" id="n-mission2" onclick="showNode('mission2')">
+  <rect x="206" y="636" width="148" height="70" rx="7" fill="#1D9E75" fill-opacity=".18" stroke="#0F6E56" stroke-width="0.7"/>
+  <text x="280" y="655" text-anchor="middle" font-size="12" font-weight="600" fill="#085041" font-family="inherit">Mission 2 day</text>
+  <text x="280" y="671" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">no_ball &#x2192; yellow &#x2192; red</text>
+  <text x="280" y="685" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">runs in the arm64 image</text>
+  <text x="280" y="699" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">15W deployment power</text>
+</g>
+<g class="node" id="n-evidence" onclick="showNode('evidence')">
+  <rect x="364" y="636" width="148" height="70" rx="7" fill="#1D9E75" fill-opacity=".18" stroke="#0F6E56" stroke-width="0.7"/>
+  <text x="438" y="655" text-anchor="middle" font-size="12" font-weight="600" fill="#085041" font-family="inherit">Evidence artifact</text>
+  <text x="438" y="671" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">mission photos</text>
+  <text x="438" y="685" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">judged checklists</text>
+  <text x="438" y="699" text-anchor="middle" font-size="10" fill="#0F6E56" font-family="inherit">Jetson Nav2 log</text>
+</g>
+<line x1="280" y1="720" x2="280" y2="752" stroke="#888780" stroke-width="1.2" marker-end="url(#arr)"/>
+
+<!-- Stage 5 -->
+<rect x="30" y="752" width="500" height="90" rx="10" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+<text x="50" y="771" font-size="11" font-weight="600" fill="#444441" font-family="inherit">Stage 5 &#x2014; reports + drift detection (two independent paths)</text>
+<g class="node" id="n-simreports" onclick="showNode('simreports')">
+  <rect x="48" y="780" width="148" height="48" rx="7" fill="#888780" fill-opacity=".18" stroke="#5F5E5A" stroke-width="0.7"/>
+  <text x="122" y="799" text-anchor="middle" font-size="12" font-weight="600" fill="#444441" font-family="inherit">Workstation reports</text>
+  <text x="122" y="815" text-anchor="middle" font-size="10" fill="#5F5E5A" font-family="inherit">after Stage 2 &#xB7; every push</text>
+</g>
+<g class="node" id="n-hilreports" onclick="showNode('hilreports')">
+  <rect x="206" y="780" width="148" height="48" rx="7" fill="#888780" fill-opacity=".18" stroke="#5F5E5A" stroke-width="0.7"/>
+  <text x="280" y="799" text-anchor="middle" font-size="12" font-weight="600" fill="#444441" font-family="inherit">HIL reports</text>
+  <text x="280" y="815" text-anchor="middle" font-size="10" fill="#5F5E5A" font-family="inherit">runs even on Stage 4 fail</text>
+</g>
+<g class="node" id="n-drift" onclick="showNode('drift')">
+  <rect x="364" y="780" width="148" height="48" rx="7" fill="#888780" fill-opacity=".18" stroke="#5F5E5A" stroke-width="0.7"/>
+  <text x="438" y="799" text-anchor="middle" font-size="12" font-weight="600" fill="#444441" font-family="inherit">Drift detection</text>
+  <text x="438" y="815" text-anchor="middle" font-size="10" fill="#5F5E5A" font-family="inherit">&#x3C3;-bands over history</text>
+</g>
+<line x1="280" y1="842" x2="280" y2="874" stroke="#888780" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+
+<!-- Stage 6 (future) -->
+<rect x="30" y="874" width="500" height="106" rx="10" fill="#FAECE7" stroke="#993C1D" stroke-width="0.8" stroke-dasharray="6 4"/>
+<text x="50" y="893" font-size="11" font-weight="600" fill="#712B13" font-family="inherit">Stage 6 &#x2014; real-robot deploy &#xB7; FUTURE (Session 18, rover on order)</text>
+<g class="node" id="n-deploy" onclick="showNode('deploy')">
+  <rect x="48" y="901" width="148" height="66" rx="7" fill="#D85A30" fill-opacity=".16" stroke="#993C1D" stroke-width="0.7" stroke-dasharray="4 3"/>
+  <text x="122" y="920" text-anchor="middle" font-size="12" font-weight="600" fill="#712B13" font-family="inherit">Deploy to rover</text>
+  <text x="122" y="936" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">same GHCR image</text>
+  <text x="122" y="950" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">Waveshare UGV PT</text>
+</g>
+<g class="node" id="n-sim2real" onclick="showNode('sim2real')">
+  <rect x="206" y="901" width="148" height="66" rx="7" fill="#D85A30" fill-opacity=".16" stroke="#993C1D" stroke-width="0.7" stroke-dasharray="4 3"/>
+  <text x="280" y="920" text-anchor="middle" font-size="12" font-weight="600" fill="#712B13" font-family="inherit">Sim-to-real compare</text>
+  <text x="280" y="936" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">same missions</text>
+  <text x="280" y="950" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">same telemetry schema</text>
+</g>
+<g class="node" id="n-roadmap" onclick="showNode('roadmap')">
+  <rect x="364" y="901" width="148" height="66" rx="7" fill="#D85A30" fill-opacity=".16" stroke="#993C1D" stroke-width="0.7" stroke-dasharray="4 3"/>
+  <text x="438" y="920" text-anchor="middle" font-size="12" font-weight="600" fill="#712B13" font-family="inherit">Roadmap</text>
+  <text x="438" y="936" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">R1 &#x2192; R5 ladder</text>
+  <text x="438" y="950" text-anchor="middle" font-size="10" fill="#993C1D" font-family="inherit">agentic layer next</text>
+</g>
+</svg>
+  </div>
+
+  <div class="detail-col" id="detail-panel">
+    <p class="placeholder">Click any node in the diagram for what it does, why it exists, and the real commands behind it. Everything here describes the pipeline as actually built — sources of truth are <code>.github/workflows/ci.yml</code>, <code>scripts/hil_stage.sh</code>, and <code>requirements/traceability.yaml</code>.</p>
+  </div>
+</div>
+
+<script>
+var NODES = {
+"trigger":{title:"Push to main / PR to main",tag:"Workflow trigger",tagColor:"#888780",tagBg:"#F1EFE8",body:"The pipeline fires on pushes to main and on pull requests targeting main — nothing else. Pushing a feature branch alone runs nothing; open a (draft) PR to exercise CI from a branch.",sections:[{heading:"Trigger + shared-hardware queue",code:"on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n\nconcurrency:\n  group: fleet-ci-shared-hardware\n  cancel-in-progress: false   # queue, never overlap"},{heading:"Why the concurrency group",items:["Stages 2, 4, 5 all run on ONE physical workstation and ONE Jetson", "Two runs at once literally tear down each other's sim (it happened — merge night 2026-07-18)", "Runs queue instead: correctness over latency"]},{heading:"Docs-only pushes",items:["A paths-filter checks whether the push touches anything the arm64 image COPYs (Dockerfile, requirements-ci.txt, src/, tools/, ci.yml itself)", "Docs-only pushes skip Stage 3, and Stage 4 inherits the skip", "Stages 0–2 + workstation reports still run on every push"]}]},
+"reqs":{title:"Requirements YAML",tag:"Stage 0 — Requirements",tagColor:"#854F0B",tagBg:"#FAEEDA",body:"Behavior (BR) and scene/sensor (SC) requirements live as data in requirements/traceability.yaml. Every ID must map to at least one named pytest test.",sections:[{heading:"The requirements as they exist today",reqs:[["BR-01","Robot reaches goal within 0.15 m Euclidean distance"],["BR-02","Zero collisions per navigation run"],["BR-03","Recovery behavior completes within 10 s if triggered (KNOWN GAP — see the third node)"],["BR-04","/robot_001/odom publishes at ≥ 50 Hz"],["BR-07","nav_success_rate ≥ 95% over rolling 20 runs"],["BR-10","Nav2 behavior tree returns SUCCESS"],["SC-04","/robot_001/scan publishes at ≥ 10 Hz"],["SC-05","/robot_001/camera/image_raw publishes at ≥ 10 Hz"]]},{heading:"Design rule",items:["Thresholds are data (YAML), never hardcoded in Python", "Per-robot capability differences use robot_profiles/*.yaml skips — implementation gaps do NOT"]}]},
+"trace":{title:"Traceability gate",tag:"Stage 0 — Requirements",tagColor:"#854F0B",tagBg:"#FAEEDA",body:"A zero-robot-specific CLI validates that every requirement ID maps to a real, existing test before anything builds. Designed to be reusable outside this project.",sections:[{heading:"The actual CI step",code:"python tools/check_traceability.py \\\n  requirements/traceability.yaml \\\n  tests/ \\\n  --profile robot_profiles/jetson_ugv_pt.yaml \\\n  --json > reports/traceability_latest.json"},{heading:"What it checks",items:["Every requirement lists ≥ 1 test", "Every listed test actually exists in tests/", "Profile-declared hardware skips are honored", "JSON report uploaded as a CI artifact every run"]}]},
+"br03":{title:"Known gap: BR-03 (recovery)",tag:"Stage 0 — Requirements",tagColor:"#854F0B",tagBg:"#FAEEDA",body:"BR-03 (recovery behavior) has no working test because recovery behaviors (spin/backup) are genuinely broken — 'Pose Goes Off Grid' on every attempt, root cause not yet found. The gate reports this honestly instead of hiding it.",sections:[{heading:"How it is handled",code:"- name: Traceability gate\n  continue-on-error: true\n  # BR-03 is a real, tracked gap — NOT silently\n  # skipped via a robot-profile (those are for\n  # hardware capability differences only)"},{heading:"The honesty rule",items:["A tracked implementation gap stays visible, never silently green", "Remove continue-on-error the day BR-03 has a real test", "Deferred work is tracked in Release1Todo.md"]}]},
+"lint":{title:"Lint",tag:"Stage 1 — Code quality",tagColor:"#534AB7",tagBg:"#EEEDFE",body:"Python-first project: flake8 (99-char lines) over the nav_fleet package plus the ament lint toolset, on a GitHub-hosted runner — no self-hosted hardware needed for this tier.",sections:[{heading:"The actual commands",code:"# ros-jazzy-ament-flake8 / -pep257 / -copyright\ncd src/nav_fleet\npython -m flake8 nav_fleet/ --max-line-length=99\npython -m flake8 test/   --max-line-length=99"},{heading:"Why hosted runners here",items:["Stages 0–1 need no GPU, no sim, no robot — a fork gets these gates for free", "Fail-fast: cheap checks gate the expensive hardware stages"]}]},
+"unit":{title:"Unit tests (no live ROS)",tag:"Stage 1 — Code quality",tagColor:"#534AB7",tagBg:"#EEEDFE",body:"The pure-Python test suite runs on the hosted runner with live-ROS test files explicitly excluded — they need a running sim + DDS and belong to Stages 2/4.",sections:[{heading:"The actual invocation",code:"python -m pytest tests/ -v \\\n  --ignore=tests/test_ros2_contracts.py \\\n  --ignore=tests/test_navigation.py \\\n  --ignore=tests/test_mission_run.py \\\n  --ignore=tests/test_mission2.py \\\n  --ignore=tests/test_nav_runner.py \\\n  -k \"not integration\""},{heading:"The twice-bitten rule",items:["Any test file that imports rclpy at module level MUST be in this ignore list", "Forgetting it silently breaks Stage 1 on a bare runner (no ROS2 installed at all)", "It has bitten twice; the rule is now written down everywhere"]}]},
+"tiering":{title:"Test tiering",tag:"Stage 1 — Code quality",tagColor:"#534AB7",tagBg:"#EEEDFE",body:"Every test runs at exactly one tier — the cheapest tier that can catch what it checks. That is the whole pipeline philosophy in one node.",sections:[{heading:"Which tests run where",items:["Stage 1 (hosted, seconds): pure-Python unit tests — detector math, mission data model, harness logic", "Stage 2 (x86 sim, minutes): test_navigation, test_mission_run, test_mission2, test_nav_runner — live Gazebo + Nav2", "Stage 4 (real Jetson, ~15 min): the Mission 2 day — the deployment mission on deployment silicon", "Local Tier-1 (your machine, ~1 s build): everything Stage 1 runs, plus live sim work before ever touching CI"]},{heading:"Rules of thumb",items:["x86 bare metal finds ~90% of bugs at ~1 s build cost", "Never debug a new CI stage and a new mission at the same time"]}]},
+"gazebo":{title:"Headless sim stack",tag:"Stage 2 — Gazebo sim",tagColor:"#0F6E56",tagBg:"#E1F5EE",body:"Gazebo Harmonic (server only), the ros_gz bridge, robot_state_publisher, an EKF (wheel odom + IMU yaw-rate fusion), and full Nav2 — launched headless on the self-hosted RTX 5080 workstation against a real measured bedroom world.",sections:[{heading:"The actual launch",code:"ros2 launch src/nav_fleet/launch/sim_launch.py \\\n  headless:=true > /tmp/stage2_sim.log 2>&1 &\n# output captured to a file: a backgrounded\n# step's stdout is lost otherwise; uploaded\n# as a CI artifact every run"},{heading:"The orphan sweep (before launch)",code:"pkill -9 -f \"parameter_bridge|component_container_isolated|ekf_node\" || true\npkill -9 -f \"static_transform_publisher|robot_state_publisher\" || true\npkill -f \"gz sim\" || true"},{heading:"Why the sweep exists",items:["gz-transport has NO DDS domain isolation — an orphaned bridge from a crashed local run attaches to any new Gazebo and re-publishes /clock + TF into the job's domain", "One red run had 8,716 'jump back in time' warnings from exactly this", "The runner shares the physical workstation with local dev work — sweep first, always"]}]},
+"navtests":{title:"Nav + mission integration tests",tag:"Stage 2 — Gazebo sim",tagColor:"#0F6E56",tagBg:"#E1F5EE",body:"Live navigation tests assert the BR requirements against the running sim, then both missions run end-to-end: Mission 1 (navigate, photograph, return) and Mission 2 (camera-reactive round trip with HSV ball detection).",sections:[{heading:"The actual invocation",code:"python -m pytest tests/test_navigation.py \\\n  tests/test_mission_run.py \\\n  tests/test_mission2.py \\\n  tests/test_nav_runner.py \\\n  -v --timeout=300"},{heading:"What gets asserted",items:["BR-01/BR-10: NavigateToPose result SUCCEEDED within tolerance", "BR-02: zero collisions during the run", "Gazebo ground-truth arrival check — the sim's own pose, not just Nav2's claim (added after eyes-on review caught a false PASS)", "Mission 2 reactions: red ball → stop, yellow ball → return home; judged with min-travel preconditions so a parked robot can never vacuously pass"]}]},
+"telemetry":{title:"Telemetry (FLEET_DB)",tag:"Stage 2 — Gazebo sim",tagColor:"#0F6E56",tagBg:"#E1F5EE",body:"Every mission/test run logs one row into a single SQLite database that lives OUTSIDE the job workspace, so history accumulates across CI runs. Every downstream tool — reports, dashboard, drift detection, the agentic loop — reads the same DB.",sections:[{heading:"The shared store",code:"FLEET_DB=/home/mike/fleet-ci-data/fleet_runs.db\n# (repo default: reports/fleet_runs.db)\n# one `runs` row per mission/test run"},{heading:"What a row records",items:["mission, result (PASS/FAIL), scenario, seed", "runner_type: local | ci | hil_jetson", "power_mode: the Jetson's nvpmodel state (15W / 25W)", "nav metrics: position error, time-to-goal, collisions, topic rates"]},{heading:"Why runner_type + power_mode matter",items:["Baselines are sliced per (runner_type, power_mode) — a 15W Jetson run is never compared against a 25W workstation baseline"]}]},
+"armbuild":{title:"Docker build on-device",tag:"Stage 3 — arm64 build",tagColor:"#534AB7",tagBg:"#EEEDFE",body:"The arm64 image is built natively ON the Jetson Orin Nano, registered as a self-hosted GitHub Actions runner. QEMU emulation was retired after measuring ~24 min emulated vs ~10 min native cold.",sections:[{heading:"The actual step",code:"- uses: docker/build-push-action@v6\n  with:\n    push: true\n    tags: |\n      ghcr.io/<repo>:${{ github.sha }}\n      ghcr.io/<repo>:latest"},{heading:"Fail-fast ordering",items:["Stage 3 needs Stage 2 green first — never spend ~10 real minutes building an image whose nav logic is already known-broken", "The image COPYs exactly: Dockerfile, requirements-ci.txt, src/, tools/"]}]},
+"cache":{title:"Registry layer cache",tag:"Stage 3 — arm64 build",tagColor:"#534AB7",tagBg:"#EEEDFE",body:"Docker layer cache lives in the registry (a buildcache tag on GHCR), so even a freshly-wiped Jetson warms up from the network. Measured band: 659 s truly cold, ~1–2 min registry-warm, faster still locally warm.",sections:[{heading:"The cache wiring",code:"cache-from: type=registry,\n  ref=ghcr.io/<repo>:buildcache-v2\ncache-to:   type=registry,\n  ref=ghcr.io/<repo>:buildcache-v2,mode=max"},{heading:"Layer economics",items:["One layer per Dockerfile instruction; a source change invalidates only COPY-src and later layers", "apt/pip layers stay cached — that is the whole difference between 659 s and ~1 min", "Reproducibility-from-nothing is PROVEN: the cache ref was deliberately bumped and the cold rebuild succeeded (2026-07-18)"]}]},
+"ghcr":{title:"GHCR image :sha",tag:"Stage 3 — arm64 build",tagColor:"#534AB7",tagBg:"#EEEDFE",body:"Every green build pushes an immutable sha-tagged arm64 image. This is not just an artifact — it is exactly what Stage 4 pulls and runs on the Jetson. Approve what deploys; deploy what you approved.",sections:[{heading:"Tagging",code:"ghcr.io/<repo>:<full-git-sha>   # immutable\nghcr.io/<repo>:latest           # main tip"},{heading:"PR gotcha (learned the hard way)",items:["pull_request-triggered runs tag images with the synthetic MERGE sha, not the branch head sha — read the tag from the run env, never construct it by hand"]}]},
+"hilgate":{title:"HIL stack gate",tag:"Stage 4 — HIL",tagColor:"#0F6E56",tagBg:"#E1F5EE",body:"scripts/hil_stage.sh brings the two halves up: Gazebo (server only) on the x86 workstation, Nav2 on the real Jetson over SSH, talking multicast DDS across a shared Ethernet link. The same script runs from a local shell and from CI — debug locally first.",sections:[{heading:"The sequence (one job, SSH-orchestrated)",code:"scripts/hil_stage.sh discover    # DHCP lease,\n                                 # never hard-coded\nscripts/hil_stage.sh power-mode  # 25W for builds\nscripts/hil_stage.sh sync <sha>  # exact commit\nscripts/hil_stage.sh run         # sim-up (60 s)\n                                 # + nav2-up (120 s)"},{heading:"Hard-won rules baked into the script",items:["Non-interactive SSH skips .bashrc — every remote command sources its own ROS env", "Per-run Nav2 log names — a fixed name once overwrote crash evidence", "The stack gate has NO retry: a mission failure must surface RED", "Power bracket: build at 25W, run the mission at 15W (deployment power, recorded in telemetry)"]}]},
+"mission2":{title:"Mission 2 day",tag:"Stage 4 — HIL",tagColor:"#0F6E56",tagBg:"#E1F5EE",body:"tools/mission2_day.py runs the deployment mission three ways in one sequence: no_ball (verified round trip), yellow (stop at 0.8 m, photograph, bring itself home), red (stop at 1.3 m, photograph, STAY). The mission executes INSIDE the Stage-3 GHCR image on the Jetson — consuming the arm64 pipeline edge for real.",sections:[{heading:"The choreography",items:["no_ball: home reference photo → drive to the floor marker → marker photo → self-return → arrival photo that must MATCH the reference", "The yellow ball is placed DURING no_ball's return leg, behind the retreating robot (reactions are outbound-only)", "yellow → red swap happens during yellow's return leg the same way", "HSV color detection at ~10 Hz — classical thresholds, zero training data"]},{heading:"Judged, not self-graded",items:["Ground-truth judges (Gazebo pose) enforce stop bands and min-travel (≥ 0.5 m) so a parked robot can never vacuously pass", "The same orchestrator is the CI step, the GUI demo command, and the future real-robot-day runner"]}]},
+"evidence":{title:"Evidence artifact",tag:"Stage 4 — HIL",tagColor:"#0F6E56",tagBg:"#E1F5EE",body:"Every Stage-4 run uploads its evidence whether it passed or failed: the robot's own mission photos, per-run judged checklists, the workstation sim log, and the Jetson-side Nav2 log (the autopsy).",sections:[{heading:"What lands in the artifact",items:["Mission photos (home reference / marker / reaction / arrival)", "day_no_ball.out / day_yellow.out / day_red.out — judged checklists", "sim.log (workstation half)", "nav2_hil_<timestamp>.log fetched from the Jetson — added after two crash autopsies were lost to /tmp wipes"]},{heading:"Teardown is unconditional",code:"- name: Teardown (both sides)\n  if: always()\n  run: scripts/hil_stage.sh teardown\n# full orphan pattern on both machines —\n# leftovers poison the next run's DDS domain"}]},
+"simreports":{title:"Workstation reports",tag:"Stage 5 — Reports",tagColor:"#5F5E5A",tagBg:"#F1EFE8",body:"The sim-path report job runs after Stage 2 on every push — docs-only pushes included — so drift recording never waits on the slower arm64+HIL chain.",sections:[{heading:"What it produces",items:["PDF test report (generate_test_report.py) from FLEET_DB", "Streamlit dashboard (dashboard/app.py) — 5 tabs over the same DB", "Telemetry schema validation (validate_telemetry.py, pandera)"]}]},
+"hilreports":{title:"HIL reports",tag:"Stage 5 — Reports",tagColor:"#5F5E5A",tagBg:"#F1EFE8",body:"The hardware-path report job runs after Stage 4 — INCLUDING when Stage 4 fails. A FAIL row is exactly the data drift detection needs most; fair-weather reporting was fixed deliberately (and proved itself the same night).",sections:[{heading:"Why report on failure",items:["FAIL rows reach the drift DB with runner_type=hil_jetson and the power mode that produced them", "A red mission with no telemetry row would be invisible to trend analysis", "The report step runs whenever Stage 4 actually ran, pass or fail"]}]},
+"drift":{title:"Drift detection",tag:"Stage 5 — Reports",tagColor:"#5F5E5A",tagBg:"#F1EFE8",body:"baseline_monitor.py compares each new run against a rolling 20-run baseline of the SAME slice — (runner_type, power_mode) — and grades deviations in sigma bands. Thresholds live in config/drift_config.yaml as data, never in code.",sections:[{heading:"The sigma bands",code:"history_window: 20\nsigma:\n  info: 2.0\n  warning: 3.0\n  error: 4.0\n  critical: 5.0\npost_merge_sensitivity:\n  runs: 5\n  multiplier: 0.7  # tighter right after a commit"},{heading:"Watched metrics (each mapped to a requirement)",items:["nav_success_rate (BR-07), mean_position_error (BR-01)", "collision_rate (BR-02), mean_time_to_goal", "odom / lidar / camera Hz (BR-04, SC-04, SC-05)", "CI stage wall times — pipeline self-health, warn-only"]}]},
+"deploy":{title:"Deploy to rover (FUTURE)",tag:"Stage 6 — future (Session 18)",tagColor:"#993C1D",tagBg:"#FAECE7",body:"Planned, not built: the same sha-tagged GHCR image Stage 4 already proves on the Jetson gets deployed to the physical rover — a Waveshare UGV Rover PT (Jetson Orin Nano host), on order.",sections:[{heading:"Why it is low-risk by design",items:["Stage 4 already runs the deployment mission, in the deployment container, on the deployment silicon, at deployment power", "The robot adds real motors and sensors — not a new software stack", "Sim-fidelity deltas are catalogued in advance (6-wheel skid-steer, pan-tilt camera, lidar placement)"]}]},
+"sim2real":{title:"Sim-to-real compare (FUTURE)",tag:"Stage 6 — future (Session 18)",tagColor:"#993C1D",tagBg:"#FAECE7",body:"Planned, not built: run the SAME missions on the real robot and diff the telemetry against sim baselines — same FLEET_DB schema, new runner_type. The drift machinery already slices by runner, so sim-vs-real comparison is a query, not a rebuild.",sections:[{heading:"Already in place for it",items:["Telemetry rows carry runner_type + power_mode today", "Mission definitions are shared — the day orchestrator's ball placement is pluggable (sim ops vs human operator)", "Judged verdicts (not self-grading) transfer unchanged"]}]},
+"roadmap":{title:"Roadmap (R1 → R5)",tag:"Beyond this diagram",tagColor:"#993C1D",tagBg:"#FAECE7",body:"This diagram is Release 1 (Foundation). The ladder beyond it: R2 Agentic & Alignment (LLM-in-the-loop test generation and triage), R3 Fleet & Input Expansion, R4 Autonomy & Perception, R5 Self-Testing Fleet.",sections:[{heading:"Where decisions live",items:["Release1Todo.md — the living session plan and the R2–R5 working plan", "BLUEPRINT.md — strategy background + the decisions log", "An agentic loop already exists (tools/agentic_loop.py): Claude reads the real drift report and proposes nav2 param changes / harder worlds / mission plans, human-approved"]}]}
+};
+
+var activeId = null;
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function showNode(id) {
+  var data = NODES[id];
+  if (!data) return;
+  if (activeId) {
+    var old = document.getElementById("n-" + activeId);
+    if (old) old.style.outline = "";
+  }
+  activeId = id;
+  var el = document.getElementById("n-" + id);
+  if (el) el.style.outline = "2px solid " + data.tagColor;
+
+  var html = "";
+  html += "<div class=\"dtag\" style=\"color:" + esc(data.tagColor) + ";background:" + esc(data.tagBg) + ";border:1px solid " + esc(data.tagColor) + "40\">" + esc(data.tag) + "</div>";
+  html += "<h2>" + esc(data.title) + "</h2>";
+  html += "<p>" + esc(data.body) + "</p>";
+
+  var sections = data.sections || [];
+  for (var i = 0; i < sections.length; i++) {
+    var s = sections[i];
+    html += "<h3>" + esc(s.heading) + "</h3>";
+    if (s.code) html += "<pre>" + esc(s.code) + "</pre>";
+    if (s.items) {
+      html += "<ul>";
+      for (var j = 0; j < s.items.length; j++) html += "<li>" + esc(s.items[j]) + "</li>";
+      html += "</ul>";
+    }
+    if (s.reqs) {
+      for (var k = 0; k < s.reqs.length; k++) {
+        var req = s.reqs[k];
+        html += "<div class=\"req-row\"><span class=\"req-id\">" + esc(req[0]) + "</span><span class=\"req-text\">" + esc(req[1]) + "</span></div>";
+      }
+    }
+  }
+  document.getElementById("detail-panel").innerHTML = html;
+}
+</script>
+</body>
+</html>
