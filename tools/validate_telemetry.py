@@ -9,12 +9,20 @@ here fails CI instead of sliding through unvalidated.
 """
 import os
 import sqlite3
+import sys
+
 import pandas as pd
 import pandera as pa
 from pandera import Check, Column, DataFrameModel, DataFrameSchema
 from pandera.typing import Series
 
-from tools.telemetry_logger import BASE_COLUMNS, RUNS_COLUMNS
+# Plain-script safety (the documented `python tools/x.py` trap — it broke stage-5 the
+# moment this module first imported a sibling): running as a script puts tools/ (not the
+# repo root) on sys.path, so `tools.*` doesn't resolve. `python -m tools.x` is the
+# canonical form (ci.yml uses it); this bootstrap keeps the script form working too.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tools.telemetry_logger import BASE_COLUMNS, RUNS_COLUMNS  # noqa: E402
 
 DB_PATH = os.environ.get("FLEET_DB", "reports/fleet_runs.db")
 
