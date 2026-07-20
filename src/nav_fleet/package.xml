@@ -5,7 +5,7 @@
   <version>0.1.0</version>
   <description>Fleet navigation test harness</description>
   <maintainer email="sdfinn70@gmail.com">Mike</maintainer>
-  <license>MIT</license>
+  <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>

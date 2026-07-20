@@ -1,3 +1,5 @@
+# Copyright 2026 Mike
+# SPDX-License-Identifier: Apache-2.0
 """HSV colored-ball detection on RGB frames — pure numpy, no ROS, no OpenCV.
 
 The algorithm is BC/isaac_project's hardware-proven HSV thresholding

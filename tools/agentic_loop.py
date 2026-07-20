@@ -1,4 +1,5 @@
-# Copyright 2026 Mike. Licensed under MIT.
+# Copyright 2026 Mike
+# SPDX-License-Identifier: Apache-2.0
 """Agentic test loop: diagnose failures, propose fixes, await human approval."""
 import json
 import os

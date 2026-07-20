@@ -1,4 +1,5 @@
-# Copyright 2026 Mike. Licensed under MIT.
+# Copyright 2026 Mike
+# SPDX-License-Identifier: Apache-2.0
 """Stage 0 CI gate: every requirement ID must map to a test that exists."""
 import argparse
 import ast

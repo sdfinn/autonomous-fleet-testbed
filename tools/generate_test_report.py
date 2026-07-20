@@ -1,3 +1,5 @@
+# Copyright 2026 Mike
+# SPDX-License-Identifier: Apache-2.0
 """Auto-generate a PDF test report from the last 100 runs."""
 import io
 import os
