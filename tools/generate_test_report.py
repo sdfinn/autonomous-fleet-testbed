@@ -4,7 +4,11 @@
 import io
 import os
 import sqlite3
+import sys
 from datetime import datetime
+
+# Plain-script safety — see tools/validate_telemetry.py for the why (same trap).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import matplotlib.pyplot as plt
 import pandas as pd
