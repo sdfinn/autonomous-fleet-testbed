@@ -1,6 +1,6 @@
 import pytest
 
-from tools.baseline_monitor import check_latest_run, check_run
+from tools.baseline_monitor import check_latest_run, check_run, load_config
 from tools.telemetry_logger import init_db, log_run
 
 # Baseline seed: 10 runs with natural variance around fleet navigation metrics.
@@ -142,11 +142,15 @@ def test_baseline_sliced_by_runner_and_power(db):
     hil_reports = {r.metric: r for r in check_run(hil_run, db_path=db)}
     assert hil_reports["nav_success_rate"].flagged
 
-    # Symmetric: a 25W local run at 0.95 (the *HIL* cohort's value) flags only if the
-    # 15W hil_jetson rows were correctly excluded from the 25W baseline.
-    sim_run = _insert(db, nav_success_rate=0.95, runner_type="local", power_mode="25W")
+    # Symmetric leg REWRITTEN with CR-01 (direction-aware flagging): the old version used
+    # 0.95 vs the low cohort — an IMPROVEMENT, which correctly no longer flags. Use a
+    # worse-direction outlier (0.10 vs the ~0.50 cohort) instead, and assert sigma > 10:
+    # only the tight own-cohort baseline (sd ~0.008 → sigma ~50) can produce that; a
+    # slicing regression that mixed both cohorts (sd ~0.23) would cap sigma near ~2.7.
+    sim_run = _insert(db, nav_success_rate=0.10, runner_type="local", power_mode="25W")
     sim_reports = {r.metric: r for r in check_run(sim_run, db_path=db)}
     assert sim_reports["nav_success_rate"].flagged
+    assert sim_reports["nav_success_rate"].sigma > 10
 
 
 def test_null_power_rows_baseline_against_each_other(db):
@@ -166,3 +170,78 @@ def test_null_power_rows_baseline_against_each_other(db):
     reports = {r.metric: r for r in check_run(null_run, db_path=db)}
     assert "nav_success_rate" in reports, "NULL-power baseline produced no report"
     assert reports["nav_success_rate"].flagged
+
+
+# ── CR-01/CR-02 (Session 17 code review): direction-aware flagging + config wiring ──────
+
+
+def test_improvement_is_not_flagged_down_metric(db):
+    """CR-01: nav_success_rate direction is 'down' (lower = worse). A run BETTER than
+    baseline by many sigma is an improvement, not drift — it must never flag."""
+    _seed_baseline(db)                      # mean ~0.95, sd ~0.008
+    run_id = _insert(db, nav_success_rate=1.0)   # ~6 sigma ABOVE mean — an improvement
+    reports = {r.metric: r for r in check_run(run_id, db_path=db)}
+    assert not reports["nav_success_rate"].flagged
+    assert reports["nav_success_rate"].severity is None
+
+
+def test_improvement_is_not_flagged_up_metric(db):
+    """CR-01 symmetric: mean_position_error direction is 'up' (higher = worse). A run
+    far BELOW baseline error is an improvement — never flagged."""
+    for err in (0.10, 0.12, 0.14, 0.11, 0.13, 0.10, 0.12, 0.14, 0.11, 0.13):
+        _insert(db, mean_position_error=err)     # mean ~0.12
+    run_id = _insert(db, mean_position_error=0.001)  # dramatically better
+    reports = {r.metric: r for r in check_run(run_id, db_path=db)}
+    assert not reports["mean_position_error"].flagged
+
+
+def test_regression_in_bad_direction_still_flags(db):
+    """CR-01 control: a worse-direction outlier still flags (behavior preserved)."""
+    for err in (0.10, 0.12, 0.14, 0.11, 0.13, 0.10, 0.12, 0.14, 0.11, 0.13):
+        _insert(db, mean_position_error=err)
+    run_id = _insert(db, mean_position_error=0.90)   # much WORSE
+    reports = {r.metric: r for r in check_run(run_id, db_path=db)}
+    assert reports["mean_position_error"].flagged
+
+
+def test_severity_bands_from_config(db):
+    """CR-02: sigma severity bands come from drift_config.yaml (info 2 / warning 3 /
+    error 4 / critical 5). An extreme worse-direction outlier lands 'critical'."""
+    _seed_baseline(db)
+    run_id = _insert(db, nav_success_rate=0.10)      # ~100 sigma below mean
+    reports = {r.metric: r for r in check_run(run_id, db_path=db)}
+    assert reports["nav_success_rate"].severity == "critical"
+    assert reports["nav_success_rate"].flagged
+
+
+def test_config_history_window_and_threshold_honored(db, tmp_path):
+    """CR-02: check_run must read history_window and sigma bands from the YAML, not
+    hardcode them. A config with an absurdly high info threshold must un-flag an
+    outlier the default config would flag."""
+    cfg = tmp_path / "drift_test.yaml"
+    cfg.write_text(
+        "history_window: 5\n"
+        "sigma:\n  info: 50.0\n  warning: 60.0\n  error: 70.0\n  critical: 80.0\n"
+        "metrics:\n  nav_success_rate:\n    direction: down\n"
+    )
+    _seed_baseline(db)
+    run_id = _insert(db, nav_success_rate=0.60)      # huge worse-direction outlier
+    default_reports = {r.metric: r for r in check_run(run_id, db_path=db)}
+    assert default_reports["nav_success_rate"].flagged
+    lax_reports = {r.metric: r for r in check_run(run_id, db_path=db,
+                                                  config_path=str(cfg))}
+    assert not lax_reports["nav_success_rate"].flagged
+    # The lax config only watches nav_success_rate — other metrics must not report.
+    assert set(lax_reports) == {"nav_success_rate"}
+
+
+def test_canonical_config_loads_and_is_valid():
+    """CR-02/CR-03: the repo's canonical config/drift_config.yaml parses and declares
+    everything baseline_monitor needs — this test IS the guard against config rot."""
+    cfg = load_config()
+    assert cfg["history_window"] >= 3
+    for band in ("info", "warning", "error", "critical"):
+        assert band in cfg["sigma"]
+    assert cfg["metrics"], "no watched metrics configured"
+    for name, spec in cfg["metrics"].items():
+        assert spec["direction"] in ("up", "down"), f"{name}: bad direction"

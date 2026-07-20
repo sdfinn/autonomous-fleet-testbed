@@ -137,7 +137,8 @@ def diagnose(run_data, db_path=FLEET_DB):
     if drift_reports:
         drift_str = '\n'.join(
             f'  {r.metric}: current={r.current:.2f} baseline_mean={r.mean:.2f} '
-            f'sigma={r.sigma:.1f} {"FLAGGED" if r.flagged else "ok"}'
+            f'sigma={r.sigma:.1f} '
+            + (f'FLAGGED ({r.severity})' if r.flagged else 'ok')
             for r in drift_reports
         )
     else:
