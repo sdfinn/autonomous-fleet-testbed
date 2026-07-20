@@ -4406,6 +4406,13 @@ depends on it, and let the pipeline prove it broke nothing:
 - **TIMING RULE: never in the final days before robot arrival (~2026-07-31).** Either
   early enough for a full re-verification cycle, or right after robot day. Worst case
   is a known, runbooked reflash (~half day) — schedule so that's absorbable.
+- **Sequencing clause (the honest risk):** nvidia-jetpack adds kernel modules/daemons
+  and can shift the board's power/thermal envelope — and the 2026-07-18 yellow bug is
+  an unreproduced TIMING-sensitive intermittent on this exact board. Bank a few more
+  green HIL days first, install, then run the 3× proof cycle; if the intermittent
+  recurs post-install, the autopsy artifact is armed but disentangle carefully
+  ("install changed timing" vs "was recurring anyway"). Measure idle RAM before/after
+  (baseline 433 MB).
 - The R2 "simplest inference" milestone (Session 20, R2 section) builds on this.
 
 ### Going untethered — systemd autostart (decision 2026-07-03: deferred out of R1)
@@ -4615,7 +4622,11 @@ robot stays put. **Demo bar sharpened (Mike, 2026-07-19): the Jetson must task t
 DYNAMICALLY from live state** — e.g., the Jetson detects something (or identifies an
 unexplored area) and *dispatches* the Q in response, mid-run. "Q wakes, fetches a
 hardcoded mission, stops" explicitly does NOT count as the demo — that's a download,
-not autonomy. Builds on R2's autonomy slice (mission branching on on-robot inference). Prerequisites carried from the Session 19+ deferred list: multi-robot
+not autonomy. Builds on R2's autonomy slice (mission branching on on-robot inference).
+**Bar calibration:** the autonomy lives in the JETSON'S DECISION, not the Q's
+sophistication — "dispatch the Q to sweep that zone" counts; precise Q navigation is
+a trap (it turns a coordination demo into a second nav project). Keep the Q's
+response primitive and the Jetson's reasoning real. Prerequisites carried from the Session 19+ deferred list: multi-robot
 launch parameterization (kill the hardcoded `robot_001` strings), per-robot params
 files, DDS traffic scoping (CycloneDDS config or Zenoh) so sensor topics stay local;
 leader-node duties on the Jetson (fleet DB, compact telemetry only over WiFi). Remote
