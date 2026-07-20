@@ -57,6 +57,7 @@ def make_pass_fail_chart(runs) -> io.BytesIO:
 
 
 def make_position_scatter(runs) -> io.BytesIO:
+    from tools.goal_zones import end_zones  # local import: keeps report usable standalone
     fig, ax = plt.subplots(figsize=(5, 5))
     for result, group in runs.groupby("result"):
         ax.scatter(
@@ -64,12 +65,17 @@ def make_position_scatter(runs) -> io.BytesIO:
             c=_RESULT_COLORS.get(result, "#aaaaaa"),
             label=result, alpha=0.7, s=40,
         )
-    # Goal zone — bedroom floor centre (0.0, 3.7), +/- Nav2's xy_goal_tolerance (0.15 m)
-    rect = plt.Rectangle(
-        (-0.15, 3.55), 0.30, 0.30,
-        linewidth=2, edgecolor="blue", facecolor="none", linestyle="--",
-    )
-    ax.add_patch(rect)
+    # End zones derived from mission data (S17 review CR-12) — one box per distinct
+    # final goal (home_base for the missions, bedroom_goal for the BR-01 nav test).
+    for zone in end_zones():
+        rect = plt.Rectangle(
+            (zone["x"] - zone["tol"], zone["y"] - zone["tol"]),
+            2 * zone["tol"], 2 * zone["tol"],
+            linewidth=2, edgecolor="blue", facecolor="none", linestyle="--",
+        )
+        ax.add_patch(rect)
+        ax.annotate(zone["label"], (zone["x"], zone["y"] + zone["tol"] + 0.05),
+                    ha="center", fontsize=6, color="blue")
     ax.set_title("Final Robot Positions")
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
