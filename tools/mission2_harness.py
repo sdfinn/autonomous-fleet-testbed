@@ -1,3 +1,5 @@
+# Copyright 2026 Mike
+# SPDX-License-Identifier: Apache-2.0
 """Mission 2 test harness — ball placement, Gazebo spawn, ground-truth judging.
 
 HARNESS-ONLY code (spec §5): the judge, not the contestant. Robot code must never import

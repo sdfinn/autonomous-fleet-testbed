@@ -1,3 +1,5 @@
+# Copyright 2026 Mike
+# SPDX-License-Identifier: Apache-2.0
 """HSV ball detector node (Mission 2, spec §4).
 
 Always-on with the nav stack: launched by nav2_only_launch.py, runs wherever the robot

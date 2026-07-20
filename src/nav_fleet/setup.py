@@ -28,7 +28,7 @@ setup(
     maintainer='Mike',
     maintainer_email='sdfinn70@gmail.com',
     description='Fleet navigation test harness',
-    license='MIT',
+    license='Apache-2.0',
     entry_points={
         'console_scripts': [
             'nav_runner = nav_fleet.nav_runner:main',
