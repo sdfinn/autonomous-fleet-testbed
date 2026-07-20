@@ -4367,6 +4367,30 @@ determinism to chase green). Possible new mission.
   robot executes → results fed back to Claude for next iteration
 - Log real-world navigation videos + telemetry for portfolio/demo
 
+**7. Sim-fidelity upgrade from Session 18 lessons (post-Session-18 by definition;
+Mike, 2026-07-19).** After running the real robot: what did we learn, and how do we
+make the sim better so field issues shrink? A TARGETED-fidelity pass on the robot
+model, not photorealism — validated against real telemetry, not eyeballs:
+- **Skid-steer kinematics first (biggest payoff).** The real rover is 6-wheel
+  skid-steer; our sim model is 4-wheel diff-drive. We already measured ~30% rotation
+  over-report in wheel odom on the 4-wheel model and built the EKF around it — the
+  real rover's rotation scrub will differ. A 6-wheel model (diff-drive plugin, 3
+  joints/side) lets Nav2 rotation params be tuned against the right failure mode.
+- **True sensor poses.** Camera rides the pan-tilt mast at ~289 mm — camera height
+  feeds directly into Mission 2's `range_k` ball-range calibration. Lidar sits low on
+  the deck — changes what the costmaps can see (under-bed / over-dresser).
+- **Real outline dims** (captured from the vendor drawing, `docs/img/
+  waveshare_ugv_pt_dimensions.png`): footprint 253 × 231 mm (243 over wheels),
+  height 289 mm w/ mast, wheelbase 126 mm, ground clearance 25 mm. Note our current
+  model's footprint (230 × 252) is already nearly exact — geometry is NOT the gap.
+- **Starting point:** Waveshare's own `ugv_ws` ROS2 repo ships URDF + meshes for this
+  rover — import-and-adapt, don't hand-model. Skip pan-tilt actuation and visual
+  meshes initially (no functional payoff until a mission uses the mast).
+- **Grading the model is a query, not a debate:** same mission, sim row vs real row
+  in FLEET_DB — the drift tooling measures how good the model is. Iterate until the
+  sim-real delta on nav metrics stops shrinking; the residual IS the honest gap.
+- Isaac Sim's photorealistic tier stays R4 (perception-driven, per the ladder).
+
 ### Going untethered — systemd autostart (decision 2026-07-03: deferred out of R1)
 
 r1-complete is achievable entirely over SSH (Session 18's smoke test, nav goal, and
