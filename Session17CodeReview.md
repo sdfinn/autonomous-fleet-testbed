@@ -278,16 +278,21 @@ pure/ROS split was *designed* to enable exactly this. Coverage highlights:
 
 ---
 
-## Questions for Mike
+## Questions for Mike — ANSWERED 2026-07-19
 
-- **Q1 (CR-05):** AI-scenario subsystem — delete now and rebuild fresh in R2 (my
-  recommendation), or park in `attic/`? It's ~430 lines + a dashboard tab, currently
-  broken on any fresh DB.
-- **Q2 (CR-20b):** License: MIT or Apache-2.0? (Apache = patent grant, common in
-  robotics; MIT = simpler. Either works; the repo just has to pick one.) Needed before
-  any pre-public step; cheap to do now.
-- **Q3 (CR-02):** Confirm the fix direction: wire `drift_config.yaml` in (my
-  recommendation) vs delete the YAML and keep hardcoded thresholds?
+- **Q1 (CR-05): DECIDED — delete now, rebuild fresh in R2.** ai_test_generator.py,
+  scenario_analyzer.py, `mark_scenario_complete`, dashboard tab 4 + AI-quality section
+  all go; R2's pillar-1 work starts clean against the real judged-mission schema.
+- **Q2 (CR-20b): DECIDED — Apache-2.0** (Mike accepted the recommendation after the
+  MIT-vs-Apache walkthrough: ROS2/Nav2 ecosystem default, majority of src/ already
+  carries Apache headers, patent grant suits a framework meant for reuse). Execution:
+  add LICENSE (standard Apache-2.0 text), normalize the stray "MIT" one-liners and
+  missing headers, fix `setup.py` license field. Pre-public gate item; can land any
+  time.
+- **Q3 (CR-02): DECIDED — wire `drift_config.yaml` in** (direction-aware, one canonical
+  copy at root `config/`, failing tests first). The hardcoded scheme in
+  baseline_monitor.py gets replaced by config loading; agentic_loop's prompt claim
+  becomes true instead of being edited to match the lie.
 
 ## Suggested execution order (when fixes are approved)
 
