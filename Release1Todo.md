@@ -4391,6 +4391,23 @@ model, not photorealism — validated against real telemetry, not eyeballs:
   sim-real delta on nav metrics stops shrinking; the residual IS the honest gap.
 - Isaac Sim's photorealistic tier stays R4 (perception-driven, per the ladder).
 
+**8. CUDA bring-up on the Jetson + CI canary (Mike, 2026-07-19: "sooner than
+later").** The NVMe install is deliberately OS-only (no CUDA/cuDNN/TensorRT — `nvcc:
+command not found` is the current, expected state). Turn the GPU on BEFORE anything
+depends on it, and let the pipeline prove it broke nothing:
+- Install: `sudo apt install nvidia-jetpack` (L4T apt sources already present — no
+  reflash; ~2–3 GB, 421 G free). Record versions in the Jetson runbook.
+- Prove it broke nothing: a full 8-job CI cycle green + one HIL day — the pipeline IS
+  the regression instrument for system-level changes like this.
+- Prove it WORKS: a minimal CUDA smoke test as a CI step on the Jetson runner
+  (deviceQuery-equivalent + one tiny on-GPU op, seconds) — a standing canary so any
+  future apt/JetPack change that kills GPU support goes red in CI, not on robot day.
+  The robot doesn't use it yet; that's the point — it's proven idle capacity.
+- **TIMING RULE: never in the final days before robot arrival (~2026-07-31).** Either
+  early enough for a full re-verification cycle, or right after robot day. Worst case
+  is a known, runbooked reflash (~half day) — schedule so that's absorbable.
+- The R2 "simplest inference" milestone (Session 20, R2 section) builds on this.
+
 ### Going untethered — systemd autostart (decision 2026-07-03: deferred out of R1)
 
 r1-complete is achievable entirely over SSH (Session 18's smoke test, nav goal, and
@@ -4570,6 +4587,15 @@ false AMCL "success" poisons test/heal at the root.
    low light") becomes an actual Gazebo world — not just the JSON scenario descriptions
    `ai_test_generator` emits today. This is the seed of full input-ization (R3).
 
+**On-robot compute + autonomy slice (added 2026-07-19, Mike):** R2 also turns on and
+USES the Jetson's GPU — CUDA installed + CI-canaried in Session 19 item 8, then the
+simplest real inference wired into a mission: a small model runs ON the Jetson's GPU
+(even trivially — e.g., the mission photo classified by a tiny net alongside HSV) and
+**the mission BRANCHES on the inference result with no human in the run.** That single
+demo proves three things at once: CUDA works under our stack, inference runs at the
+edge, and the robot makes a runtime DECISION from its own perception — the autonomy
+seed R3's fleet story builds on. Ties into pillar 1's failure modes (an inference-Hz
+drop becomes a watchable metric like odom Hz).
 **Outputs (these ARE the career assets):** the local-first benchmark ("N robot-hours
 validated, $0 cloud spend, one RTX 5080", reproducible) and the positioning write-up
 ("20 years of enterprise release engineering meets physical AI") with the RaaS framing
@@ -4577,13 +4603,19 @@ doc as adjacency.
 **LLM leverage added:** test/heal loop + NL→world generation.
 **Demo (the one that lands the role):** agentic loop catches an injected regression,
 diagnoses it from telemetry, proposes a fix, human approves — sim-to-real alignment
-shown tracking, benchmark number on screen.
+shown tracking, benchmark number on screen. **Plus the autonomy slice:** the robot
+branches a live mission on its own on-GPU inference — autonomy is SHOWN working
+before R3 claims a fleet of it (Mike, 2026-07-19).
 
 ### R3 — Fleet & Input Expansion
 
 **Robot side:** Arduino UNO Q bumper bot (combined microprocessor/microcontroller) —
 wakes up and gets ALL instructions from the Jetson; may explore/map while the Jetson
-robot stays put. Prerequisites carried from the Session 19+ deferred list: multi-robot
+robot stays put. **Demo bar sharpened (Mike, 2026-07-19): the Jetson must task the Q
+DYNAMICALLY from live state** — e.g., the Jetson detects something (or identifies an
+unexplored area) and *dispatches* the Q in response, mid-run. "Q wakes, fetches a
+hardcoded mission, stops" explicitly does NOT count as the demo — that's a download,
+not autonomy. Builds on R2's autonomy slice (mission branching on on-robot inference). Prerequisites carried from the Session 19+ deferred list: multi-robot
 launch parameterization (kill the hardcoded `robot_001` strings), per-robot params
 files, DDS traffic scoping (CycloneDDS config or Zenoh) so sensor topics stay local;
 leader-node duties on the Jetson (fleet DB, compact telemetry only over WiFi). Remote

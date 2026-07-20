@@ -800,3 +800,13 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   autopsy log in the CI evidence artifact (d3bb66e) so one recurrence yields root cause.
   Real-USB-camera tier re-deferred → Session 19 tier #1. Next: Session 17 full scoping
   pass first (2026-07-17 directive), inputs = MikesNotes.md + Release1Todo S17 section.
+- **2026-07-19 — CUDA sooner + autonomy-before-R3 (Mike).** (1) Jetson GPU bring-up
+  promoted to Session 19 item 8: install nvidia-jetpack early (never in the final
+  pre-robot days), prove-no-breakage via a full CI cycle, keep a CUDA smoke test in CI
+  as a standing canary. (2) R2 gains an on-robot autonomy slice: simplest real
+  inference on the Jetson GPU with the mission BRANCHING on the result, no human in
+  the run — autonomy demonstrably works before R3 claims a fleet of it. (3) R3's UNO Q
+  demo bar sharpened: the Jetson must task the Q dynamically from live state;
+  hardcoded fetch-and-stop does not count. Also: Session 19 item 7 added same day —
+  post-Session-18 sim-fidelity upgrade (6-wheel skid-steer, sensor poses), graded by
+  the drift tooling's sim-vs-real rows.
