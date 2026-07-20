@@ -229,12 +229,17 @@ def run_loop():
                 return
 
             if tool == 'generate_world_variant':
-                apply_world_variant(inputs['obstacle_layout'], inputs['variant_name'])
-                print(f'[agentic] World variant created. Re-run: '
-                      f'ros2 launch nav_fleet sim_launch.py world:={inputs["variant_name"]}')
+                path = apply_world_variant(inputs['obstacle_layout'], inputs['variant_name'])
+                # Honest instruction (S17 review CR-11a): the launch files hardcode
+                # bedroom_simple.sdf — there is no world:= argument yet (a `world` launch
+                # arg is R2 NL->world territory). Until then, running a variant means
+                # pointing the launch at it by hand.
+                print(f'[agentic] World variant created at {path}. To run it, edit '
+                      f'src/nav_fleet/launch/sim_only_launch.py world_path to point at '
+                      f'this file (no world:= launch argument exists yet).')
 
             elif tool == 'propose_nav_param_change':
-                print('[agentic] Apply this change to config/nav2_params.yaml:')
+                print('[agentic] Apply this change to src/nav_fleet/config/nav2_params.yaml:')
                 print(f'  {inputs["param_path"]}: {inputs["proposed_value"]}')
                 print(f'  Rationale: {inputs["rationale"]}')
 

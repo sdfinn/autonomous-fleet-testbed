@@ -66,13 +66,17 @@ STACK_READY_TIMEOUT_S = 150.0
 SPAWN_APPEAR_SETTLE_S = 2.0                     # llvmpipe: new model takes ~1.5 s in-frame
 RETREAT_DROP_M = 0.4                            # y-drop below peak that means "retreating"
 
-# Jetson connection (HIL executor) — mirrors scripts/hil_stage.sh. Non-interactive SSH skips
-# .bashrc, so every remote ROS command must source its own env.
+# Jetson connection (HIL executor) — MUST stay in sync with scripts/hil_stage.sh's JENV
+# (pinned cross-reference; CR-16 caught these two drifting: the MAGICK/OMP knobs existed
+# only in the bash copy). Non-interactive SSH skips .bashrc, so every remote ROS command
+# must source its own env. MAGICK_THREAD_LIMIT/OMP: GraphicsMagick single-threading —
+# the known workaround for its ARM SIGSEGV under threading (see hil_stage.sh).
 JETSON_USER = os.environ.get('JETSON_USER', 'mike')
 JETSON_REPO = '~/autonomous-fleet-testbed'
 JENV = ('source /opt/ros/jazzy/setup.bash && '
         'source ~/autonomous-fleet-testbed/install/setup.bash && '
-        'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0')
+        'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 '
+        'MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1')
 STATE_DIR = os.environ.get('STATE_DIR', '/tmp/hil_stage')
 POWER_MODE_LABEL = os.environ.get('POWER_MODE', '15W')
 
@@ -406,40 +410,56 @@ def run_no_ball(executor, ball_ops=None, ball_xy=None):
     return ok, holder['placed_name']
 
 
-def _place_during_return(ball_ops, color, ball_xy, holder, stop_evt):
-    """Background placement for run 1's return leg: wait until the robot has begun retreating
-    (same retreat detector as the yellow->red swap), then place `color` behind it. If the
-    mission finishes first, stop_evt fires the same placement as a fallback — the ball is
-    always in place before the next run. NOTE: placement happens on the return leg, where
-    reactions are NOT armed (outbound-only) — verified in missions.py."""
-    peak_y = None
+class RetreatDetector:
+    """Pure retreat detection (extracted in S17 review CR-17 so both background threads
+    share one implementation and it is unit-testable): the robot is 'retreating' once its
+    ground-truth y has fallen `drop_m` below the peak y observed so far. Valid because
+    Mission 2's outbound leg drives monotonically north (+y) and its return drives south —
+    a mission whose path zig-zags in y would need a different signal."""
+
+    def __init__(self, drop_m=RETREAT_DROP_M):
+        self._drop_m = drop_m
+        self._peak_y = None
+
+    def update(self, xy):
+        """Feed one ground-truth sample (or None); True once retreat is detected."""
+        if xy is None:
+            return False
+        y = xy[1]
+        self._peak_y = y if self._peak_y is None else max(self._peak_y, y)
+        return (self._peak_y - y) >= self._drop_m
+
+
+def _wait_for_retreat(stop_evt, poll_s=0.3):
+    """Poll workstation ground truth until retreat is detected or stop_evt fires.
+    Returns True on detected retreat, False when stopped first (mission ended — the
+    caller then performs its action anyway as the fallback). Mode-agnostic: ground
+    truth is workstation-side in BOTH sim and HIL."""
+    detector = RetreatDetector()
     while not stop_evt.is_set():
-        xy = get_ground_truth_xy()
-        if xy is not None:
-            peak_y = xy[1] if peak_y is None else max(peak_y, xy[1])
-            if peak_y - xy[1] >= RETREAT_DROP_M:
-                print(f'[day] retreat detected — placing {color} behind the returning robot')
-                break
-        time.sleep(0.3)
+        if detector.update(get_ground_truth_xy()):
+            return True
+        time.sleep(poll_s)
+    return False
+
+
+def _place_during_return(ball_ops, color, ball_xy, holder, stop_evt):
+    """Background placement for run 1's return leg: wait until the robot has begun
+    retreating, then place `color` behind it. If the mission finishes first, stop_evt
+    fires the same placement as a fallback — the ball is always in place before the next
+    run. NOTE: placement happens on the return leg, where reactions are NOT armed
+    (outbound-only) — verified in missions.py."""
+    if _wait_for_retreat(stop_evt):
+        print(f'[day] retreat detected — placing {color} behind the returning robot')
     holder['placed_name'] = ball_ops.place(color, *ball_xy)
 
 
 def _swap_during_return(ball_ops, yellow_name, ball_xy, holder, stop_evt):
-    """Background swap: wait until the robot has begun retreating (ground-truth y has fallen
-    RETREAT_DROP_M below its observed peak), then remove yellow, settle, and spawn red at the
-    same spot. If the mission returns before retreat is detected, stop_evt fires the same
-    swap as a fallback (red still ends up placed before the red run). gz calls are
-    subprocess-based, so this shares no ROS state with the mission. Mode-agnostic: it polls
-    workstation ground truth, which is present in BOTH sim and HIL."""
-    peak_y = None
-    while not stop_evt.is_set():
-        xy = get_ground_truth_xy()
-        if xy is not None:
-            peak_y = xy[1] if peak_y is None else max(peak_y, xy[1])
-            if peak_y - xy[1] >= RETREAT_DROP_M:
-                print('[day] retreat detected — swapping yellow -> red behind the robot')
-                break
-        time.sleep(0.3)
+    """Background swap: on retreat (or mission-end fallback), remove yellow, settle past
+    the ghost-model lag, and spawn red at the same spot. gz calls are subprocess-based,
+    so this shares no ROS state with the mission."""
+    if _wait_for_retreat(stop_evt):
+        print('[day] retreat detected — swapping yellow -> red behind the robot')
     ball_ops.remove(yellow_name)
     ball_ops.settle()
     holder['red_name'] = ball_ops.place('red', *ball_xy)

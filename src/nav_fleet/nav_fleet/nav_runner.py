@@ -16,6 +16,7 @@
 import math
 import time
 import rclpy
+from action_msgs.msg import GoalStatus
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.time import Time
@@ -73,6 +74,16 @@ class NavRunner(Node):
             self.get_logger().warning('cancel_goal not confirmed within timeout')
 
     def send_goal(self, x, y, timeout=90.0, yaw=None, interrupt_cb=None, spin_extra=None):
+        # Reset ALL per-goal telemetry (S17 review CR-08): without this, a goal that
+        # fails before AMCL publishes (or before _finish's pose branch runs) leaves the
+        # PREVIOUS goal's final pose / error in these attributes, and the mission's
+        # telemetry row logs stale values as if they belonged to this run.
+        self.last_result = None
+        self.last_duration_s = None
+        self.last_steps = None
+        self.last_final_x = None
+        self.last_final_y = None
+        self.last_position_error = None
         self.last_interrupt = None
         start_time = time.time()
         steps = 0
@@ -165,7 +176,7 @@ class NavRunner(Node):
                 self.get_logger().warning('Goal wait timed out')
                 return ('send_fail',)
 
-            succeeded = result_future.result().status == 4
+            succeeded = result_future.result().status == GoalStatus.STATUS_SUCCEEDED
             elapsed = time.time() - accept_time
             end_xy = self._pose_xy()
             displacement = (math.hypot(end_xy[0] - start_xy[0], end_xy[1] - start_xy[1])
@@ -222,15 +233,20 @@ class NavRunner(Node):
 
 
 def main():
+    # CLI for ad-hoc single goals (S17 review: was a hardcoded (1.0, 1.0) demo).
+    import argparse
+    parser = argparse.ArgumentParser(description='Send one NavigateToPose goal.')
+    parser.add_argument('x', type=float)
+    parser.add_argument('y', type=float)
+    parser.add_argument('--yaw', type=float, default=None, help='final heading (rad)')
+    args = parser.parse_args()
     rclpy.init()
     node = NavRunner()
-    success = node.send_goal(1.0, 1.0)
-    if success:
-        print('Goal succeeded')
-    else:
-        print('Goal failed')
+    success = node.send_goal(args.x, args.y, yaw=args.yaw)
+    print('Goal succeeded' if success else 'Goal failed')
     node.destroy_node()
     rclpy.shutdown()
+    raise SystemExit(0 if success else 1)
 
 
 if __name__ == '__main__':
