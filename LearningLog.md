@@ -118,6 +118,10 @@ aborted handle.
 4. **Stale checkouts lie:** the Jetson was silently running July-13 code — how did it
    get there (what does CI's sync actually check out, and what did restore-checkout
    fail to do), and why does a repro on the wrong code prove nothing?
+5. **`python file.py` vs `python -m package.module`:** the S17 fix wave broke both
+   stage-5 jobs by adding one innocent import — explain where Python looks for
+   imports in each invocation form, why the landmine sat harmless for months, and
+   why the fix has two halves (canonical form in CI + self-defense in the tools).
 
 **Carried re-queues:** Q2 Docker layers (+bonus: docs-only push — which layers
 rebuild, and why is that a trick question in our pipeline?), Q4 zombie goal,
