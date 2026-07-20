@@ -308,3 +308,43 @@ pure/ROS split was *designed* to enable exactly this. Coverage highlights:
 *Not deep-reviewed this pass:* URDF/SDF/worlds content, `nav2_params.yaml` values
 (live-tuned, evidence-backed), `ci.yml` (reviewed extensively in Sessions 16 forensics),
 `nav2_isaac_launch.py` (Isaac path parked to R4).
+
+---
+
+## Fix wave OUTCOMES (2026-07-19, Mike approved "implement everything")
+
+Executed same-day, tests-first, five commits (e97b943, 8aae97a, 16cd6ea, b55099a,
+77f27c9). Unit suite grew 105 → 122 green; flake8 clean; live Mission 1 Tier-1 proof
+run before push.
+
+**FIXED:** CR-01/02/03 (config wired, direction-aware, severity bands, canonical file —
+config trimmed to implemented reality with a deferred block), CR-04/05 (AI subsystem
+deleted per Q1: ai_test_generator, scenario_analyzer, mark_scenario_complete, dashboard
+tab + quality section), CR-06 (percent bug), CR-07 (data-derived filters incl.
+hil_jetson + power-mode filter + Mission 2 fidelity panel + HIL columns in run log),
+CR-08 (send_goal resets all last_* telemetry), CR-09 (GoalStatus constant), CR-10
+(COLLISION_RANGE_M named + derived), CR-11a/b (honest world-variant instruction; correct
+params path), CR-12 (tools/goal_zones, mission-derived, both consumers), CR-13
+(power_mode value validation), CR-14 (TelemetryLogger class removed — functions only),
+CR-15 (RUNS_COLUMNS registry: logger migration + accepted kwargs + validator known-set
+all derive from it; typos raise; model-coverage test), CR-16 (JENV synced — MAGICK/OMP
+now in both copies — with pinned cross-references; full env single-sourcing deferred),
+CR-17 (RetreatDetector extracted, shared, unit-tested), CR-20b (Apache-2.0: LICENSE,
+SPDX headers, setup.py, package.xml — per Q2), CR-21 (stale text sweep incl. Dockerfile
+header), CR-22 (day-orchestrator tests: checklist parser, retreat detector,
+ExecResult.tagged; plus Stage-5 smoke tests: rows→validation→PDF), dead-code deletions
+(sim_vs_real PNG, YOLO dashboard remnants, hardcoded nav_runner demo goal → argparse).
+
+**CR-23 — done as a VARIANT:** instead of pytest markers, live-ROS files now open with
+`pytest.importorskip('rclpy')` — on a truly ROS-less runner (stage-1's case, the
+twice-bitten breakage) a forgotten ignore entry now yields a visible SKIP instead of a
+broken stage (proven via blocked-import simulation). The `--ignore` lists REMAIN: on
+ROS-present machines they are what keeps needs-a-running-sim tests out of unit runs —
+that's a different concern markers wouldn't have cleanly solved either.
+
+**DEFERRED (tracked):** CR-18 (send_goal complexity — tripwire, refactor on next
+feature), CR-19 (pip-installable packaging — pre-public), CR-20a (jargon glossary —
+pre-public), drift config's post_merge_sensitivity / ci-health metrics / firmware hard
+threshold (need schema additions first — commented block in the config), agentic loop
+`world` launch argument (R2 NL→world) and diagnose() current_value gap (S17 Piece 5
+item as before).
