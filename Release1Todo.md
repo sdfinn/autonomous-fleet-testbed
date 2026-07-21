@@ -3873,26 +3873,30 @@ This is the last cheap chance to find them at a desk.
 
 - [ ] Walk the onboarding path yourself, literally: fresh clone in a scratch directory,
       follow README.md verbatim, note every point where it lies, omits, or assumes
-      tribal knowledge. Fix the README (or the code) at each.
-- [ ] "Kick off a run" ergonomics: is there ONE documented command each for (a) unit
+      tribal knowledge. Fix the README (or the code) at each. **Partial:** README got a
+      real Quickstart + architecture-diagram rewrite (2026-07-17/18, commits 3bd2088/
+      d75fffc) — the literal recorded walkthrough itself is deferred to Final Code Review.
+- [x] "Kick off a run" ergonomics: is there ONE documented command each for (a) unit
       tests, (b) a full local sim mission, (c) the dashboard? If any needs a paragraph
-      of caveats, wrap it in a script/make target instead.
+      of caveats, wrap it in a script/make target instead. **Done** — all three are in
+      README's Quickstart section (verified 2026-07-20).
 - [ ] **Future-proofing review (audit only, no implementation):** could a user *configure*
       a mission? a world? add to a world? change or add robots? Much of this is
       deliberately not implemented in R1 — the check is that R1 decisions don't make it
       HARDER later (hardcoded robot_001 strings, missions only as Python literals,
       worlds only as hand-edited SDF). Write the gaps down; placement decisions belong
       to Session 20. Feeds the long-term "world request / mission request" pipeline
-      vision (BLUEPRINT / 10x blueprint).
+      vision (BLUEPRINT / 10x blueprint). **Deferred to Final Code Review (2026-07-20).**
 - [ ] Terminology glossary in BLUEPRINT.md — we are inconsistent across *sessions,
       pieces, tasks, steps, stages, todos* (Mike, 2026-07-17). Define the hierarchy once
       (proposal: **Session** = one work sitting → contains **Pieces** = thematic chunks →
       containing **Tasks** = checkboxes; **Stage** = CI pipeline jobs ONLY; retire
-      "steps"/"todos" in docs), then sweep the docs to match.
+      "steps"/"todos" in docs), then sweep the docs to match. **Deferred to Final Code
+      Review (2026-07-20).**
 
 ### Piece 2 — Full code review + performance + reuse
 
-- [ ] **Container-mode pre-flight hardening** (Mike, 2026-07-18 — from the sign-off
+- [x] **Container-mode pre-flight hardening** (Mike, 2026-07-18 — from the sign-off
       false start): in HIL container mode, verify the image tag exists LOCALLY on the
       Jetson before the day starts and fail with ONE loud line naming the tag —
       instead of three silent 2-second mission corpses (wrong tag → GHCR pull denied
@@ -3900,27 +3904,39 @@ This is the last cheap chance to find them at a desk.
       pull_request CI builds tag the image with the synthetic MERGE-commit sha
       (GITHUB_SHA), NOT the branch head sha — manual container runs must read the tag
       from the CI run's env or `docker images`, never construct it from `git rev-parse`.
+      **Done 2026-07-20** — `JetsonExecutor._require_image_local`, `tools/mission2_day.py`;
+      tag gotcha documented in CLAUDE.md; unit-tested (`tests/test_mission2_day.py`).
 
-- [ ] Whole-repo code review (`/code-review` at high effort, or `/code-review ultra` for
+- [x] Whole-repo code review (`/code-review` at high effort, or `/code-review ultra` for
       the multi-agent cloud pass). Triage every finding: fix now / defer with reason /
-      reject with reason — no silent drops.
+      reject with reason — no silent drops. **Done** — `Session17CodeReview.md`, 23
+      findings, 3 questions answered, 20-finding fix wave landed 2026-07-19.
 - [ ] Performance pass: mission wall time, Nav2 CPU/RAM on the Jetson at the HIL power
       mode, CI stage wall times (are Session 16's cache fixes holding?), report/dashboard
-      generation time as `fleet_runs.db` grows.
+      generation time as `fleet_runs.db` grows. **Deferred to Final Code Review (2026-07-20).**
 - [ ] Code-reuse pass: `NavRunner` vs `mission_runner` overlap, telemetry write paths,
       launch-file duplication (`sim_launch` vs the `sim_only`/`nav2_only` split) — fold
-      duplicates rather than letting three variants drift apart.
+      duplicates rather than letting three variants drift apart. **Partial (2026-07-20):**
+      `NavRunner`/`mission_runner` verified as clean composition (not duplicated) and
+      telemetry write paths already centralized (CR-15) — gut-checked before Piece 3
+      touched the same code. Launch-file duplication itself deferred to Final Code Review.
 - [ ] Delete dead code found along the way — starting with the `headless` launch arg
       (moved here from Session 16: wire it to `gz sim` or delete it in both
-      `sim_launch.py` and `sim_only_launch.py`).
+      `sim_launch.py` and `sim_only_launch.py`). **Partial:** other dead code deleted in
+      the 2026-07-19 fix wave (stale PNG, YOLO remnants, hardcoded demo goal); `headless`
+      arg itself still unwired in both files — deferred to Final Code Review.
 - [ ] Docs pass (Mike 2026-07-17): review all docs, consolidate overlapping ones, delete
       stale ones. Includes applying the Piece 1 terminology glossary, and writing the
       **Cosmos / world-foundation-models positioning paragraph** into BLUEPRINT.md
       ("the testbed for the Cosmos era" — S20 decision 2026-07-17; angles in the
-      session-17-inputs memory).
+      session-17-inputs memory). **Deferred to Final Code Review (2026-07-20)** — still
+      just a decision-record note in BLUEPRINT.md today, no actual prose written.
 - [ ] **Second review round with a different model** after the first round's fixes land
       (Mike 2026-07-17) — fresh eyes, different blind spots; `/code-review` or ultra.
-- [ ] **Carry-ins from Session 16's observed runs (2026-07-17):**
+      **Deliberately deferred to Final Code Review (2026-07-20)** — running it now would
+      mean running it twice before R1 ships.
+- [ ] **Carry-ins from Session 16's observed runs (2026-07-17):** **Deferred to Final Code
+      Review (2026-07-20).**
       - Green-photo content verification: add a *green* HSV band to the detector config
         and make the nominal-variant judge assert the sphere photo actually CONTAINS
         green pixels (found live: the "photograph the sphere" photo captured the bed —
@@ -3956,6 +3972,13 @@ This is the last cheap chance to find them at a desk.
       nodes currently print; move to `logging` with per-module loggers, a single
       documented way to flip debug verbosity on the workstation AND on the robot
       (env var or launch arg), file handlers where Piece items above need persistence.
+
+**Enhancement, noted not scoped (Mike, 2026-07-20):** once this Piece lands (framework +
+failure-taxonomy vocabulary + environment/config manifest), package the debugging
+procedure itself as a custom skill (superpowers-style) rather than leaving it as ad hoc
+"paste logs at Claude" — this is the concrete infrastructure Standing Discipline #3's
+"LLM-assisted simulation debugging" cross-cutting candidate has been missing. See that
+entry for the pairing.
 
 ### Piece 4 — Reporting & user-friendliness
 
@@ -4752,6 +4775,11 @@ pipeline do with AI now that it didn't at the last release?"* Cross-cutting cand
 to pull into ANY release when pain justifies it: **LLM-assisted simulation debugging**
 (feed launch logs + telemetry + this file's gotchas to an agent that diagnoses sim
 failures — the 2026-07-17 orphan-bridge/TF-flood class of problem is exactly its prey).
+**Refined 2026-07-20 (Mike):** package this as a custom debugging skill rather than ad
+hoc log-pasting — CLAUDE.md's Gotchas section is already an informal knowledge base of
+failure signatures; Session 17 Piece 3's logging framework, failure-taxonomy vocabulary,
+and environment/config manifest are the prerequisite infrastructure this skill would
+consume. Pull the trigger once Piece 3 lands.
 **Standing decision:** no RAG at current data scale — direct SQL context injection into
 prompts is simpler and better; revisit only when the DB outgrows a prompt.
 
