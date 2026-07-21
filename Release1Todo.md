@@ -4587,6 +4587,21 @@ fleet needs before Session 19 is for real — captured here so it doesn't quietl
   recovery — nobody can Ctrl-C a fleet robot stuck in a warehouse aisle. Root-cause this (check
   whether `/robot_001/local_costmap/costmap_raw` is actually being published/received while
   `behavior_server` is running) before Session 18 (real robot) needs unattended operation.
+  **Get this working with Nav2's PROVEN classical maneuvers first — Spin/BackUp/Wait/
+  ClearCostmap, nothing invented — and get a green regression baseline before touching
+  anything else** (Mike, 2026-07-20). **Follow-on idea, noted not scoped:** once recovery
+  is proven AND R1's inference detector pipeline exists (Session 19 item 0), consider an
+  inference-informed recovery SELECTOR — same proven maneuvers, but choose which one to
+  try first from what the camera currently sees (wall dead ahead -> back up over spin;
+  scene looks clear but costmap looks stale -> clear costmap first), reusing that same
+  pipeline rather than building a new one. Deliberately sequenced AFTER the classical
+  baseline is solid — bundling a new inference layer into the SAME work as root-causing
+  the `CostmapSubscriber` bug repeats the exact Session 11/12 mistake this section
+  documents (multiple unknowns layered with no working baseline, so a real bug becomes
+  indistinguishable from a tuning problem). Also worth sizing deliberately when its turn
+  comes: recovery triggers on a time-critical BT path (the same class of timing
+  sensitivity as the cold-goal-abort fix), and inference adds real wall-clock latency
+  right when something's already gone wrong.
 - **Accurate footprint-aware planning (`SmacPlannerHybrid`/`Lattice`).** Reverted to
   `NavfnPlanner`'s circular `robot_radius` approximation for the passing test. A circle can't
   correctly represent a rectangular chassis in tight spaces — this was the single biggest time
