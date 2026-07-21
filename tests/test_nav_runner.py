@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 pytest.importorskip('rclpy', reason='live-ROS tier: needs a ROS2 environment (S17 review CR-23 safety net - a forgotten stage-1 ignore now skips instead of breaking the stage)')
 import rclpy  # noqa: F401,E402
+from rclpy.logging import LoggingSeverity
 
 from nav_fleet.goal_retry import COLD_ABORT_RETRIES
 from nav_fleet.nav_runner import NavRunner
@@ -76,6 +77,24 @@ def _make_runner(_ros, handles, pose_seq):
     return node
 
 
+def test_logger_level_bridges_from_fleet_log_level_env(_ros, monkeypatch):
+    monkeypatch.setenv('FLEET_LOG_LEVEL', 'DEBUG')
+    node = NavRunner()
+    try:
+        assert node.get_logger().get_effective_level() == LoggingSeverity.DEBUG
+    finally:
+        node.destroy_node()
+
+
+def test_logger_level_defaults_to_info_when_env_unset(_ros, monkeypatch):
+    monkeypatch.delenv('FLEET_LOG_LEVEL', raising=False)
+    node = NavRunner()
+    try:
+        assert node.get_logger().get_effective_level() == LoggingSeverity.INFO
+    finally:
+        node.destroy_node()
+
+
 def test_cold_abort_then_success_retries_and_passes(_ros):
     # attempt 1: aborted, stationary -> cold_abort -> retry; attempt 2: succeeded.
     node = _make_runner(_ros,
@@ -96,6 +115,7 @@ def test_persistent_cold_abort_fails_after_bounded_retries(_ros):
     try:
         assert node.send_goal(1.0, 1.0, timeout=5.0) is False
         assert node._action_client.send_calls == COLD_ABORT_RETRIES + 1
+        assert node.last_failure_reason == 'nav_timeout'
     finally:
         node.destroy_node()
 
@@ -106,6 +126,7 @@ def test_immediate_success_does_not_retry(_ros):
     try:
         assert node.send_goal(1.0, 1.0, timeout=5.0) is True
         assert node._action_client.send_calls == 1
+        assert node.last_failure_reason is None
     finally:
         node.destroy_node()
 
@@ -117,6 +138,17 @@ def test_real_failure_after_moving_is_not_retried(_ros):
     try:
         assert node.send_goal(1.0, 1.0, timeout=5.0) is False
         assert node._action_client.send_calls == 1
+        assert node.last_failure_reason == 'nav_timeout'
+    finally:
+        node.destroy_node()
+
+
+def test_failure_reason_is_goal_rejected_when_action_server_unavailable(_ros):
+    node = NavRunner()
+    node._action_client.wait_for_server = lambda timeout_sec=None: False
+    try:
+        assert node.send_goal(1.0, 1.0, timeout=5.0) is False
+        assert node.last_failure_reason == 'goal_rejected'
     finally:
         node.destroy_node()
 

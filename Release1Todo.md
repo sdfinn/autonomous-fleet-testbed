@@ -3980,18 +3980,49 @@ This is the last cheap chance to find them at a desk.
       persisted output at all (minor — failures there are usually self-evident from the
       job log); (F) no backup on the sources of truth (`fleet_runs.db`, local photos) —
       adjacent to this Piece, not core to it, flagged for awareness.
-- [ ] Mission runner logs to a file on-device (not just stdout): per-step timestamps,
-      goal sent, result/error, durations — retrievable over SSH after the fact.
-- [ ] Nav2/ROS log retention + retrieval: where do they land (ROS log dir / journald once
+- [x] Mission runner logs to a file on-device (not just stdout): per-step timestamps,
+      goal sent, result/error, durations — retrievable over SSH after the fact. **Done
+      2026-07-21** — already true today via ROS's own `self.get_logger()` (the
+      2026-07-20 inventory above already established this); the missing half
+      (retrievable after the fact) is the retrieval-command bullet directly below,
+      done in the same pass.
+- [x] Nav2/ROS log retention + retrieval: where do they land (ROS log dir / journald once
       Session 19+'s systemd units exist), how long are they kept, one documented command
-      to pull them back to the workstation.
+      to pull them back to the workstation. **Done 2026-07-21** — where: confirmed
+      `~/.ros/log/<session>/` (rcl's own default, both workstation and Jetson); how
+      long: **NO retention policy exists** — confirmed on the workstation itself, 2,862
+      session directories / 2.2 GB, oldest from 2026-06-28, nothing ever cleans them;
+      retrieval: `python -m tools.pull_ros_logs` (`tools/pull_ros_logs.py`) — resolves
+      rcl's own `latest` symlink (no dir-scanning logic needed) via `readlink -f`
+      (local or over `ssh`, `JETSON_USER`/`JETSON_IP` env vars matching
+      `scripts/hil_stage.sh`'s convention) and `scp -r`/`cp -r`s the resolved session
+      dir into `reports/ros_logs/`. TDD'd (`tests/test_pull_ros_logs.py`, all
+      subprocess calls mocked) + a real non-mocked smoke test against this machine's
+      actual `~/.ros/log`. journald/systemd retention is out of scope until Session
+      19+'s systemd units actually exist — noted, not built.
 - [ ] **rosbag-on-failure:** rolling record of the key topics (`cmd_vel`, `scan`,
       `amcl_pose`, goal status), persist the last N seconds when a mission step fails.
       NVMe makes sustained recording fine (the SD-hygiene constraint died with runbook
       Part 9).
-- [ ] Failure taxonomy in telemetry: FAIL rows should say *what kind* of failure — nav
+- [x] Failure taxonomy in telemetry: FAIL rows should say *what kind* of failure — nav
       timeout, goal rejected, no camera frame, detector timeout, crash — one enum column,
-      so reports can answer "why", not just "failed".
+      so reports can answer "why", not just "failed". **Done 2026-07-21** —
+      `failure_reason` column (CR-15 registry + pandera `isin` validation, same pattern
+      as `power_mode`): `NavRunner.last_failure_reason` set to `goal_rejected` (couldn't
+      send/accept the goal) or `nav_timeout` (accepted but didn't succeed — real failure
+      or an exhausted cold-start-abort retry — deliberately collapsed to one value, not
+      subdivided further); `MissionRunner.failure_reason` set to `no_camera_frame` (from
+      `take_picture`), propagated from `nav.last_failure_reason` on a non-reactive
+      navigate-leg failure, or set to `crash` by `main()`'s except-block (overrides
+      whatever else was set — a mid-mission crash is the more specific, more severe
+      fact). **`detector_timeout` deliberately NOT implemented** — no code path in
+      `mission_runner.py` actually times out waiting on the detector today (reactions
+      just accumulate frames within the leg's own nav timeout), so adding that enum
+      value now would be a dead branch; revisit if/when such a path exists. TDD'd:
+      `tests/test_nav_runner.py` (goal_rejected + nav_timeout), `tests/test_mission_run.py`
+      (no_camera_frame + crash + propagation), `tests/test_telemetry_logger.py`
+      (column + value validation). Reports/dashboard surfacing this is Piece 4's job,
+      not done here.
 - [ ] **Python `logging` framework with a debug switch** (Mike 2026-07-17): tools and
       nodes currently print; move to `logging` with per-module loggers, a single
       documented way to flip debug verbosity on the workstation AND on the robot
@@ -4018,12 +4049,16 @@ This is the last cheap chance to find them at a desk.
       switched to this framework — they already use `self.get_logger()`, which
       already persists to `~/.ros/log` (that retrieval gap is this Piece's separate
       Nav2/ROS-log-retention bullet, not this one). Instead, their `main()`/`__init__`
-      will bridge `FLEET_LOG_LEVEL` into their ROS logger's severity via
+      bridge `FLEET_LOG_LEVEL` into their ROS logger's severity via
       `tools.log_setup.resolve_level()` (rclpy's `LoggingSeverity` int values are
       numerically identical to Python's `logging` levels — no translation table
       needed) and log the same environment manifest through `self.get_logger()`, so
       one env var and one manifest format cover both worlds without fighting ROS's
-      own log persistence. **Not yet done** — that ROS-node wiring is the next step.
+      own log persistence. **Done 2026-07-21** — `NavRunner.__init__`/
+      `MissionRunner.__init__` call `set_level(resolve_level())`; both `main()`s log
+      the env manifest (git sha + `POWER_MODE`) before doing anything else; TDD'd via
+      `tests/test_nav_runner.py`/`tests/test_mission_run.py` (2 new tests each file,
+      constructor-only, no live Gazebo/Nav2 needed).
 
 **Enhancement, noted not scoped (Mike, 2026-07-20):** once this Piece lands (framework +
 failure-taxonomy vocabulary + environment/config manifest), package the debugging

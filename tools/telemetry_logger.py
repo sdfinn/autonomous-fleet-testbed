@@ -41,6 +41,9 @@ RUNS_COLUMNS = {
     # Mission 2 return-fidelity (Task 13 §3): mean-abs grayscale diff of the home
     # reference vs home arrival photo [0..1]; NULL on non-mission2 rows and on red.
     "home_photo_similarity": "REAL",
+    # Failure taxonomy (S17 Piece 3): why a FAIL row failed, not just that it did.
+    # NULL on PASS rows and on rows logged before this column existed.
+    "failure_reason": "TEXT",
 }
 
 

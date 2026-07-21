@@ -39,6 +39,7 @@ from nav_fleet.missions import (MISSIONS, REACTION_FRAMES, REACTION_RANGE_M,
                                 validate_mission)
 from nav_fleet.nav_runner import NavRunner
 from nav_fleet.semantic_map import SEMANTIC_MAP
+from tools.log_setup import build_env_manifest, git_sha, resolve_level
 from tools.telemetry_logger import log_run
 
 PHOTO_DIR = pathlib.Path('reports/photos')
@@ -55,10 +56,15 @@ class MissionRunner(Node):
 
     def __init__(self):
         super().__init__('mission_runner')
+        self.get_logger().set_level(resolve_level())
         self.nav = NavRunner()
         self.photo_paths = []
         self.nav_durations = []
         self.nav_errors = []
+        # Failure taxonomy (S17 Piece 3): 'nav_timeout'/'goal_rejected' (from
+        # NavRunner.last_failure_reason), 'no_camera_frame', or 'crash' (set by main()'s
+        # except block). None on a passing mission. _log_mission reads this for telemetry.
+        self.failure_reason = None
         self._latest_image = None
         self.create_subscription(
             Image, '/robot_001/camera/image_raw', self._image_cb, 10
@@ -109,6 +115,7 @@ class MissionRunner(Node):
             rclpy.spin_once(self, timeout_sec=0.1)
         if self._latest_image is None:
             self.get_logger().error(f'no camera frame within {timeout}s')
+            self.failure_reason = 'no_camera_frame'
             return False
         PHOTO_DIR.mkdir(parents=True, exist_ok=True)
         path = PHOTO_DIR / f"{label}_{time.strftime('%Y%m%d_%H%M%S')}.png"
@@ -215,6 +222,8 @@ class MissionRunner(Node):
                         return react_ok
                 else:
                     ok = self.nav.send_goal(x, y, timeout=NAV_TIMEOUT_S, yaw=step.yaw)
+                    if not ok:
+                        self.failure_reason = self.nav.last_failure_reason
                 if ok:
                     self._print_leg_truth(name, step.label)  # per-leg audit (sim only)
                 # FAIL-leg policy (Session 16): a failed/timed-out leg's duration measures
@@ -239,8 +248,17 @@ def _mean(values):
     return sum(values) / len(values) if values else None
 
 
-def _log_mission(name, ok, runner):
+def _log_mission(name, ok, runner, crashed=False):
     nav = runner.nav if runner is not None else None
+    # 'crash' overrides whatever runner.failure_reason holds — a constructor crash
+    # leaves runner None (no failure_reason to read); a crash mid-mission is the more
+    # severe, more specific fact worth recording over a stale nav/camera reason.
+    if crashed:
+        failure_reason = 'crash'
+    elif not ok and runner is not None:
+        failure_reason = runner.failure_reason
+    else:
+        failure_reason = None
     log_run(
         scenario=name,
         steps=len(MISSIONS[name]),
@@ -256,6 +274,7 @@ def _log_mission(name, ok, runner):
         mean_position_error=_mean(runner.nav_errors) if runner is not None else None,
         mean_time_to_goal=_mean(runner.nav_durations) if runner is not None else None,
         power_mode=os.environ.get('POWER_MODE'),
+        failure_reason=failure_reason,
     )
 
 
@@ -267,17 +286,21 @@ def main():
     rclpy.init()
     runner = None
     ok = False
+    crashed = False
     try:
         # Constructed INSIDE the try: a constructor crash (e.g. rclpy/DDS failure) must
         # still produce the FAIL telemetry row that stage-4-hil's verdict depends on.
         runner = MissionRunner()
+        runner.get_logger().info(build_env_manifest(
+            git_sha=git_sha(), power_mode=os.environ.get('POWER_MODE')))
         ok = runner.run_mission(args.mission)
     except Exception as exc:  # still log a FAIL row on crash — docstring contract
         traceback.print_exc()
         print(f'mission {args.mission} crashed: {exc!r}')
+        crashed = True
     finally:
         rclpy.try_shutdown()
-    _log_mission(args.mission, ok, runner)
+    _log_mission(args.mission, ok, runner, crashed=crashed)
 
     print(f"Mission {args.mission}: {'PASS' if ok else 'FAIL'}")
     # Sim-only honesty readout (None on the real robot — no Gazebo there): where the

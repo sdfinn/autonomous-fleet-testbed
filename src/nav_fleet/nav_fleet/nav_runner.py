@@ -25,12 +25,14 @@ from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 
 from nav_fleet.goal_retry import (COLD_ABORT_RETRIES, classify_result)
 from nav_fleet.missions import yaw_to_quaternion
+from tools.log_setup import build_env_manifest, git_sha, resolve_level
 
 
 class NavRunner(Node):
 
     def __init__(self):
         super().__init__('nav_runner')
+        self.get_logger().set_level(resolve_level())
         self._action_client = ActionClient(
             self, NavigateToPose, '/robot_001/navigate_to_pose'
         )
@@ -43,6 +45,11 @@ class NavRunner(Node):
         self.last_final_y = None
         self.last_position_error = None
         self.last_interrupt = None
+        # Failure taxonomy (S17 Piece 3): 'goal_rejected' (couldn't send/accept the goal)
+        # or 'nav_timeout' (accepted but didn't succeed — real failure or a persisted
+        # cold-start abort). None on success or on an interrupt (a fired reaction is not
+        # a failure). mission_runner.py reads this to populate telemetry's failure_reason.
+        self.last_failure_reason = None
         # Cancel-on-final-failure zombie guard (Task 13 fix wave): the most recent goal
         # handle, so a failure path can cancel a still-executing controller instead of
         # leaving an unsupervised robot driving a goal Nav2's BT already gave up on.
@@ -85,6 +92,7 @@ class NavRunner(Node):
         self.last_final_y = None
         self.last_position_error = None
         self.last_interrupt = None
+        self.last_failure_reason = None
         start_time = time.time()
         steps = 0
 
@@ -95,6 +103,7 @@ class NavRunner(Node):
 
         if not self._action_client.wait_for_server(timeout_sec=15.0):
             self.get_logger().error('Nav2 action server unavailable')
+            self.last_failure_reason = 'goal_rejected'
             return self._finish(False, x, y, start_time, steps)
 
         goal = NavigateToPose.Goal()
@@ -190,7 +199,10 @@ class NavRunner(Node):
         for cold_attempt in range(COLD_ABORT_RETRIES + 1):
             outcome = attempt()
             kind = outcome[0]
-            if kind in ('send_fail', 'interrupt'):
+            if kind == 'send_fail':
+                self.last_failure_reason = 'goal_rejected'
+                return self._finish(False, x, y, start_time, steps)
+            if kind == 'interrupt':
                 return self._finish(False, x, y, start_time, steps)
             _, succeeded, elapsed, displacement = outcome
             verdict = classify_result(succeeded, elapsed, displacement)
@@ -211,6 +223,9 @@ class NavRunner(Node):
                 self.get_logger().error(
                     f'cold-start abort persisted after {COLD_ABORT_RETRIES} retries — '
                     'treating as a real failure')
+            # verdict is 'failure' or an exhausted 'cold_abort' — both are the goal
+            # accepting but not completing successfully within its attempt(s).
+            self.last_failure_reason = 'nav_timeout'
             # Zombie guard (2026-07-18, Jetson nav2_hil.log): bt_navigator can abort our
             # handle while the controller still executes the delivered path — the robot
             # then drives with NO supervising mission. Cancel whatever is outstanding
@@ -242,6 +257,7 @@ def main():
     args = parser.parse_args()
     rclpy.init()
     node = NavRunner()
+    node.get_logger().info(build_env_manifest(git_sha=git_sha()))
     success = node.send_goal(args.x, args.y, yaw=args.yaw)
     print('Goal succeeded' if success else 'Goal failed')
     node.destroy_node()

@@ -69,6 +69,11 @@ class RunsModel(DataFrameModel):
     # power_mode: the Jetson nvpmodel label the run executed at (CR-13 — previously in
     # the known-column set but value-unvalidated).
     power_mode: Series[str] = pa.Field(isin=["15W", "25W", "MAXN_SUPER"], nullable=True)
+    # failure_reason: why a FAIL row failed (S17 Piece 3) — nullable, NULL on PASS rows.
+    # Fixed enum, same value-validation policy as power_mode (CR-13): garbage must fail
+    # schema validation, not pass through unexamined.
+    failure_reason: Series[str] = pa.Field(
+        isin=["goal_rejected", "nav_timeout", "no_camera_frame", "crash"], nullable=True)
 
 
 RUNS_SCHEMA = RunsModel.to_schema()

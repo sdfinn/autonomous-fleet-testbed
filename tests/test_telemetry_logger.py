@@ -93,3 +93,30 @@ def test_power_mode_values_validated(db_path):
     log_run(scenario="s", steps=1, final_x=0.0, final_y=0.0, result="PASS",
             step_log=[], db_path=db_path, power_mode="9000W")
     assert validate_runs(db_path) is False
+
+
+def test_failure_reason_column_exists(tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    cols = {r[1] for r in sqlite3.connect(db).execute("PRAGMA table_info(runs)")}
+    assert "failure_reason" in cols
+
+
+def test_log_run_failure_reason_defaults_null(db_path):
+    log_run(scenario="s", steps=1, final_x=0.0, final_y=0.0, result="PASS",
+            step_log=[], db_path=db_path)
+    row = sqlite3.connect(db_path).execute(
+        "SELECT failure_reason FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+    assert row[0] is None
+
+
+def test_failure_reason_values_validated(db_path):
+    """S17 Piece 3: FAIL rows should say why, from a fixed enum — garbage must fail
+    schema validation instead of passing unexamined (same policy as power_mode/CR-13)."""
+    from tools.validate_telemetry import validate_runs
+    log_run(scenario="s", steps=1, final_x=0.0, final_y=0.0, result="FAIL",
+            step_log=[], db_path=db_path, failure_reason="nav_timeout")
+    assert validate_runs(db_path) is True
+    log_run(scenario="s", steps=1, final_x=0.0, final_y=0.0, result="FAIL",
+            step_log=[], db_path=db_path, failure_reason="robot_exploded")
+    assert validate_runs(db_path) is False
