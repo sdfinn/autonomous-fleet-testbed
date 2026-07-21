@@ -838,3 +838,53 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   sequenced after the classical baseline is solid, not bundled in — bundling would
   repeat the exact Session 11/12 multiple-unknowns mistake this file already
   documents.
+- **2026-07-21 — Robot Report software/simulation category survey (Mike).** Read 6
+  recent articles from `therobotreport.com`'s software/simulation category; three
+  trends, each checked against this project rather than accepted at face value:
+  1. **Generative/foundation-model world-building is replacing hand-authored sim
+     environments** — AGIBOT's Genie Sim 3.0 (text/image prompt → interactive 3D
+     environment in minutes) + Genie Envisioner 2.0, NVIDIA Cosmos 3.0, Antioch's
+     platform (generative world models layered on Isaac Sim/Unreal). **Direct
+     validation, not speculation** — this is the exact shape of R2's NL→world-generation
+     pillar and the still-unwritten Cosmos-era positioning paragraph queued in this
+     file's decision log (2026-07-17 entry) and Release1Todo.md Piece 2 — Genie
+     Sim/Cosmos 3.0/Antioch are concrete named peers worth citing when that paragraph
+     is actually written, instead of gesturing at "the Cosmos era" abstractly.
+  2. **Sim-to-real fidelity is becoming the industry's actual evaluation currency**,
+     simulation reframed as training infrastructure rather than a test tool — AGIBOT
+     ships standardized sim-to-real benchmark suites; Antioch goes furthest,
+     explicitly *replacing* physical testing with thousands of simulated scenario
+     variants. **Validates the HIL loop, but also sharpens a real positioning
+     choice**: this project deliberately does NOT replace physical testing — a real
+     Jetson/robot in the loop as ground truth is the whole point of the tiered
+     pipeline. Worth stating as a stance ("sim-first, never sim-only"), not hedging
+     it, the next time this gets written up publicly.
+  3. **Consolidation around NVIDIA's Omniverse/Isaac/Cosmos stack** (110 partners per
+     GTC: ABB, AGIBOT, Buildroid, Antioch all build on it), alongside a shift toward
+     RaaS/fleet-orchestration business models (Buildroid's real shared-savings
+     construction-robot fleet). **A genuine tension, named rather than glossed over**:
+     the industry is consolidating hard on NVIDIA's stack; this project sits on ROS2 +
+     Gazebo Harmonic (Isaac was evaluated and set aside as Tier 1 back in Session
+     11/12 — see 2026-07-02 entry above). Defensible — lighter, more open, runs on
+     bare CI runners with no GPU dependency — but it means swimming somewhat against
+     the ecosystem's current, and that tradeoff deserves an explicit sentence in any
+     public positioning doc rather than silence. The RaaS thread is a cleaner win:
+     Buildroid's real deployment is solid external validation for the RaaS framing
+     already noted in this decision log (2026-07-17 entry, "RaaS framing → R2
+     write-up adjacency").
+- **2026-07-21 — Robot Report soft-robotics category survey, page 2 (Mike, hindsight
+  angle).** Read 5 articles spanning 2018–2026, deliberately older/more dated, checked
+  against what actually happened rather than taken as current signal. Almost none of
+  the *hardware* content applies here — this project is a fully rigid wheeled
+  platform by design, no manipulation, no compliant actuators. But one finding is a
+  clean structural echo worth recording as outside validation: **Soft Robotics Inc.**
+  (founded 2012 on the thesis that soft grippers were the general answer to
+  industrial picking) **divested its entire gripper business in August 2024** (to J.
+  Schmalz) and pivoted fully to AI-powered vision inspection (spinoff Oxipital AI) —
+  the CEO's stated reason was that "grippers are a niche business," i.e. a decade of
+  actuator-hardware innovation proved less durable/valuable than the AI/perception
+  layer wrapped around commodity hardware. That is the *exact same bet* this
+  project's 2026-06-27 decision made explicitly ("all career/product value live on
+  the infrastructure axis, not the robot-ambition axis") — from a completely
+  unrelated hardware domain. Worth citing as external validation if that thesis ever
+  needs outside evidence in a public writeup.
