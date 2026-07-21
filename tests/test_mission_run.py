@@ -20,8 +20,10 @@ import pathlib
 import pytest
 pytest.importorskip('rclpy', reason='live-ROS tier: needs a ROS2 environment (S17 review CR-23 safety net - a forgotten stage-1 ignore now skips instead of breaking the stage)')
 import rclpy  # noqa: F401,E402
+from rclpy.logging import LoggingSeverity
 from PIL import Image as PILImage
 
+from nav_fleet import mission_runner as mission_runner_module
 from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.mission_runner import MissionRunner
 from nav_fleet.missions import MISSIONS
@@ -79,6 +81,7 @@ class _StubNav:
     last_final_x = 0.0
     last_final_y = 0.0
     last_interrupt = None
+    last_failure_reason = 'nav_timeout'
 
     def send_goal(self, x, y, timeout=90.0, yaw=None, interrupt_cb=None, spin_extra=None):
         return False
@@ -92,6 +95,41 @@ def test_failed_leg_metrics_excluded(runner, monkeypatch):
     assert runner.run_mission('mission1') is False
     assert runner.nav_durations == []
     assert runner.nav_errors == []
+    assert runner.failure_reason == 'nav_timeout'
+
+
+def test_take_picture_sets_no_camera_frame_failure_reason(ros_context):
+    # Fresh instance — no live camera publisher in this environment, so a short timeout
+    # exercises the real "no frame arrived" path without needing Gazebo.
+    node = MissionRunner()
+    try:
+        assert node.take_picture('probe', timeout=0.2) is False
+        assert node.failure_reason == 'no_camera_frame'
+    finally:
+        node.nav.destroy_node()
+        node.destroy_node()
+
+
+def test_log_mission_records_crash_failure_reason(monkeypatch):
+    """main()'s except-block sets crashed=True when construction/run_mission raises —
+    _log_mission must report 'crash', not whatever runner.failure_reason happens to be
+    (runner is often None here — the constructor itself is what crashed)."""
+    captured = {}
+    monkeypatch.setattr(mission_runner_module, 'log_run', lambda **kwargs: captured.update(kwargs))
+    mission_runner_module._log_mission('mission1', False, None, crashed=True)
+    assert captured['failure_reason'] == 'crash'
+
+
+def test_logger_level_bridges_from_fleet_log_level_env(ros_context, monkeypatch):
+    # Fresh instance, not the shared session `runner` fixture — the env var must be set
+    # before construction, and the session fixture may already be built by other tests.
+    monkeypatch.setenv('FLEET_LOG_LEVEL', 'DEBUG')
+    node = MissionRunner()
+    try:
+        assert node.get_logger().get_effective_level() == LoggingSeverity.DEBUG
+    finally:
+        node.nav.destroy_node()
+        node.destroy_node()
 
 
 class _StubNavOk:

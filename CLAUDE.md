@@ -111,10 +111,24 @@ docker buildx build --platform linux/arm64 \
     events. `mission2_day.py` is fully migrated (its log lands at
     `STATE_DIR/mission2_day.log`, uploaded in Stage 4's evidence artifact); `NavRunner`/
     `MissionRunner` are NOT being switched to this (they already use ROS's own
-    `self.get_logger()`, which already persists to `~/.ros/log`) — next step is bridging
-    `FLEET_LOG_LEVEL` into their ROS logger severity instead. See CLAUDE.md's
-    `propagate=False` gotcha below if you add a new logger name and its output vanishes
-    under pytest.
+    `self.get_logger()`, which already persists to `~/.ros/log`) — instead, both nodes'
+    `__init__` now call `self.get_logger().set_level(resolve_level())` (2026-07-21;
+    rcutils `LoggingSeverity` values are numerically identical to Python's `logging`
+    levels, confirmed against `/opt/ros/jazzy/.../logging_severity.py` — no translation
+    table needed), and both `main()`s log an env manifest (git sha, and `POWER_MODE` for
+    the mission runner) via `self.get_logger().info(build_env_manifest(...))` before
+    doing anything else. Covered by `tests/test_nav_runner.py` and `tests/test_mission_run.py`
+    (constructing the node is enough to exercise this — no live Gazebo/Nav2 needed for
+    these two tests specifically, even though the rest of those files require it). See
+    CLAUDE.md's `propagate=False` gotcha below if you add a new logger name and its
+    output vanishes under pytest.
+  - `pull_ros_logs.py` — S17 Piece 3 (2026-07-21): `python -m tools.pull_ros_logs` — the
+    one documented command to retrieve a robot's ROS2 logs. `~/.ros/log/` has NO
+    automatic retention (confirmed: 2,862 session dirs / 2.2 GB on the workstation
+    alone, oldest 2026-06-28); this resolves rcl's own `latest` symlink (`readlink -f`,
+    local or over `ssh` using `JETSON_USER`/`JETSON_IP` — same env vars as
+    `scripts/hil_stage.sh`) and `scp -r`/`cp -r`s the session dir into
+    `reports/ros_logs/`. `--host ''` forces local (no ssh).
 - `tests/`          — pytest test suite
 - `config/`         — drift_config.yaml
 - `robot_profiles/` — Per-robot capability YAML
