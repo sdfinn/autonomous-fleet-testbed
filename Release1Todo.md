@@ -3954,8 +3954,32 @@ This is the last cheap chance to find them at a desk.
 > Design question for every item: a mission fails on the real robot in another room —
 > can you determine **why**, from the workstation, after the fact, without re-running it?
 
-- [ ] Inventory what actually persists per run today (one telemetry row, photos, whatever
-      scrolled past in launch terminals) and write down the post-mortem gaps.
+- [x] Inventory what actually persists per run today (one telemetry row, photos, whatever
+      scrolled past in launch terminals) and write down the post-mortem gaps. **Done
+      2026-07-20.** What persists: `fleet_runs.db` (aggregate metrics only — no "why",
+      no failure taxonomy, no per-step data); `reports/photos/` (untracked locally, no
+      backup; scp'd to CI's 90-day mission-evidence artifact for HIL); ROS2 per-node
+      logs in `~/.ros/log/<session>/` (BOTH `NavRunner` and `MissionRunner` already log
+      rich detail via `get_logger()` — goal timeouts/retries/rejections/interrupts,
+      step narrative, reactions — but this is NEVER retrieved, uploaded, or backed up by
+      anything; zero retention policy); mission CLI `print()` output (HIL: captured via
+      subprocess into `day_<label>.out`, uploaded; LOCAL/Tier-1 sim: terminal-only,
+      gone); `stage2_sim.log` (Gazebo/bridge boot only, not mission content, uploaded);
+      Jetson's per-run Nav2 process log (scp'd + uploaded — this already works, came out
+      of the yellow-bug forensics). CI artifact retention confirmed 90 days (no
+      override; verified via `gh api`). **Post-mortem gaps:** (A) no failure taxonomy —
+      a FAIL row says FAIL, not why; (B) the richest data (ROS node logs) is the LEAST
+      accessible — good detail already exists, trapped in `~/.ros/log` with no
+      retrieval command, and never pulled for HIL runs (only the raw Nav2 process log
+      is, which is a different thing); (C) local/Tier-1 sim runs persist almost
+      nothing — no equivalent of the HIL evidence artifact exists for a dev-loop run,
+      which matters directly for Stage 2 needing to exercise the same logging path as
+      the robot; (D) no environment/config context anywhere — none of the above records
+      git sha, power mode, or (once it lands) CUDA/model versions, so even perfect event
+      logs can't rule out "was this a different environment"; (E) Stage 1 has no
+      persisted output at all (minor — failures there are usually self-evident from the
+      job log); (F) no backup on the sources of truth (`fleet_runs.db`, local photos) —
+      adjacent to this Piece, not core to it, flagged for awareness.
 - [ ] Mission runner logs to a file on-device (not just stdout): per-step timestamps,
       goal sent, result/error, durations — retrievable over SSH after the fact.
 - [ ] Nav2/ROS log retention + retrieval: where do they land (ROS log dir / journald once
@@ -3972,6 +3996,15 @@ This is the last cheap chance to find them at a desk.
       nodes currently print; move to `logging` with per-module loggers, a single
       documented way to flip debug verbosity on the workstation AND on the robot
       (env var or launch arg), file handlers where Piece items above need persistence.
+      **Foundation landed 2026-07-20:** `tools/log_setup.py` — `FLEET_LOG_LEVEL` env
+      var switch (default INFO), `get_logger(name)` per-module loggers namespaced
+      under `fleet.*`, bracketed-tag formatter (`[LEVEL] [name] message`, matches the
+      house convention), optional file handler that always captures DEBUG+ regardless
+      of console level (post-mortem forensics stay generous even on a quiet console).
+      12 unit tests (`tests/test_log_setup.py`), TDD'd. Found and fixed a real
+      environment gotcha along the way — see CLAUDE.md ("Under pytest in this repo...
+      propagate=False"). Not yet wired into `NavRunner`/`MissionRunner`/`mission2_day`
+      — that's the next step (replacing their `print`/ad hoc `get_logger()` calls).
 
 **Enhancement, noted not scoped (Mike, 2026-07-20):** once this Piece lands (framework +
 failure-taxonomy vocabulary + environment/config manifest), package the debugging
