@@ -4323,6 +4323,46 @@ This is the last cheap chance to find them at a desk.
 > in hand** — items 1–4 are doable pre-chassis, item 5 is anytime, item 6 is
 > post-Session-18 by definition.
 
+**0. Let's resolve and do this first.**
+1. Install CUDA/cuDNN/TensorRT on the Jetson (`sudo apt install nvidia-jetpack` — the OS flash is already done, this is the separate layer), once we've banked one more full-green CI day.
+2. Document the installed versions somewhere durable (Jetson runbook / CLAUDE.md).
+3. Prove the install broke nothing: full 8-job CI green + one HIL day.
+4. Build a GPU inference canary that's decoupled from the robot entirely — real inference on a fixture image or clip, not a fake GPU op.
+5. Push that canary through the same four stages everything else goes through: unit-test the logic, run real inference on the workstation's RTX 5080 in the sim job, build the arm64/Jetson artifact, run it for real on the Jetson's GPU in HIL, validate again once the physical robot exists.
+6. Decide where model weights live — leaning toward just committing the small ones.
+7. Get a real result fast with zero training: stock YOLOv8-nano already knows "sports ball" out of the box.
+8. Then build the real detector: Gazebo auto-labels its own training data for free (randomized spawns, ground truth = label), classes expand past red-ball to croquet balls + others, "stop" becomes a hazard class instead of a hardcoded color.
+9. Wire it into the mission logic that already exists, unchanged — the robot branches on its own on-device inference, no human involved. That's the actual autonomy claim.
+10. Meanwhile, prototype the pipeline against your USB webcam, totally decoupled from the Jetson — fast iteration, with the understanding that the real camera will need its own calibration pass later.
+11. Reuse that same plumbing for a small set of recorded gesture clips as CI-testable fixtures — the first real slice of gesture recognition, no live human required.
+12. Explicitly NOT in this list: live gesture reading on the robot, vision-guided docking, and surface-speed-by-terrain-type — all real ideas, all deliberately later.
+
+**Final code review (new section, 2026-07-20).** Session 17 Piece 1/2's remaining gaps,
+deliberately deferred rather than fixed piecemeal — R1 gets a real end-of-release code
+review anyway, so this is the second (and better-informed) pass at these, not a dropped
+ball. Two items that WERE worth fixing immediately (before Piece 3 touched the same code)
+already landed 2026-07-20: container-mode HIL image-tag pre-flight (`JetsonExecutor.
+_require_image_local`, `tools/mission2_day.py` — see CLAUDE.md gotcha) and a reuse
+gut-check confirming `NavRunner`/`mission_runner` are cleanly composed, not duplicated
+(telemetry writes already centralized post-CR-15) — so Piece 3's logging work is clear
+to proceed without fighting duplication. Deferred to this final pass:
+- From Piece 1: future-proofing review (audit only — could a user configure a
+  mission/world/robot without R1 decisions making it harder later?); terminology
+  glossary in BLUEPRINT.md (Session/Piece/Task/Stage hierarchy).
+- From Piece 2: performance pass (mission wall time, Nav2 CPU/RAM at HIL power mode, CI
+  stage wall times, report/dashboard gen time at scale); launch-file duplication
+  (`sim_launch.py` vs `sim_only_launch.py`/`nav2_only_launch.py` — the NavRunner/
+  mission_runner half of this item is resolved, see above); dead code (`headless`
+  launch arg — still declared, still never wired to `gz sim`, in both launch files);
+  docs pass (consolidate/delete stale docs, sweep in the terminology glossary once it
+  exists, write the Cosmos/world-foundation-models positioning paragraph into
+  BLUEPRINT.md — still just a decision-record note today, no actual prose); second
+  review round with a different model (belongs here, not earlier — running it before
+  R1's real final pass would mean running it twice); Session 16 observed-run carry-ins
+  (green-photo content check — the "photograph the sphere" shot can capture the bed
+  instead and nothing catches it; `sphere_approach` dresser-clearance judge; final
+  triage of accumulated per-task Minor findings).
+
 **1. Real-camera tier (webcam → Jetson; HIGHEST value, doable today).** The biggest
 sim-to-real unknown in Mission 2: HSV bands were tuned on rendered pixels; real
 lighting/hue is where they break. Plug the webcam into the Jetson, run ball_detector
@@ -4733,5 +4773,102 @@ question it.
 - **2026-07-18 (same night, Mike):** Release1Todo.md is the go-to doc — this section
   is the living roadmap home (no summary at the top of the file); Standing Disciplines
   1–4 added; `LearningLog.md` created.
+
+---
+
+### 2026-07-20 — Autonomy planning session (R1 gets real inference; R2–R4 framing sketch)
+
+**Problem stated (Mike):** the project is named autonomous-fleet-testbed but ships zero
+real inference — HSV color thresholding is pure OpenCV, no model, no GPU, nothing
+"autonomous" runs today. Decided: this gets fixed in R1, not deferred to R2.
+
+**Label change:** the "on-robot compute + autonomy slice" (R2 section, added
+2026-07-19) is pulled forward into R1. R2's three agentic pillars are unaffected —
+only the perception/inference slice moves.
+
+**Four autonomy ideas from an external ideation chat, evaluated against this repo's
+real architecture and constraints:**
+- **Idea 2 (object detection replacing HSV) — adopted for R1.** Mission architecture
+  (`MissionStep`/reactions/`BallOps`) is verb-based and detector-agnostic — swapping
+  HSV for a learned model touches one function's internals, not mission/judge/
+  telemetry code. Also retires a real, already-known bug class (FOV-edge range
+  error) by using the OAK-D Lite's depth topic — declared in
+  `robot_profiles/jetson_ugv_pt.yaml`, never actually subscribed to anywhere in
+  code today. Classes expand beyond "red ball": croquet balls + other objects,
+  "full stop" generalized to a hazard class rather than hardcoded color.
+- **Idea 1 (surface-classification speed) — not adopted as inference.** Mike's
+  reframe (fast en route, slow near target) doesn't need a model — it's a Nav2
+  approach-velocity-scaling parameter, a control-tuning task. Real merge point for
+  later: modulate speed by detection CONFIDENCE (slow when uncertain/hunting, fast
+  when clear) — reuses Idea 2's pipeline, is genuine inference-driven behavior.
+  Worth doing on its own merits regardless (ties to the already-logged
+  sphere_approach/dresser-clearance finding), just not as an autonomy proof point.
+- **Idea 3 (vision-guided docking) — pushed to R3/R4.** Needs a physical charging
+  dock that doesn't exist yet; pairs naturally with "going untethered — systemd
+  autostart," already deferred out of R1. Build together, later.
+- **Idea 4 (human gesture control) — split.** LIVE on-robot gesture reading can't
+  run unattended in CI (needs a physical human present) — stays a manual demo
+  capability, pushed later. RECORDED-CLIP gesture recognition is CI-gradable
+  (deterministic fixture replay, same pattern as Mission 2's seeded ball
+  placement) and folds into the R1 inference canary below as its first slice —
+  this reframe reversed the earlier "CI-unattended" objection to Idea 4.
+
+**R1 build order agreed 2026-07-20 (see chat for full discussion/reasoning):**
+1. Install CUDA/cuDNN/TensorRT on the Jetson (`sudo apt install nvidia-jetpack`;
+   JetPack 7.2 OS flash is already done — this is the separate apt layer) — after
+   one more full-green CI day (Session 17's logging/debugging work will produce
+   runs naturally; no separate action needed to satisfy this).
+2. Document installed versions in the Jetson runbook / CLAUDE.md.
+3. Prove it broke nothing: full 8-job CI green + one HIL day post-install.
+4. Build a GPU inference canary decoupled from the robot/mission — real inference
+   (classify a bundled fixture image/clip with a small pretrained model, assert
+   expected result), not a synthetic kernel op.
+5. Route the canary through the existing stage structure: Stage 1 unit tests for
+   parsing/logic → Stage 2 real inference on the x86 workstation runner's RTX 5080
+   (already GPU-labeled) inside the Gazebo job → Stage 3 build the arm64/Jetson
+   TensorRT artifact → Stage 4 run for real on Jetson GPU under HIL (simulated
+   camera via Gazebo bridge) → real-robot validation once hardware exists.
+6. Decide model-weight storage: lean toward committing small nano-model weights
+   directly (a few MB), revisit only if size becomes a real problem.
+7. Fast first proof, no custom training: stock YOLOv8-nano COCO weights already
+   include a "sports ball" class — use it to get real learned-model inference
+   working end-to-end before building anything custom.
+8. Build the real multi-class detector: Gazebo auto-labeled synthetic training data
+   (randomized object pose/lighting; ground-truth pose IS the label, zero manual
+   annotation), classes per Idea 2 above.
+9. Wire the new detector into the EXISTING mission reaction state machine,
+   unchanged otherwise — the actual proof point: "the mission branches on its own
+   on-device inference, no human in the loop."
+10. In parallel: prototype pipeline logic against Mike's USB webcam, decoupled from
+    Jetson/robot hardware, for iteration speed — pipeline-validation only; flag
+    that real-camera recalibration is required later (webcam resolution/color ≠
+    OAK-D Lite, same class of gap as the shadows-recalibration precedent).
+11. Fold in a small set of recorded gesture clips (stop-hand, point-left,
+    point-right) as deterministic CI fixtures reusing the same canary/detector
+    plumbing — Idea 4's CI-gradable first slice.
+12. Explicitly parked, not in this list: live on-robot gesture reading, vision-
+    guided docking, pure (non-confidence-based) surface-classification speed.
+
+**R&D process decision:** free-form play (webcam, croquet balls, gestures, "just
+want to check something out") happens in a separate lightweight space OUTSIDE this
+repo's CI-gated structure — same pattern already proven with `BC/isaac_project`
+(external reference/experimentation, selectively and deliberately migrated in once
+proven, never organically grown in place). Not a scoped R1 step; an ongoing parallel
+practice. Findings worth keeping get a note in `LearningLog.md` or graduate in with
+tests when ready.
+
+**R2–R4 autonomy-ladder framing (sketch only — needs its own dedicated planning
+pass, not done today):** autonomy shows up at a DIFFERENT level each release, which
+is the interview-answer differentiator (most robotics portfolios only claim the
+first kind):
+- R1: the robot makes a real perception-driven decision on-device — no cloud, no
+  human in the loop, works with the network off.
+- R2: the TESTING PROCESS becomes autonomous — an agent diagnoses failures from
+  telemetry and proposes fixes, human approves.
+- R3: autonomy at fleet scale — missions/worlds/robots become configured inputs,
+  not hand-coded scripts.
+- R4: deeper on-robot autonomy — richer perception, more sophisticated decisions.
+- R5: the pipeline tests itself, using the same drift/agentic tooling on its own
+  health that it uses on the robot.
 
 *End of Release1Todo.md*

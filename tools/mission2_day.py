@@ -193,6 +193,33 @@ class JetsonExecutor(MissionExecutor):
             raise RuntimeError('JetsonExecutor needs JETSON_IP (run: hil_stage.sh discover)')
         self.ip = jetson_ip
         self.state_dir = state_dir
+        self.image = None
+        if os.environ.get('HIL_CONTAINER') == '1':
+            self.image = os.environ['HIL_IMAGE']   # KeyError is a real misconfiguration — surface
+            self._require_image_local()
+
+    def _require_image_local(self):
+        # Pre-flight (S17 Piece 2 carry-in, from the sign-off false start): a wrong tag ->
+        # GHCR pull denied -> `docker run` dies in ~2s, three times, silently — looks
+        # exactly like a mission failure with no clue why. Check the tag exists LOCALLY on
+        # the Jetson BEFORE the day starts and fail with ONE loud line naming it instead.
+        # Tag gotcha: CI's pull_request builds tag the image with the synthetic MERGE
+        # commit sha (GITHUB_SHA), NOT the branch head sha — a manual run must read the
+        # real tag from the CI run's env or `docker images` on the Jetson, never construct
+        # one from `git rev-parse`.
+        proc = subprocess.run(
+            ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
+             f'{JETSON_USER}@{self.ip}',
+             f'docker image inspect {self.image} >/dev/null 2>&1'],
+            capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f'HIL_IMAGE {self.image!r} is not present locally on the Jetson — '
+                f'`docker run` would fail in ~2s per mission and look like a mission '
+                f'failure, not a config error. Pull it first (docker login ghcr.io + '
+                f'docker pull {self.image}), or read the real tag from `docker images` '
+                f'on the Jetson / the CI run env instead of constructing one from '
+                f'git rev-parse.')
 
     def run(self, ball_xy=None, color=None):
         label = color or 'no_ball'
@@ -217,7 +244,7 @@ class JetsonExecutor(MissionExecutor):
         # dir puts photos on the Jetson host so the same scp path works either way. Bare-metal
         # (HIL_CONTAINER unset) is the default — used for local proofs.
         if os.environ.get('HIL_CONTAINER') == '1':
-            image = os.environ['HIL_IMAGE']   # KeyError is a real misconfiguration — surface it
+            image = self.image
             cmd = (
                 "docker run --rm --name hil_mission2 --network host --ipc host "
                 "-v $HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports "
