@@ -72,8 +72,12 @@ class RunsModel(DataFrameModel):
     # failure_reason: why a FAIL row failed (S17 Piece 3) — nullable, NULL on PASS rows.
     # Fixed enum, same value-validation policy as power_mode (CR-13): garbage must fail
     # schema validation, not pass through unexamined.
+    # startup_crash (added 2026-07-21): the process died before it ever reached
+    # _log_mission — mission2_day.py's orchestrator synthesizes this row itself,
+    # since mission_runner.py never got far enough to log anything.
     failure_reason: Series[str] = pa.Field(
-        isin=["goal_rejected", "nav_timeout", "no_camera_frame", "crash"], nullable=True)
+        isin=["goal_rejected", "nav_timeout", "no_camera_frame", "crash", "startup_crash"],
+        nullable=True)
 
 
 RUNS_SCHEMA = RunsModel.to_schema()

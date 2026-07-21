@@ -53,11 +53,13 @@ import threading
 import time
 
 from nav_fleet.ground_truth import get_ground_truth_xy
+from nav_fleet.missions import MISSIONS
 from tools.log_setup import build_env_manifest, configure, get_logger, git_sha
 from tools.mission2_harness import (BALL_AT_SPHERE_XY, BALL_REMOVAL_SETTLE_S,
                                     home_pair_similarity, judge_no_ball, judge_red,
                                     judge_yellow, log_variant_row, parse_reaction_events,
                                     remove_ball, spawn_ball)
+from tools.telemetry_logger import log_run
 
 log = get_logger('mission2_day')
 
@@ -233,6 +235,7 @@ class JetsonExecutor(MissionExecutor):
         log_text, mrc = self._ssh_mission2(label)
         if poller is not None:
             poller.stop()
+        self._log_startup_crash_if_needed(log_text, mrc)
         events = parse_reaction_events(log_text)
         if poller is not None and color is not None:
             rxy = poller.reaction_xy
@@ -307,6 +310,36 @@ class JetsonExecutor(MissionExecutor):
                 capture_output=True, text=True).returncode
             if rc != 0:
                 log.warning(f'could not scp Jetson failure bag {rel}')
+
+    def _log_startup_crash_if_needed(self, log_text, mrc):
+        """S17 Piece 3 finding (2026-07-21): if mission_runner.py dies before its own
+        _log_mission() call runs (e.g. an import-time crash, or anything before
+        rclpy.init()), NO telemetry row is written anywhere — the attempt is invisible
+        to fleet_runs.db, not merely a FAIL, even though the raw crash text IS captured
+        in day_<label>.out. The process's own completion print ('Mission mission2:
+        PASS/FAIL') only ever fires AFTER _log_mission() has already run — main() does
+        `raise SystemExit(0 if ok else 1)` for every OTHER outcome (including a normal,
+        handled FAIL), so mrc != 0 alone is not the signal; its combination with the
+        completion line being ABSENT is. Synthesize the row ourselves here so the
+        workstation DB (what stage-5/the dashboard actually read) has some record of
+        the attempt instead of silence."""
+        if mrc == 0 or 'Mission mission2:' in log_text:
+            return
+        log.warning('mission_runner died before logging its own telemetry row — '
+                    'synthesizing a startup_crash FAIL row')
+        log_run(
+            scenario='mission2',
+            steps=len(MISSIONS['mission2']),
+            final_x=0.0, final_y=0.0,
+            result='FAIL',
+            step_log=[],
+            robot_id=os.environ.get('ROBOT_ID', 'robot_001'),
+            robot_type='jetson_ugv_pt',
+            runner_type='hil_jetson',
+            sim_engine='real',
+            power_mode=POWER_MODE_LABEL,
+            failure_reason='startup_crash',
+        )
 
 
 class _ReactionPoller(threading.Thread):
