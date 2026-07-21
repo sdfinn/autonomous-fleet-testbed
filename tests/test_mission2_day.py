@@ -122,3 +122,45 @@ def test_pull_failure_bags_no_bag_line_makes_no_scp_call(monkeypatch, tmp_path):
 
     ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
     ex._pull_failure_bags('mission2: PASS, no failure bag here\n')
+
+
+def test_no_startup_crash_row_on_clean_exit(monkeypatch):
+    """mrc == 0 (script completed normally, whatever the mission result) — never
+    synthesize a row; mission_runner.py's own _log_mission already handled it."""
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    captured = []
+    monkeypatch.setattr(mission2_day_module, 'log_run', lambda **kw: captured.append(kw))
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    ex._log_startup_crash_if_needed('Mission mission2: FAIL\n', mrc=0)
+    assert captured == []
+
+
+def test_no_startup_crash_row_when_completion_line_present(monkeypatch):
+    """mrc != 0 CAN happen on a normal, handled FAIL (main() does `raise
+    SystemExit(0 if ok else 1)`) — the completion print line is the real signal that
+    _log_mission already ran, not the exit code alone."""
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    captured = []
+    monkeypatch.setattr(mission2_day_module, 'log_run', lambda **kw: captured.append(kw))
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    ex._log_startup_crash_if_needed('...\nMission mission2: FAIL\n', mrc=1)
+    assert captured == []
+
+
+def test_startup_crash_row_logged_when_process_died_before_completion_line(monkeypatch):
+    """mrc != 0 AND no completion line — the process died before _log_mission ever
+    ran (e.g. an import-time crash). Synthesize the FAIL row ourselves so the
+    workstation DB has SOME record instead of the attempt being invisible."""
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    captured = []
+    monkeypatch.setattr(mission2_day_module, 'log_run', lambda **kw: captured.append(kw))
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    ex._log_startup_crash_if_needed(
+        'Traceback (most recent call last):\nModuleNotFoundError: ...\n', mrc=1)
+    assert len(captured) == 1
+    row = captured[0]
+    assert row['scenario'] == 'mission2'
+    assert row['result'] == 'FAIL'
+    assert row['failure_reason'] == 'startup_crash'
+    assert row['runner_type'] == 'hil_jetson'
+    assert row['sim_engine'] == 'real'

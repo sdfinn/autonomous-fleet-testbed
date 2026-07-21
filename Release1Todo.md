@@ -4039,6 +4039,20 @@ This is the last cheap chance to find them at a desk.
       (no_camera_frame + crash + propagation), `tests/test_telemetry_logger.py`
       (column + value validation). Reports/dashboard surfacing this is Piece 4's job,
       not done here.
+      **Addendum, found 2026-07-21 in a teach-back synthesis discussion:** a startup
+      crash (import-time, or anything before `rclpy.init()` — e.g. the `python file.py`
+      vs `python -m package.module` class of bug) dies before `_log_mission()` ever
+      runs, so NO telemetry row is written anywhere — invisible to `fleet_runs.db`, not
+      merely a FAIL, though the raw crash text is still captured in HIL's `day_<label>.out`.
+      Fixed in `mission2_day.py`'s `JetsonExecutor._log_startup_crash_if_needed`: detects
+      "nonzero exit AND the mission's own completion print line is absent" (exit code
+      alone isn't enough — a normal handled FAIL also exits nonzero via `main()`'s `raise
+      SystemExit(0 if ok else 1)`) and synthesizes a FAIL row itself with a new
+      `startup_crash` failure_reason value, distinct from `crash` (mid-mission) —
+      written into the WORKSTATION's `FLEET_DB` (what stage-5/dashboard read), which is
+      actually MORE visible than a normal HIL row today (the Jetson-local-DB → workstation
+      sync is a separate, already-tracked Phase 2 gap, not fixed here). TDD'd
+      (`tests/test_mission2_day.py`, 3 new tests).
 - [x] **Python `logging` framework with a debug switch** (Mike 2026-07-17): tools and
       nodes currently print; move to `logging` with per-module loggers, a single
       documented way to flip debug verbosity on the workstation AND on the robot
