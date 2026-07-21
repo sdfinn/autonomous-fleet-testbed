@@ -63,6 +63,7 @@ log = get_logger('mission2_day')
 
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 PHOTO_DIR = REPO_DIR / 'reports' / 'photos'     # always-visible workstation copy (Task 13g)
+FAILURE_BAG_DIR = REPO_DIR / 'reports' / 'failure_bags'  # scp'd back from the Jetson on FAIL
 LAUNCH_FILE = 'src/nav_fleet/launch/sim_launch.py'
 NAV2_READY_MARK = 'Managed nodes are active'   # emitted once per lifecycle manager (x2)
 STACK_READY_TIMEOUT_S = 150.0
@@ -239,6 +240,7 @@ class JetsonExecutor(MissionExecutor):
                 if e['color'] == color and rxy is not None:
                     e['truth_xy'] = tuple(rxy)
         photos = self._pull_photos(log_text)
+        self._pull_failure_bags(log_text)
         return ExecResult(events, photos, _parse_checklist(log_text), ok=(mrc == 0), nav=None)
 
     def _ssh_mission2(self, label):
@@ -290,6 +292,21 @@ class JetsonExecutor(MissionExecutor):
             else:
                 log.warning(f'could not scp Jetson photo {rel}')
         return local
+
+    def _pull_failure_bags(self, log_text):
+        """scp -r every 'failure bag kept: <path>' from the Jetson to reports/failure_bags/
+        (S17 Piece 3) — same reasoning as _pull_photos: a bag sitting only on the robot's
+        disk is exactly the "trapped, never retrieved" gap this Piece exists to close."""
+        FAILURE_BAG_DIR.mkdir(parents=True, exist_ok=True)
+        for rel in re.findall(r'failure bag kept:\s*(\S+)', log_text):
+            base = os.path.basename(rel)
+            dest = FAILURE_BAG_DIR / base
+            rc = subprocess.run(
+                ['scp', '-r', '-o', 'BatchMode=yes',
+                 f'{JETSON_USER}@{self.ip}:autonomous-fleet-testbed/{rel}', str(dest)],
+                capture_output=True, text=True).returncode
+            if rc != 0:
+                log.warning(f'could not scp Jetson failure bag {rel}')
 
 
 class _ReactionPoller(threading.Thread):

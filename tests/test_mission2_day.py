@@ -7,6 +7,7 @@ import subprocess
 
 import pytest
 
+import tools.mission2_day as mission2_day_module
 from tools.mission2_day import ExecResult, JetsonExecutor, RetreatDetector, _parse_checklist
 
 
@@ -86,3 +87,38 @@ def test_jetson_executor_container_mode_fails_loud_when_image_missing(monkeypatc
 
     with pytest.raises(RuntimeError, match='wrongtag'):
         JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+
+
+def test_pull_failure_bags_scps_the_directory_recursively(monkeypatch, tmp_path):
+    """S17 Piece 3: a 'failure bag kept: <path>' log line must scp -r the whole bag
+    directory back — a single-file scp (the photo pattern) would silently miss the
+    .mcap files inside it."""
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    monkeypatch.setattr(mission2_day_module, 'FAILURE_BAG_DIR', tmp_path)
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured['cmd'] = cmd
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    log_text = 'failure bag kept: reports/failure_bags/mission2_20260721_010203\n'
+    ex._pull_failure_bags(log_text)
+    assert captured['cmd'][:2] == ['scp', '-r']
+    assert captured['cmd'][-2] == (
+        'mike@10.42.0.217:autonomous-fleet-testbed/'
+        'reports/failure_bags/mission2_20260721_010203')
+    assert captured['cmd'][-1] == str(tmp_path / 'mission2_20260721_010203')
+
+
+def test_pull_failure_bags_no_bag_line_makes_no_scp_call(monkeypatch, tmp_path):
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    monkeypatch.setattr(mission2_day_module, 'FAILURE_BAG_DIR', tmp_path)
+
+    def _boom(*a, **k):
+        raise AssertionError('scp must not be called when no bag was kept')
+    monkeypatch.setattr(subprocess, 'run', _boom)
+
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    ex._pull_failure_bags('mission2: PASS, no failure bag here\n')
