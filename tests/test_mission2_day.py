@@ -3,7 +3,11 @@
 """Unit tests for tools/mission2_day.py's pure logic (S17 review CR-22): the day
 orchestrator is THE stage-4 gate, and its output parsing + retreat detection were
 previously untested."""
-from tools.mission2_day import ExecResult, RetreatDetector, _parse_checklist
+import subprocess
+
+import pytest
+
+from tools.mission2_day import ExecResult, JetsonExecutor, RetreatDetector, _parse_checklist
 
 
 def test_parse_checklist_recovers_rows():
@@ -47,3 +51,38 @@ def test_exec_result_tagged_filters_by_substring():
     assert r.tagged('mission2_marker') == ['reports/photos/mission2_marker_1.png']
     assert len(r.tagged('mission2_home')) == 2
     assert r.tagged('nope') == []
+
+
+def test_jetson_executor_bare_metal_skips_image_preflight(monkeypatch):
+    """HIL_CONTAINER unset (bare-metal, the default) must never touch docker/SSH."""
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+
+    def _boom(*a, **k):
+        raise AssertionError('subprocess.run must not be called in bare-metal mode')
+    monkeypatch.setattr(subprocess, 'run', _boom)
+
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    assert ex.image is None
+
+
+def test_jetson_executor_container_mode_passes_when_image_present(monkeypatch):
+    monkeypatch.setenv('HIL_CONTAINER', '1')
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    monkeypatch.setattr(
+        subprocess, 'run',
+        lambda *a, **k: subprocess.CompletedProcess(a, returncode=0, stdout='', stderr=''))
+
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    assert ex.image == 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef'
+
+
+def test_jetson_executor_container_mode_fails_loud_when_image_missing(monkeypatch):
+    monkeypatch.setenv('HIL_CONTAINER', '1')
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:wrongtag')
+    monkeypatch.setattr(
+        subprocess, 'run',
+        lambda *a, **k: subprocess.CompletedProcess(
+            a, returncode=1, stdout='', stderr='no such image'))
+
+    with pytest.raises(RuntimeError, match='wrongtag'):
+        JetsonExecutor('10.42.0.217', '/tmp/hil_stage')

@@ -358,6 +358,16 @@ docker buildx build --platform linux/arm64 \
   2026-07-14); `hil_stage.sh`'s default is 1 (25W) — a full local day at the default
   silently tests a faster Jetson than CI does (this masked the 15W axis during the
   2026-07-19 yellow-bug forensics).
+- **Container-mode HIL image tag: verified locally before the day starts, since S17 Piece
+  2's container preflight (`JetsonExecutor._require_image_local`, `tools/mission2_day.py`).**
+  The sign-off false start hit this: a wrong `HIL_IMAGE` tag → GHCR pull denied → `docker
+  run` dies in ~2s → looked exactly like three silent mission failures with no clue why.
+  Now `JetsonExecutor.__init__` SSHes a `docker image inspect` check before any mission
+  runs and raises one loud error naming the missing tag. **Tag gotcha (the root cause):**
+  CI's `pull_request` builds tag the image with the synthetic MERGE-commit sha
+  (`GITHUB_SHA`), NOT the branch head sha — a manual container-mode run must read the real
+  tag from the CI run's env or `docker images` on the Jetson, never construct one from
+  `git rev-parse`.
 - **The 2026-07-18 "yellow bug" is an UNREPRODUCED INTERMITTENT, instrumented not fixed:**
   post-merge stage-4 died 3/3 that night (goal-end abort → bt_navigator bond drop →
   lifecycle cascade → GraphicsMagick SIGSEGV in recovery map-load), then 2026-07-19 went
