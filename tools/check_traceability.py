@@ -1,6 +1,7 @@
 # Copyright 2026 Mike
 # SPDX-License-Identifier: Apache-2.0
 """Stage 0 CI gate: every requirement ID must map to a test that exists."""
+# CI trigger: full-pipeline run kicked off 2026-07-20 (Session 17 Piece scoping).
 import argparse
 import ast
 import json
