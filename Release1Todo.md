@@ -4000,10 +4000,26 @@ This is the last cheap chance to find them at a desk.
       subprocess calls mocked) + a real non-mocked smoke test against this machine's
       actual `~/.ros/log`. journald/systemd retention is out of scope until Session
       19+'s systemd units actually exist — noted, not built.
-- [ ] **rosbag-on-failure:** rolling record of the key topics (`cmd_vel`, `scan`,
+- [x] **rosbag-on-failure:** rolling record of the key topics (`cmd_vel`, `scan`,
       `amcl_pose`, goal status), persist the last N seconds when a mission step fails.
       NVMe makes sustained recording fine (the SD-hygiene constraint died with runbook
-      Part 9).
+      Part 9). **Done 2026-07-21** — uses rosbag2's own `--snapshot-mode` (found while
+      scoping this: `ros2 bag record --snapshot-mode` buffers topics in memory ONLY,
+      zero disk writes, until the `/rosbag2_recorder/snapshot` service is called, which
+      persists whatever's currently buffered — a genuine rolling "last N seconds"
+      buffer, not the record-everything-then-delete-on-PASS approximation originally
+      considered). `nav_fleet/failure_bag.py`: `start()`/`snapshot()`/`stop()`, topics =
+      `cmd_vel`/`scan`/`amcl_pose`/`navigate_to_pose`'s action-status topic. Wired into
+      `mission_runner.py main()`: started before `rclpy.init()` (independent OS
+      process), `snapshot()` called only on FAIL/crash, bag kept only if that snapshot
+      succeeds — zero disk cost on the common PASS case. For the Jetson/HIL case,
+      `mission2_day.py`'s `JetsonExecutor` gained `_pull_failure_bags` (mirrors the
+      existing `_pull_photos` scp pattern, `-r` for the whole bag directory) so a HIL
+      failure bag doesn't just sit unreachable on the robot's disk — closing Piece 3's
+      whole frame ("debug a robot failure from the workstation") for this feature.
+      TDD'd (`tests/test_failure_bag.py`, all subprocess calls mocked, PLUS one real
+      non-mocked smoke test: live snapshot-mode recorder + real service call + real
+      `.mcap` bag confirmed on disk; `tests/test_mission2_day.py` for the scp wiring).
 - [x] Failure taxonomy in telemetry: FAIL rows should say *what kind* of failure — nav
       timeout, goal rejected, no camera frame, detector timeout, crash — one enum column,
       so reports can answer "why", not just "failed". **Done 2026-07-21** —
@@ -4023,7 +4039,7 @@ This is the last cheap chance to find them at a desk.
       (no_camera_frame + crash + propagation), `tests/test_telemetry_logger.py`
       (column + value validation). Reports/dashboard surfacing this is Piece 4's job,
       not done here.
-- [ ] **Python `logging` framework with a debug switch** (Mike 2026-07-17): tools and
+- [x] **Python `logging` framework with a debug switch** (Mike 2026-07-17): tools and
       nodes currently print; move to `logging` with per-module loggers, a single
       documented way to flip debug verbosity on the workstation AND on the robot
       (env var or launch arg), file handlers where Piece items above need persistence.

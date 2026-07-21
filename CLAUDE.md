@@ -88,6 +88,16 @@ docker buildx build --platform linux/arm64 \
     location=None, yaw=None)`) — Mission 1 is navigate → take_picture → navigate
   - `nav_fleet/mission_runner.py` — Session 15: mission executor CLI
     (`python -m nav_fleet.mission_runner <mission_name>`)
+  - `nav_fleet/failure_bag.py` — S17 Piece 3 (2026-07-21): rolling rosbag2 evidence on
+    FAIL. Uses `ros2 bag record --snapshot-mode` (CLI-only, no rclpy API) — buffers
+    `cmd_vel`/`scan`/`amcl_pose`/`navigate_to_pose`'s action-status in memory ONLY until
+    the `/rosbag2_recorder/snapshot` service is called, which persists the buffered
+    window to disk. `mission_runner.py`'s `main()` starts it before `rclpy.init()`,
+    calls `snapshot()` only on FAIL/crash, and keeps the bag (`reports/failure_bags/`)
+    only if that snapshot succeeded — zero disk cost on a passing mission. Prints
+    `failure bag kept: <path>` on keep; `mission2_day.py`'s `JetsonExecutor` scrapes
+    that line and `scp -r`s the bag back from the Jetson (mirrors the existing
+    `_pull_photos` pattern).
   - `nav_fleet/image_io.py` — Session 15: `take_picture` action primitive support
     (`image_msg_to_png`), backed by pillow
   - `urdf/ugv_pt.urdf.xacro` — 4-wheel UGV robot URDF (diff-drive, lidar, camera)

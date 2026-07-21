@@ -33,6 +33,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2DArray
 
+from nav_fleet import failure_bag
 from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.image_io import image_msg_to_png
 from nav_fleet.missions import (MISSIONS, REACTION_FRAMES, REACTION_RANGE_M,
@@ -283,6 +284,10 @@ def main():
     parser.add_argument('mission', choices=sorted(MISSIONS))
     args = parser.parse_args()
 
+    # Started before rclpy.init() — an independent OS process, not an rclpy node; a
+    # snapshot-mode recorder writes NOTHING to disk until snapshot() below is called,
+    # so this costs nothing on the (overwhelmingly common) passing mission.
+    bag_proc, bag_path = failure_bag.start(args.mission)
     rclpy.init()
     runner = None
     ok = False
@@ -300,6 +305,10 @@ def main():
         crashed = True
     finally:
         rclpy.try_shutdown()
+    bag_kept = (not ok or crashed) and failure_bag.snapshot()
+    if bag_kept:
+        print(f'failure bag kept: {bag_path}')
+    failure_bag.stop(bag_proc, bag_path, keep=bag_kept)
     _log_mission(args.mission, ok, runner, crashed=crashed)
 
     print(f"Mission {args.mission}: {'PASS' if ok else 'FAIL'}")
