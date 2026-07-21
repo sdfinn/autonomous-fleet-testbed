@@ -4001,10 +4001,29 @@ This is the last cheap chance to find them at a desk.
       under `fleet.*`, bracketed-tag formatter (`[LEVEL] [name] message`, matches the
       house convention), optional file handler that always captures DEBUG+ regardless
       of console level (post-mortem forensics stay generous even on a quiet console).
-      12 unit tests (`tests/test_log_setup.py`), TDD'd. Found and fixed a real
+      18 unit tests (`tests/test_log_setup.py`), TDD'd. Found and fixed a real
       environment gotcha along the way — see CLAUDE.md ("Under pytest in this repo...
-      propagate=False"). Not yet wired into `NavRunner`/`MissionRunner`/`mission2_day`
-      — that's the next step (replacing their `print`/ad hoc `get_logger()` calls).
+      propagate=False"). Also added `build_env_manifest(**fields)` (pure formatter,
+      "env: k=v k=v ...") and `git_sha(env=None, default=...)` (GITHUB_SHA in CI,
+      `git rev-parse --short HEAD` fallback locally, never raises).
+      **`mission2_day.py` fully migrated 2026-07-20** — its ~24 `print()` calls are
+      now `log.info`/`log.warning`/`log.debug` through this framework (the raw ssh
+      mission-output dump is DEBUG, everything a human/CI watches by default is INFO,
+      orphan-sweep leftovers are WARNING; `input()` operator prompts correctly left
+      alone). `main()` calls `configure(log_file=STATE_DIR/mission2_day.log)` and logs
+      the environment manifest (git sha, executor, runner_type, power_mode, hil_image)
+      before anything else runs. `mission2_day.log` added to Stage 4's evidence
+      artifact (`ci.yml`) and `hil_stage.sh`'s `clean_state` hygiene sweep.
+      **Design decision:** `NavRunner`/`MissionRunner` (ROS2 nodes) are NOT being
+      switched to this framework — they already use `self.get_logger()`, which
+      already persists to `~/.ros/log` (that retrieval gap is this Piece's separate
+      Nav2/ROS-log-retention bullet, not this one). Instead, their `main()`/`__init__`
+      will bridge `FLEET_LOG_LEVEL` into their ROS logger's severity via
+      `tools.log_setup.resolve_level()` (rclpy's `LoggingSeverity` int values are
+      numerically identical to Python's `logging` levels — no translation table
+      needed) and log the same environment manifest through `self.get_logger()`, so
+      one env var and one manifest format cover both worlds without fighting ROS's
+      own log persistence. **Not yet done** — that ROS-node wiring is the next step.
 
 **Enhancement, noted not scoped (Mike, 2026-07-20):** once this Piece lands (framework +
 failure-taxonomy vocabulary + environment/config manifest), package the debugging

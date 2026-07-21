@@ -53,10 +53,13 @@ import threading
 import time
 
 from nav_fleet.ground_truth import get_ground_truth_xy
+from tools.log_setup import build_env_manifest, configure, get_logger, git_sha
 from tools.mission2_harness import (BALL_AT_SPHERE_XY, BALL_REMOVAL_SETTLE_S,
                                     home_pair_similarity, judge_no_ball, judge_red,
                                     judge_yellow, log_variant_row, parse_reaction_events,
                                     remove_ball, spawn_ball)
+
+log = get_logger('mission2_day')
 
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 PHOTO_DIR = REPO_DIR / 'reports' / 'photos'     # always-visible workstation copy (Task 13g)
@@ -116,13 +119,13 @@ class GzBallOps(BallOps):
 
     def place(self, color, x, y):
         name = spawn_ball(color, x, y)
-        print(f'[day] gz spawned {name} at ({x}, {y})')
+        log.info(f'gz spawned {name} at ({x}, {y})')
         time.sleep(SPAWN_APPEAR_SETTLE_S)
         return name
 
     def remove(self, name):
         remove_ball(name)
-        print(f'[day] gz removed {name}')
+        log.info(f'gz removed {name}')
 
 
 class OperatorBallOps(BallOps):
@@ -257,14 +260,14 @@ class JetsonExecutor(MissionExecutor):
             cmd = (f'{JENV} && cd {JETSON_REPO} && RUNNER_TYPE=hil_jetson '
                    f'POWER_MODE={POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner mission2')
         out_path = os.path.join(self.state_dir, f'day_{label}.out')
-        print(f'[day] ssh Jetson mission2 ({label}) ...')
+        log.info(f'ssh Jetson mission2 ({label}) ...')
         proc = subprocess.run(
             ['timeout', '300', 'ssh', '-o', 'BatchMode=yes',
              f'{JETSON_USER}@{self.ip}', cmd],
             capture_output=True, text=True)
         log_text = proc.stdout + proc.stderr
         pathlib.Path(out_path).write_text(log_text)
-        print(log_text.rstrip())
+        log.debug(log_text.rstrip())   # raw ssh output — verbose; checklist below is the summary
         return log_text, proc.returncode
 
     def _pull_photos(self, log_text):
@@ -285,7 +288,7 @@ class JetsonExecutor(MissionExecutor):
                                 os.path.join(self.state_dir, base)], check=False)
                 local.append(str(dest))
             else:
-                print(f'[day] WARN: could not scp Jetson photo {rel}')
+                log.warning(f'could not scp Jetson photo {rel}')
         return local
 
 
@@ -346,7 +349,7 @@ def launch_stack(log_path):
     carries that command for the observed run."""
     sweep_orphans()
     time.sleep(2)
-    print('[day] launching Gazebo + Nav2 (headless) ...')
+    log.info('launching Gazebo + Nav2 (headless) ...')
     logf = open(log_path, 'w')
     proc = subprocess.Popen(
         ['ros2', 'launch', LAUNCH_FILE, 'headless:=true'],
@@ -361,7 +364,7 @@ def launch_stack(log_path):
         except OSError:
             text = ''
         if text.count(NAV2_READY_MARK) >= 2:
-            print('[day] stack ready (Nav2 managed nodes active)')
+            log.info('stack ready (Nav2 managed nodes active)')
             time.sleep(5)   # let AMCL settle its first map->odom
             return proc
         time.sleep(3)
@@ -370,7 +373,7 @@ def launch_stack(log_path):
 
 def shutdown_stack(proc):
     """SIGINT the launch process group, then sweep any orphans and verify none remain."""
-    print('[day] shutting down the stack ...')
+    log.info('shutting down the stack ...')
     if proc is not None and proc.poll() is None:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGINT)
@@ -387,26 +390,26 @@ def shutdown_stack(proc):
          'parameter_bridge|static_transform|ekf_node'],
         capture_output=True, text=True).stdout.strip()
     if leftovers:
-        print('[day] WARNING: orphans still present after sweep:\n' + leftovers)
+        log.warning('orphans still present after sweep:\n' + leftovers)
     else:
-        print('[day] clean — no orphans remain')
+        log.info('clean — no orphans remain')
 
 
 # ── The day sequence (SAME for sim and HIL — only executor + ball_ops differ) ───────────────
 def _print_checklist(checklist, verdict, fails):
     for label, v in checklist:
-        print(f'    [{v:^8}] {label}')
+        log.info(f'    [{v:^8}] {label}')
     for f in fails:
-        print(f'    JUDGE FAIL: {f}')
-    print(f'  => {verdict}')
+        log.info(f'    JUDGE FAIL: {f}')
+    log.info(f'  => {verdict}')
 
 
 def run_no_ball(executor, ball_ops=None, ball_xy=None):
     """Mike's day design (2026-07-18 GUI review): the YELLOW ball is placed DURING this run's
     return leg — the observer sees it appear behind the retreating robot, and run 2 starts
     with no dead air. gz mode only; operator mode keeps its explicit post-run prompt."""
-    print('\n=== [day] RUN 1/3: no_ball — verified round trip ===')
-    print(f'  start ground truth: {get_ground_truth_xy()}')
+    log.info('\n=== RUN 1/3: no_ball — verified round trip ===')
+    log.info(f'  start ground truth: {get_ground_truth_xy()}')
     holder = {'placed_name': None}
     place_thread = None
     stop_evt = threading.Event()
@@ -431,7 +434,7 @@ def run_no_ball(executor, ball_ops=None, ball_xy=None):
     ok = not fails
     log_variant_row('no_ball', None, ok=ok, runner=result,
                     home_photo_similarity=sim)
-    print(f'  home_photo_similarity = {sim}')
+    log.info(f'  home_photo_similarity = {sim}')
     _print_checklist(result.checklist, f"no_ball {'PASS' if ok else 'FAIL'}", fails)
     executor.reset()
     return ok, holder['placed_name']
@@ -477,7 +480,7 @@ def _place_during_return(ball_ops, color, ball_xy, holder, stop_evt):
     run. NOTE: placement happens on the return leg, where reactions are NOT armed
     (outbound-only) — verified in missions.py."""
     if _wait_for_retreat(stop_evt):
-        print(f'[day] retreat detected — placing {color} behind the returning robot')
+        log.info(f'retreat detected — placing {color} behind the returning robot')
     holder['placed_name'] = ball_ops.place(color, *ball_xy)
 
 
@@ -486,18 +489,18 @@ def _swap_during_return(ball_ops, yellow_name, ball_xy, holder, stop_evt):
     the ghost-model lag, and spawn red at the same spot. gz calls are subprocess-based,
     so this shares no ROS state with the mission."""
     if _wait_for_retreat(stop_evt):
-        print('[day] retreat detected — swapping yellow -> red behind the robot')
+        log.info('retreat detected — swapping yellow -> red behind the robot')
     ball_ops.remove(yellow_name)
     ball_ops.settle()
     holder['red_name'] = ball_ops.place('red', *ball_xy)
 
 
 def run_yellow(executor, ball_ops, ball_xy, yellow_name=None):
-    print('\n=== [day] RUN 2/3: yellow — stop 0.8 m, photograph, self-return home ===')
+    log.info('\n=== RUN 2/3: yellow — stop 0.8 m, photograph, self-return home ===')
     if yellow_name is None:   # operator mode, or run-1 placement didn't happen
         yellow_name = ball_ops.place('yellow', *ball_xy)
     truth_start = get_ground_truth_xy()
-    print(f'  start ground truth: {truth_start}')
+    log.info(f'  start ground truth: {truth_start}')
     holder = {'red_name': None}
     swap_thread = None
     stop_evt = threading.Event()
@@ -526,18 +529,18 @@ def run_yellow(executor, ball_ops, ball_xy, yellow_name=None):
     ok = not fails
     log_variant_row('yellow', None, ok=ok, runner=result,
                     home_photo_similarity=sim)
-    print(f'  home_photo_similarity = {sim}')
+    log.info(f'  home_photo_similarity = {sim}')
     _print_checklist(result.checklist, f"yellow {'PASS' if ok else 'FAIL'}", fails)
     executor.reset()
     return ok, holder['red_name']
 
 
 def run_red(executor, ball_ops, ball_xy, red_name, hold_s):
-    print('\n=== [day] RUN 3/3: red — stop 1.3 m, photograph, STAY ===')
+    log.info('\n=== RUN 3/3: red — stop 1.3 m, photograph, STAY ===')
     if red_name is None:   # concurrent swap did not run (shouldn't happen) — place now
         red_name = ball_ops.place('red', *ball_xy)
     truth_start = get_ground_truth_xy()
-    print(f'  start ground truth: {truth_start}')
+    log.info(f'  start ground truth: {truth_start}')
     result = executor.run(ball_xy=ball_xy, color='red')
     truth_a = get_ground_truth_xy()
     time.sleep(2.0)                       # explicit stationary-settle (matches the sim test)
@@ -550,7 +553,7 @@ def run_red(executor, ball_ops, ball_xy, red_name, hold_s):
     _print_checklist(result.checklist, f"red {'PASS' if ok else 'FAIL'}", fails)
     executor.reset()
     if hold_s > 0:
-        print(f'  [day] red done — robot stays put; holding {hold_s:.0f}s for the observer')
+        log.info(f'  red done — robot stays put; holding {hold_s:.0f}s for the observer')
         time.sleep(hold_s)
     # Ball STAYS (spec §4) — deliberately not removed.
     return ok
@@ -562,9 +565,9 @@ def run_day(executor, ball_ops, ball_xy, hold_s):
     results['no_ball'], yellow_name = run_no_ball(executor, ball_ops, ball_xy)
     results['yellow'], red_name = run_yellow(executor, ball_ops, ball_xy, yellow_name)
     results['red'] = run_red(executor, ball_ops, ball_xy, red_name, hold_s)
-    print('\n=== [day] SUMMARY ===')
+    log.info('\n=== SUMMARY ===')
     for name in ('no_ball', 'yellow', 'red'):
-        print(f'  {name:8s}: {"PASS" if results[name] else "FAIL"}')
+        log.info(f'  {name:8s}: {"PASS" if results[name] else "FAIL"}')
     return all(results.values())
 
 
@@ -585,6 +588,13 @@ def main():
                              'Implied by --executor jetson (hil_stage.sh owns the HIL stack).')
     parser.add_argument('--log', default='/tmp/mission2_day_sim.log')
     args = parser.parse_args()
+
+    pathlib.Path(STATE_DIR).mkdir(parents=True, exist_ok=True)
+    configure(log_file=os.path.join(STATE_DIR, 'mission2_day.log'))
+    log.info(build_env_manifest(
+        git_sha=git_sha(), executor=args.executor,
+        runner_type=os.environ.get('RUNNER_TYPE'), power_mode=POWER_MODE_LABEL,
+        hil_image=os.environ.get('HIL_IMAGE')))
 
     hil = args.executor == 'jetson'
     no_launch = args.no_launch or hil
@@ -618,7 +628,7 @@ def main():
     finally:
         if not no_launch:
             shutdown_stack(proc)
-    print(f'\nMission 2 day: {"PASS" if ok else "FAIL"}')
+    log.info(f'\nMission 2 day: {"PASS" if ok else "FAIL"}')
     raise SystemExit(0 if ok else 1)
 
 
