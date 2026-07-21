@@ -98,9 +98,12 @@ def test_failed_leg_metrics_excluded(runner, monkeypatch):
     assert runner.failure_reason == 'nav_timeout'
 
 
-def test_take_picture_sets_no_camera_frame_failure_reason(ros_context):
-    # Fresh instance — no live camera publisher in this environment, so a short timeout
-    # exercises the real "no frame arrived" path without needing Gazebo.
+def test_take_picture_sets_no_camera_frame_failure_reason(ros_context, monkeypatch):
+    # Stub spin_once to a no-op so no callback ever fires, regardless of whether a real
+    # camera is publishing in this environment — stage-2-gazebo's live Nav2/Gazebo DOES
+    # publish real frames (found 2026-07-21: relying on "no live camera in this sandbox"
+    # passed locally but failed in CI once Gazebo was actually up and publishing).
+    monkeypatch.setattr(mission_runner_module.rclpy, 'spin_once', lambda *a, **k: None)
     node = MissionRunner()
     try:
         assert node.take_picture('probe', timeout=0.2) is False

@@ -48,12 +48,13 @@ def test_snapshot_returns_true_on_success(monkeypatch):
 
     def fake_run(cmd, **kwargs):
         captured['cmd'] = cmd
-        return _FakeCompletedProcess(stdout='response:\nrosbag2_interfaces.srv.Snapshot_Response(success=True)\n')
+        return _FakeCompletedProcess(
+            stdout='response:\nrosbag2_interfaces.srv.Snapshot_Response(success=True)\n')
 
     monkeypatch.setattr('nav_fleet.failure_bag.subprocess.run', fake_run)
     assert snapshot() is True
     assert captured['cmd'] == ['ros2', 'service', 'call', SNAPSHOT_SERVICE,
-                              SNAPSHOT_SERVICE_TYPE, '{}']
+                               SNAPSHOT_SERVICE_TYPE, '{}']
 
 
 def test_snapshot_returns_false_on_failure(monkeypatch):
@@ -68,6 +69,27 @@ def test_snapshot_returns_false_on_success_false_response(monkeypatch):
         'nav_fleet.failure_bag.subprocess.run',
         lambda cmd, **kwargs: _FakeCompletedProcess(
             stdout='rosbag2_interfaces.srv.Snapshot_Response(success=False)\n'))
+    assert snapshot() is False
+
+
+def test_snapshot_returns_false_on_timeout(monkeypatch):
+    """A hung `ros2 service call` (e.g. the recorder process died, service never
+    responds) must not crash the caller — main() still needs to log the FAIL row."""
+    import subprocess as real_subprocess
+
+    def fake_run(cmd, **kwargs):
+        raise real_subprocess.TimeoutExpired(cmd, kwargs.get('timeout', 10))
+
+    monkeypatch.setattr('nav_fleet.failure_bag.subprocess.run', fake_run)
+    assert snapshot() is False
+
+
+def test_snapshot_returns_false_on_missing_ros2_binary(monkeypatch):
+    """`ros2` not on PATH (e.g. a stripped-down container) must not crash the caller."""
+    def fake_run(cmd, **kwargs):
+        raise FileNotFoundError(cmd[0])
+
+    monkeypatch.setattr('nav_fleet.failure_bag.subprocess.run', fake_run)
     assert snapshot() is False
 
 
@@ -95,3 +117,43 @@ def test_stop_tolerates_bag_never_written(tmp_path):
     bag_path = tmp_path / 'never_written'
     proc = _FakePopen()
     stop(proc, bag_path, keep=False)  # must not raise
+
+
+class _FakePopenAlreadyDead:
+    """The recorder process already exited (e.g. `ros2 bag` wasn't installed) — sending
+    it a signal or waiting on it raises, same as the real Popen/os behavior."""
+
+    def send_signal(self, sig):
+        raise ProcessLookupError('no such process')
+
+    def wait(self, timeout=None):
+        raise ProcessLookupError('no such process')
+
+
+def test_stop_tolerates_process_already_dead(tmp_path):
+    """main() must still reach _log_mission even if the recorder died before stop()."""
+    bag_path = tmp_path / 'mission1_20260721'
+    proc = _FakePopenAlreadyDead()
+    stop(proc, bag_path, keep=False)  # must not raise
+
+
+class _FakePopenHangsOnSigint:
+    """The recorder ignores SIGINT and never exits within the wait timeout."""
+
+    def __init__(self):
+        self.signals = []
+
+    def send_signal(self, sig):
+        self.signals.append(sig)
+
+    def wait(self, timeout=None):
+        import subprocess as real_subprocess
+        raise real_subprocess.TimeoutExpired(['ros2'], timeout)
+
+
+def test_stop_tolerates_wait_timeout(tmp_path):
+    bag_path = tmp_path / 'mission1_20260721'
+    bag_path.mkdir()
+    proc = _FakePopenHangsOnSigint()
+    stop(proc, bag_path, keep=True)  # must not raise
+    assert proc.signals == [signal.SIGINT]

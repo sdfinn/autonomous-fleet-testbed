@@ -60,19 +60,29 @@ def start(scenario, bag_dir=BAG_DIR, topics=TOPICS, max_cache_size=None):
 
 def snapshot():
     """Ask the running recorder to persist its current in-memory window to disk.
-    Best-effort: a failed call must never be treated as a mission-level failure, so
-    this returns False rather than raising."""
-    result = subprocess.run(
-        ['ros2', 'service', 'call', SNAPSHOT_SERVICE, SNAPSHOT_SERVICE_TYPE, '{}'],
-        capture_output=True, text=True, timeout=10)
+    Best-effort: a failed call must never be treated as a mission-level failure (or
+    crash the caller) — main() still needs to reach _log_mission afterward — so this
+    returns False rather than raising on ANY failure mode: non-zero exit, a hung `ros2
+    service call` (recorder died, service never answers), or `ros2` missing entirely."""
+    try:
+        result = subprocess.run(
+            ['ros2', 'service', 'call', SNAPSHOT_SERVICE, SNAPSHOT_SERVICE_TYPE, '{}'],
+            capture_output=True, text=True, timeout=10)
+    except (subprocess.TimeoutExpired, OSError):
+        return False
     return result.returncode == 0 and 'success=True' in result.stdout
 
 
 def stop(proc, bag_path, keep):
     """Stop the recorder (SIGINT — graceful rosbag2 shutdown, this repo's standing
     convention over SIGKILL for ROS2 processes) and discard the bag directory unless
-    `keep` (a no-op if snapshot() was never called — there is nothing on disk yet)."""
-    proc.send_signal(signal.SIGINT)
-    proc.wait(timeout=10)
+    `keep` (a no-op if snapshot() was never called — there is nothing on disk yet).
+    Tolerates the recorder already being dead (e.g. `ros2 bag` isn't installed) or
+    ignoring SIGINT and hanging — either must never crash the caller."""
+    try:
+        proc.send_signal(signal.SIGINT)
+        proc.wait(timeout=10)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        pass
     if not keep and bag_path.exists():
         shutil.rmtree(bag_path)
