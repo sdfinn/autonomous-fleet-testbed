@@ -127,3 +127,37 @@ aborted handle.
 rebuild, and why is that a trick question in our pipeline?), Q4 zombie goal,
 ROS_LOCALHOST_ONLY (+follow-up: Jetson powered on but Nav2 not running — do you need
 the flag for a local sim session?).
+
+## 2026-07-20 — S17 Piece 2 carry-ins, Piece 3 logging foundation, R1 autonomy planning
+
+**Concepts introduced (teach-back pending — answer at next session start):**
+
+1. **JetPack means two different things.** The OS image already flashed to the Jetson
+   (Session 14, done) vs the `nvidia-jetpack` apt package (CUDA/cuDNN/TensorRT, not yet
+   installed) — explain the difference and why NVIDIA overloading one name caused real
+   confusion today.
+2. **Two separate AI systems — don't conflate them.** `agentic_loop.py`'s Claude calls
+   (cloud API, text/telemetry reasoning, off-robot) vs the on-device vision model being
+   planned for R1 (local, edge, TensorRT-accelerated, works with the network off) —
+   explain why the Jetson needs the second kind, not the first.
+3. **The LaunchLogger bug — a live TDD win.** A `tools/log_setup.py` test passed
+   standalone but failed under pytest with an empty log file, no errors. Explain the
+   actual mechanism: why does merely having `launch-testing` *installed* (even with its
+   pytest hooks disabled via `pytest.ini`) silently break every new logger created
+   afterward in that process, and why does forcing `propagate = True` fix it? Why would
+   writing the test AFTER the code already "worked" have been much less likely to catch
+   this?
+4. **Soft-fail CI gates.** Stage 0 showed green even though its traceability check
+   exited 1. Explain the mechanism (`continue-on-error: true`) and why BR-03's missing
+   recovery-behavior test is a real, deliberately-tracked gap — not something broken by
+   today's changes.
+5. **Classical primitives + inference-driven selection.** A pattern that came up twice
+   today (detection-confidence-based speed, the recovery-move selector idea): proven,
+   unmodified actions, but a model decides WHICH one to use given the situation. Explain
+   why this project keeps preferring that shape over inventing new AI-driven maneuvers.
+
+**Carried re-queues (STILL pending — now TWO sessions running, prioritize these FIRST
+next time):** all five 2026-07-19 concepts above (the discriminating experiment,
+"didn't reproduce" ≠ "fixed", power modes as a timing variable, stale checkouts lie,
+`python file.py` vs `python -m package.module`) — teach-back didn't happen this session
+either.

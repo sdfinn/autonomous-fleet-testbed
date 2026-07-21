@@ -810,3 +810,31 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   hardcoded fetch-and-stop does not count. Also: Session 19 item 7 added same day —
   post-Session-18 sim-fidelity upgrade (6-wheel skid-steer, sensor poses), graded by
   the drift tooling's sim-vs-real rows.
+- **2026-07-20 — On-robot autonomy slice PULLED FORWARD from R2 into R1 (Mike).**
+  Rationale stated plainly: the project is named autonomous-fleet-testbed and shipped
+  zero real inference — HSV color thresholding is classical CV, no model, no GPU.
+  R2's three agentic pillars are unaffected; only the perception/inference slice
+  moves. Concrete R1 build order recorded verbatim as item 0 in Release1Todo.md's
+  Session 19 section: CUDA/TensorRT bring-up (after one more green CI day) → a GPU
+  inference canary decoupled from the robot, proven through all four CI stages same
+  as everything else → a stock pretrained detector (YOLOv8-nano's COCO "sports ball"
+  class, zero training) for a fast first proof → a real Gazebo-auto-labeled
+  multi-class detector wired into the EXISTING mission reaction logic unchanged (the
+  actual autonomy claim: the robot branches on its own on-device inference, no human
+  in the loop) → USB-webcam-based pipeline prototyping in parallel, decoupled from
+  the Jetson → recorded gesture-clip fixtures as a CI-gradable first slice of gesture
+  recognition (live on-robot gesture reading stays a manual demo capability, explicitly
+  out of scope). R&D/free-play (webcam, croquet balls, gestures) explicitly lives
+  OUTSIDE this repo's CI-gated structure — same pattern as `BC/isaac_project`,
+  selectively migrated in once proven, never grown in place. Session 17 Piece 3
+  (logging/error-handling) foundation landed same day: `tools/log_setup.py`
+  (`FLEET_LOG_LEVEL` switch, per-module loggers, always-DEBUG file handler,
+  environment-manifest logging), fully wired into `mission2_day.py`; ROS-node
+  (`NavRunner`/`MissionRunner`) bridging is the next step, deliberately not done same
+  day since it touches navigation-safety-relevant code. Recovery behaviors (Session
+  19's deferred-Nav2-capability list, R2 entry criteria) get Nav2's proven classical
+  maneuvers only — an inference-informed recovery SELECTOR (same maneuvers, smarter
+  choice of which to try first) is noted as a deliberate follow-on, explicitly
+  sequenced after the classical baseline is solid, not bundled in — bundling would
+  repeat the exact Session 11/12 multiple-unknowns mistake this file already
+  documents.
