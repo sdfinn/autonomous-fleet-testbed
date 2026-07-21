@@ -172,6 +172,19 @@ docker buildx build --platform linux/arm64 \
   went from "intentionally red" to "actually blocking every downstream CI stage" once someone
   removed `continue-on-error` without the underlying gaps being fixed — check `gh run list`
   occasionally to make sure stage-3/stage-4 are still actually running, not skipped.
+- **Under pytest in this repo, ANY new `logging.getLogger(...)` defaults to
+  `propagate=False` — silently swallowing output.** Found 2026-07-20 building
+  `tools/log_setup.py`: a test passed standalone (`python3 -c ...`) but failed under
+  pytest with an empty log file, no errors, no exceptions. Root cause: the
+  `launch-testing`/`launch-testing-ros` pytest plugins are *installed* (they show in
+  `plugins:` even though `pytest.ini`'s `addopts` disables their hooks via
+  `-p no:launch-testing -p no:launch-testing-ros`) — pytest still *imports* the plugin
+  module during collection to know what to disable, and `launch.logging` runs
+  `logging.setLoggerClass(LaunchLogger)` as an import side effect, which defaults
+  `propagate=False`. This silently affects every NEW logger name created anywhere in
+  a pytest run in this repo, not just `tools/log_setup.py`'s. Fix: any code creating
+  its own logger must explicitly set `.propagate = True` rather than trust the
+  default — see `tools/log_setup.get_logger()`.
 
 ## Nav2 Launch Gotchas (Session 10+)
 - `gz sim` WITHOUT `-s` launches a GUI that crashes on this machine (snap/glibc libpthread conflict)
