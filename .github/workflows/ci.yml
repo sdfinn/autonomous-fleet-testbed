@@ -400,6 +400,7 @@ jobs:
           path: |
             /tmp/hil_stage/*.png
             /tmp/hil_stage/sim.log
+            /tmp/hil_stage/mission2_day.log
             /tmp/hil_stage/day_no_ball.out
             /tmp/hil_stage/day_yellow.out
             /tmp/hil_stage/day_red.out

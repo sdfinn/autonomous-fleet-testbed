@@ -5,10 +5,11 @@ tools/ and nav_fleet/ modules — the FLEET_LOG_LEVEL debug switch, the brackete
 formatter, and the always-DEBUG file handler for post-mortem forensics."""
 import logging
 import re
+import subprocess
 
 import pytest
 
-from tools.log_setup import configure, get_logger, resolve_level
+from tools.log_setup import build_env_manifest, configure, get_logger, git_sha, resolve_level
 
 
 @pytest.fixture(autouse=True)
@@ -93,3 +94,34 @@ def test_configure_is_idempotent():
     configure(env={})
     configure(env={})
     assert len(logging.getLogger('fleet').handlers) == 1
+
+
+def test_build_env_manifest_formats_key_value_pairs():
+    assert (build_env_manifest(runner_type='local', power_mode='25W')
+            == 'env: runner_type=local power_mode=25W')
+
+
+def test_build_env_manifest_skips_none_values():
+    assert build_env_manifest(runner_type='local', hil_image=None) == 'env: runner_type=local'
+
+
+def test_build_env_manifest_empty_when_no_fields():
+    assert build_env_manifest() == 'env: (no fields provided)'
+
+
+def test_git_sha_prefers_github_sha_env_truncated():
+    assert git_sha(env={'GITHUB_SHA': 'a' * 40}) == 'a' * 12
+
+
+def test_git_sha_falls_back_to_subprocess(monkeypatch):
+    def fake_run(*a, **k):
+        return subprocess.CompletedProcess(a, returncode=0, stdout='deadbee\n', stderr='')
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+    assert git_sha(env={}) == 'deadbee'
+
+
+def test_git_sha_returns_default_when_git_unavailable(monkeypatch):
+    def fake_run(*a, **k):
+        raise FileNotFoundError('git not found')
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+    assert git_sha(env={}, default='unknown') == 'unknown'

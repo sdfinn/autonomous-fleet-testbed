@@ -13,6 +13,7 @@ loggers propagate up to the 'fleet' root, which owns the handlers.
 """
 import logging
 import os
+import subprocess
 
 ROOT_NAME = 'fleet'
 _FORMAT = '%(asctime)s [%(levelname)s] [%(name)s] %(message)s'
@@ -70,3 +71,32 @@ def configure(log_file=None, env=None):
         logger.addHandler(file_handler)
 
     return logger
+
+
+def build_env_manifest(**fields):
+    """Format arbitrary environment/config fields as one manifest line, so a run's
+    context (git sha, power mode, runner type, ...) is captured alongside its events —
+    the caller decides what fields matter and how to obtain them. None values are
+    skipped (e.g. an optional field like hil_image that's only set in container mode)."""
+    parts = [f'{k}={v}' for k, v in fields.items() if v is not None]
+    return 'env: ' + ' '.join(parts) if parts else 'env: (no fields provided)'
+
+
+def git_sha(env=None, default='unknown'):
+    """Best-effort short git sha for the environment manifest — never raises. Prefers
+    GITHUB_SHA (authoritative in CI, avoids a subprocess call); falls back to `git
+    rev-parse` for local/manual runs; returns `default` if neither is available (e.g.
+    inside a container image with no .git)."""
+    env = os.environ if env is None else env
+    sha = env.get('GITHUB_SHA')
+    if sha:
+        return sha[:12]
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return default

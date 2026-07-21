@@ -85,7 +85,7 @@ clean_state() {
   # artifact and can even satisfy a judge's photo-presence check with stale data. Wipe first.
   mkdir -p "$STATE_DIR"
   rm -f "$STATE_DIR"/*.png "$STATE_DIR"/*.out "$STATE_DIR"/*.json \
-        "$STATE_DIR"/nav2_hil_*.log 2>/dev/null || true
+        "$STATE_DIR"/nav2_hil_*.log "$STATE_DIR"/mission2_day.log 2>/dev/null || true
 }
 
 sim_up() {
