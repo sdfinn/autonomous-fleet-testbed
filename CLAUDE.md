@@ -100,6 +100,21 @@ docker buildx build --platform linux/arm64 \
     Requires `ANTHROPIC_API_KEY`. **Must run as `python -m tools.agentic_loop`, not
     `python tools/agentic_loop.py`** — the plain-script form fails with
     `ModuleNotFoundError` (see Gotchas).
+  - `log_setup.py` — S17 Piece 3 (2026-07-20): shared logging setup for `tools/` and
+    (pending) `nav_fleet/` modules. `FLEET_LOG_LEVEL` env var (default INFO) is the
+    single debug switch, same env-var-driven pattern as `FLEET_DB`/`POWER_MODE_ID`.
+    `get_logger(name)` for per-module loggers under `fleet.*`; `configure(log_file=...)`
+    attaches a bracketed-tag console handler at the configured level PLUS an optional
+    file handler that always captures DEBUG+ regardless (post-mortem forensics stay
+    generous even on a quiet console). `build_env_manifest(**fields)` /`git_sha()` log a
+    run's environment context (git sha, power mode, runner type, ...) alongside its
+    events. `mission2_day.py` is fully migrated (its log lands at
+    `STATE_DIR/mission2_day.log`, uploaded in Stage 4's evidence artifact); `NavRunner`/
+    `MissionRunner` are NOT being switched to this (they already use ROS's own
+    `self.get_logger()`, which already persists to `~/.ros/log`) — next step is bridging
+    `FLEET_LOG_LEVEL` into their ROS logger severity instead. See CLAUDE.md's
+    `propagate=False` gotcha below if you add a new logger name and its output vanishes
+    under pytest.
 - `tests/`          — pytest test suite
 - `config/`         — drift_config.yaml
 - `robot_profiles/` — Per-robot capability YAML
