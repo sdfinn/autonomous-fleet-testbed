@@ -204,18 +204,9 @@ jobs:
     env:
       DISPLAY: ':0'
       RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
-      # Persistent path outside the job workspace — history accumulates across CI runs,
-      # which drift detection (stage-5-reports) needs.
-      FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
       SIM_ENGINE: gazebo
     steps:
       - uses: actions/checkout@v4
-
-      - name: Ensure persistent telemetry dir exists
-        # FLEET_DB above points outside the job workspace so history accumulates across
-        # runs — sqlite3.connect() doesn't create missing parent dirs, so the first-ever
-        # run needs this before any test can log a row.
-        run: mkdir -p /home/mike/fleet-ci-data
 
       - name: Build workspace
         run: |
@@ -329,14 +320,11 @@ jobs:
       HIL_IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
       # The day's JUDGED verdict rows (mission2_no_ball / _yellow / _red) are logged HERE on
       # the workstation (where the judge runs) directly into the shared drift DB — no SSH row-
-      # shipping needed any more (Task 13d). Same persistent path stage-2/5 use so
+      # shipping needed any more (Task 13d). Same persistent DB stage-2/5 use (the default
+      # owned by tools/telemetry_logger.DB_PATH, Session 17 Foundation piece) so
       # baseline_monitor tracks HIL trends and stage-5-reports-hw is genuinely hardware-fed.
-      FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
     steps:
       - uses: actions/checkout@v4
-
-      - name: Ensure persistent telemetry dir exists
-        run: mkdir -p /home/mike/fleet-ci-data
 
       - name: Discover Jetson (DHCP lease — never hard-coded)
         run: |
@@ -434,18 +422,15 @@ jobs:
   stage-5-reports-sim:
     name: "Stage 5 — Workstation Reports + Dashboard"
     # Runs on the self-hosted runner, not ubuntu-latest: stage-2's nav tests write
-    # telemetry to this runner's local disk (FLEET_DB above), so a hosted job's fresh
+    # telemetry to this runner's persistent DB (~/fleet-ci-data/fleet_runs.db, the
+    # default owned by tools/telemetry_logger.DB_PATH), so a hosted job's fresh
     # checkout would have no run data — it would PDF an empty database.
     runs-on: [self-hosted, x86, gpu, rtx5080]
     needs: stage-2-gazebo
     env:
-      FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
       REPORT_PATH: reports/latest_report.pdf
     steps:
       - uses: actions/checkout@v4
-
-      - name: Ensure persistent telemetry dir exists
-        run: mkdir -p /home/mike/fleet-ci-data
 
       - name: Generate report
         run: |
@@ -481,13 +466,9 @@ jobs:
     # kind — but still skip when stage-4 was SKIPPED (docs-only pushes).
     if: ${{ !cancelled() && needs.stage-4-hil.result != 'skipped' }}
     env:
-      FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db
       REPORT_PATH: reports/latest_report.pdf
     steps:
       - uses: actions/checkout@v4
-
-      - name: Ensure persistent telemetry dir exists
-        run: mkdir -p /home/mike/fleet-ci-data
 
       - name: Generate report
         run: |
