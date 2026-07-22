@@ -234,6 +234,36 @@ def is_trending_worse(values: list, direction: str, window: int = 3) -> bool:
     return all(recent[i] < recent[i + 1] for i in range(len(recent) - 1))
 
 
+def build_trend_summary(history: dict) -> str:
+    """Plain-text summary of a check_history() result — which metrics are currently
+    flagged (and how often across this filtered view), and which are trending toward
+    the worse direction without having flagged yet. For feeding into
+    agentic_loop.diagnose() as big-picture context, not just the single latest run."""
+    by_metric = {}
+    for run_id in sorted(history):
+        for r in history[run_id]:
+            by_metric.setdefault(r.metric, []).append(r)
+
+    if not by_metric:
+        return "  No comparable metrics in this filtered view."
+
+    lines = []
+    for metric, reports in by_metric.items():
+        flagged_count = sum(1 for r in reports if r.flagged)
+        values = [r.current for r in reports]
+        direction = reports[-1].direction
+        trending = is_trending_worse(values, direction)
+        status = []
+        if flagged_count:
+            status.append(f"{flagged_count}/{len(reports)} runs flagged")
+        if trending:
+            status.append("trending worse over the last 3 runs, not yet flagged")
+        if not status:
+            status.append("stable")
+        lines.append(f"  {metric}: {', '.join(status)}")
+    return "\n".join(lines)
+
+
 def check_latest_run(db_path: str = DB_PATH, n: int = None, config_path: str = None):
     """Check the most recently logged run. Returns None if DB is empty."""
     conn = sqlite3.connect(db_path)

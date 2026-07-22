@@ -1,6 +1,6 @@
 import pytest
 
-from tools.baseline_monitor import check_history, check_latest_run, check_run, is_trending_worse, load_config
+from tools.baseline_monitor import build_trend_summary, check_history, check_latest_run, check_run, is_trending_worse, load_config
 from tools.telemetry_logger import init_db, log_run
 
 # Baseline seed: 10 runs with natural variance around fleet navigation metrics.
@@ -369,3 +369,31 @@ def test_is_trending_worse_does_not_know_about_flagged_status():
     # A sequence that would also read as a large-sigma outlier if checked against a
     # tight baseline — is_trending_worse still just reports the monotonic shape.
     assert is_trending_worse([0.95, 0.50, 0.10], direction="down", window=3)
+
+
+# ── Task 3: build_trend_summary() — plain-text big-picture summary ────────────────
+
+
+def test_build_trend_summary_reports_flagged_and_trending(db):
+    _seed_baseline(db)
+    outlier_id = _insert(db, nav_success_rate=0.10)
+    history = check_history(db_path=db)
+    summary = build_trend_summary(history)
+    assert "nav_success_rate" in summary
+    assert "flagged" in summary.lower()
+
+
+def test_build_trend_summary_reports_stable_metric():
+    from tools.baseline_monitor import BaselineReport
+    history = {
+        1: [BaselineReport(metric="mean_position_error", mean=0.12, stddev=0.01,
+                            current=0.12, sigma=0.0, flagged=False, direction="up")],
+    }
+    summary = build_trend_summary(history)
+    assert "mean_position_error" in summary
+    assert "stable" in summary.lower()
+
+
+def test_build_trend_summary_empty_history():
+    summary = build_trend_summary({})
+    assert "no comparable metrics" in summary.lower()
