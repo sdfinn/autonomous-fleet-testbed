@@ -161,3 +161,59 @@ next time):** all five 2026-07-19 concepts above (the discriminating experiment,
 "didn't reproduce" ≠ "fixed", power modes as a timing variable, stale checkouts lie,
 `python file.py` vs `python -m package.module`) — teach-back didn't happen this session
 either.
+
+## 2026-07-21 — Session 17 Pieces 3/4/5: three full spec→plan→build→review cycles
+
+**Concepts introduced (teach-back pending — answer at next session start):**
+
+1. **Whole-branch review is not a formality.** All three pieces shipped today
+   (Foundation, Piece 4, Piece 5) went through task-by-task review AND a separate
+   final whole-branch review before merge — and all three final reviews found at
+   least one real Important issue a task-scoped reviewer had missed (e.g. Piece 5's
+   AI button crashing on a filtered-out run id — invisible to a reviewer looking at
+   only the one commit that introduced it, since the guard pattern it was missing
+   lived in an earlier commit). Explain why a review that only ever sees one task's
+   diff structurally can't catch a cross-task gap, and why that's a *different*
+   failure mode than "the reviewer wasn't thorough."
+2. **The zero-variance baseline test trap.** A "does this correctly NOT flag as
+   drift" test kept getting written by seeding a baseline with identical values
+   (e.g. `nav_success_rate=0.95` ten times) — and `baseline_monitor.check_run()`
+   explicitly skips any metric with zero variance (`if sd == 0.0: continue`), so
+   the test's "no drift" assertion passed for the wrong reason: nothing was ever
+   compared. Explain why a test that never actually exercises the code path it's
+   named after is worse than no test at all, and why this bug pattern was so easy to
+   keep re-introducing even after being fixed once (it recurred 4 times today).
+3. **The same bug, found independently in three places.** Foundation fixed
+   `FLEET_DB`/`DB_PATH` being a relative, checkout-dependent path instead of a
+   persistent one. Piece 4's final review then found the IDENTICAL bug class — a
+   relative `reports/photos` path — independently re-invented in three separate
+   files (`mission_runner.py`, `mission2_day.py`, `generate_test_report.py`), none
+   of which knew about the other two. Explain why "the same architectural mistake
+   keeps happening in new files" is a signal about the codebase's *shared
+   conventions*, not about any one file being sloppy — and what changed today to
+   make it structurally harder to repeat (hint: where does the fix now live, and
+   how many files import it instead of each defining their own).
+4. **SQLite WAL mode, and why "set it once" wasn't actually a complete design.**
+   Explain what WAL mode is, why it fixes the "dashboard reading while CI writes"
+   concurrency case, why it's normally described as "set once, persists forever" —
+   and then explain the real gap a reviewer found in that reasoning (what happens
+   to a *brand-new* database file that's never had the PRAGMA run against it), and
+   why baking the PRAGMA into `init_db()` closes that gap without contradicting the
+   original "no per-connection changes" design goal.
+5. **Git worktrees can branch from a stale `origin/main`.** All three pieces hit
+   the same surprise when creating a worktree: it branched from `origin/main`
+   (missing that day's local-only commits) rather than local `main`. Explain why a
+   worktree tool would default to the remote tracking branch instead of local HEAD,
+   and why `git merge main --ff-only` (not a rebase, not a manual re-commit) was
+   the correct, safe fix each time.
+
+**Carried re-queues (STILL pending — now THREE sessions running, prioritize these
+FIRST next time, before today's 5 above):** all five 2026-07-19 concepts (the
+discriminating experiment, "didn't reproduce" ≠ "fixed", power modes as a timing
+variable, stale checkouts lie, `python file.py` vs `python -m package.module`) and
+all five 2026-07-20 concepts (JetPack's two meanings, the two separate AI systems,
+the LaunchLogger propagate=False bug, soft-fail CI gates, classical-primitives +
+inference-driven-selection) — teach-back didn't happen either of the last two
+sessions, and didn't happen today either given the session's length. This backlog is
+now 15 concepts deep; next session should open with teach-back before any new work,
+not just note it and move on again.

@@ -32,7 +32,7 @@ holds strategy background and the decisions log; nothing here requires reading i
 | 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | ✅ (2026-07-14 — NVMe fresh install executed 2026-07-13, runner re-registered, full 8-job CI cycle green (run 29301726080), manual HIL run on the NVMe install PASS first-attempt 2026-07-14; see `docs/runbooks/JetsonInstallSession14.md`) |
 | 15 | Gazebo + Real Jetson Hardware-in-the-Loop (Mission 1) | ✅ (2026-07-11 — Mission 1 PASS on x86 sim AND real-Jetson HIL, merged to main; CI stage designed but not yet implemented — see `docs/runbooks/Mission1HILSession15.md` + `docs/session15-hil-ci-stage-design.md`) |
 | 16 | HIL CI Stage with Gazebo + Mission 2 | ✅ (SIGNED OFF 2026-07-19 — `stage-4-hil` live (container mission, 25W-build/15W-mission), Mission 2 Option B verified round trip shipped + merged (PR #4, 7a86150); sign-off bar met: Mike-watched GUI container day GREEN + clean full-pipeline CI run 29697469463 + cold rebuild proven (659s, run 29667247639); real-USB-camera tier re-deferred → Session 19 tier #1; the 2026-07-18 "yellow bug" did NOT reproduce (12/12 local + 1/1 CI green) — instrumented, see Session 16 sign-off block) |
-| 17 | Harden, Stabilize & Review (pre-robot gate) | ⬜ (created 2026-07-12 evening — code review, perf, reuse, robot-debuggable logging, report UX, drift/AI review; gate: "robot good to go out of the gate?") |
+| 17 | Harden, Stabilize & Review (pre-robot gate) | 🔄 (Pieces 3/4/5 SHIPPED 2026-07-21 — logging, per-CI-run reporting, interactive drift dashboard + AI-loop fix; 3 whole-branch reviews, all merged to main, pushed to origin; Pieces 1/2 partially done — see their own sections; Piece 6/7 not started; gate question still open) |
 | 18 | Real Robot: Deploy + Sim-to-Real Comparison | ⬜ (was 16 until 2026-07-12, then 17 until the same evening) |
 | 19 | Real-Robot Expansion & Deferred Capability (pick-list) | ⬜ (rewritten 2026-07-17 as a menu ordered by robot-day de-risking; was "Agentic Loop on Real Hardware + Advanced Missions") |
 | 20 | Future Releases: Working Plan (R2–R5, living) | 🔄 (executed 2026-07-17/18 — ladder relabeled, all candidates placed; LIVING section, updated as decisions change) |
@@ -4102,26 +4102,49 @@ entry for the pairing.
 > Frame: could a less-technical reader (or future-you, six months out) answer "did last
 > night's runs pass, and if not, why?" in under a minute, without writing SQL?
 
-- [ ] Review `generate_test_report.py` output and every dashboard tab against that frame;
-      fix what fails it.
-- [ ] One-command status after a run — e.g. `python -m tools.fleet_status` (or promote
-      the report's summary page to this): last N runs, PASS/FAIL, drift flags, plain
-      language.
-- [ ] Photos surfaced next to their runs (dashboard or report), not just files in a
-      directory.
-- [ ] Drift alerts readable by a human: "mean_position_error is 3.2σ above baseline
-      (0.19 m vs 0.06 m typical)" beats a bare sigma number.
-- [ ] **Real-robot report parity** (Mike 2026-07-17): confirm reports/dashboard work as
-      well for `hil_jetson`/real rows as for sim rows — same one-minute answerability
-      for "did last night's REAL runs pass, and why not?"
-- [ ] **Fair-weather reporting fix** (Mike 2026-07-18, run 29653564095 finding): the
-      pipeline loses failure data twice — (a) `stage-5-reports-hw` has `needs:` with no
-      `if:` so it SKIPS when stage-4 FAILS (add `if: ${{ !cancelled() }}`; upstream-
-      skipped on docs-only pushes stays a correct skip); (b) the HIL row-ship step lives
-      in a phase that never runs after a failed gate — move it to the always-run
-      teardown/evidence path so FAIL rows reach the drift DB; (c) report/dashboard must
-      render failed runs prominently. Failure telemetry is the highest-value data for
-      drift + R2 test/heal — today it's filtered out exactly when it matters.
+> **SHIPPED 2026-07-21** — brainstormed/spec'd/planned/built via subagent-driven-development
+> (7 tasks + 1 final-review fix wave, all individually reviewed clean), merged to main
+> (`22f3a2c`), pushed to origin. Design: `docs/superpowers/specs/2026-07-21-session17-piece4-reporting-design.md`.
+> Depended on the Foundation piece (one consolidated `FLEET_DB`, also shipped today).
+
+- [x] Review `generate_test_report.py` output against the frame; **rewritten**, not
+      just reviewed — replaced the blanket "last 100 runs" query (which made
+      `stage-5-reports-sim`/`-hw` produce near-duplicate reports) with a per-run report
+      scoped to that stage's own scenarios. The "every dashboard tab" half of this item
+      moved to Piece 5 (only the new Drift tab was touched there; the other 4 tabs
+      remain unreviewed against this frame — carry forward if revisited).
+- [ ] One-command status after a run (`python -m tools.fleet_status`) — NOT built. The
+      new GitHub Job Summary (below) covers the CI-run case; a local one-command
+      workstation tool is still open.
+- [x] Photos surfaced next to their runs — embedded inline in the per-run PDF via
+      time-window correlation (no DB link between a row and its photo exists).
+      **Required a same-day final-review fix** (2026-07-21): the photo directory was
+      relative to whichever CI job's checkout happened to be active in 3 separate
+      places, so no run's photos ever reached the report-generating job in real CI —
+      fixed by making it a persistent absolute path (see CLAUDE.md `reports/` entry).
+- [x] Drift alerts readable by a human — plain-language sigma detail
+      (`mean_position_error is 3.2σ above baseline (0.19 m vs 0.06 m typical)`), plus a
+      bold red "⚠ DRIFT DETECTED" banner and a `-DRIFT` filename suffix when flagged.
+      **A directional-wording bug was caught in the same final review**: the text
+      hardcoded "above baseline" for every metric, backwards for the 4 metrics whose
+      `direction: down` means lower is worse — fixed to derive "above"/"below" from
+      the metric's own configured direction.
+- [x] **Real-robot report parity** — `stage-5-reports-hw` now generates a genuinely
+      distinct, correctly-scoped report (its own scenarios, its own runner_type), not
+      a time-shifted copy of the sim report.
+- [x] **Fair-weather reporting fix** — (a) already confirmed still true from
+      2026-07-18; (b) already resolved by Foundation/Piece 3's Task 13d (the judge
+      writes telemetry rows directly from the workstation, no dependency on a
+      later phase); (c) each per-run report shows PASS/FAIL prominently per scenario,
+      and the Job Summary leads with the same. The existing dashboard's Scenarios/
+      Telemetry tabs already color-code FAIL red (pre-existing, Session 17 CR-07).
+
+**Also shipped, not originally itemized here:** a GitHub Job Summary
+(`$GITHUB_STEP_SUMMARY`, renders directly on the run page) naming the evidence
+artifact for HIL runs (photos/logs/failure bags); `retention-days: 30` set uniformly
+on all 3 relevant artifact uploads (was unset, defaulting to 90 days); rosbag failure
+bags (Piece 3) added to the `hil-mission-evidence` upload — they existed locally but
+were never actually visible on GitHub, found during the same final review.
 
 ### Piece 5 — Drift detection, reports & AI loop review
 
@@ -4133,32 +4156,46 @@ entry for the pairing.
 > injected into the prompt, which at this data scale is simpler and better than RAG.
 > Keep it that way and record it as a decision, so nobody "adds RAG" for its own sake.**
 
-- [ ] Verify the FAIL-row policy (decided in Session 16 Piece 3) actually holds across
-      `baseline_monitor`, dashboard, and report — no skew regression.
-- [ ] Baseline windows/thresholds sanity pass now that the DB mixes `local` and
-      `hil_jetson` rows and (post-Session 16) power modes — confirm slicing prevents
-      apples-vs-oranges drift alarms.
-- [ ] **Feed the real `nav2_params.yaml` into `agentic_loop`'s `diagnose()` prompt**
-      (pulled forward from Session 19+ — the known gap: Claude *infers* `current_value`
-      and was verified wrong once, claiming 0.55 for `inflation_radius` when the real
-      value is 0.25). Must be fixed before the loop ever runs against real-robot data.
-- [ ] `ai_test_generator`: is it earning its keep? Run it against the accumulated DB;
-      keep, fix, or park it with a written reason.
-- [ ] **Pipeline self-health metrics** (Mike, 2026-07-18 — "fast, robust, repeatable"
-      needs tracking, not vibes): a checkout step took 5 min (normal ~10 s) and we could
-      only shrug "transient" because nothing baselines the pipeline itself. Collect
-      per-job AND per-step durations for every CI run (GitHub API has them — small
-      collector into the fleet DB, e.g. a `ci_steps` table, run from stage-5 or a cron),
-      then point `baseline_monitor` at them like any other metric: sigma alarms on
-      checkout/build/sim-test/HIL durations, queue-wait, and job failure rates. The
-      pipeline gets the same drift detection it gives the robot — and slow-step claims
-      become checkable. (Seed of R5's self-testing-fleet idea, arriving early because
-      it earned its keep today.)
-- [ ] **Scheduled deliberate cold build** (Mike, 2026-07-18): a monthly (or so) cron
-      workflow that builds the arm64 image with NO cache — a standing reproducibility
-      proof ("could we rebuild the robot's brain from nothing today?") that catches
-      dependency drift and vanished base images before an emergency does. Record its
-      duration in the health metrics (the cold-build baseline: 568 s on 2026-07-13).
+> **SHIPPED 2026-07-21** (the dashboard + AI-loop half — see item-by-item status below;
+> several original items were explicitly re-scoped/parked, not silently dropped) —
+> brainstormed/spec'd/planned/built via subagent-driven-development (7 tasks + 1
+> final-review fix wave, all individually reviewed clean), merged to main (`d78fb9b`),
+> pushed to origin. **This closes the three-piece sequence (Foundation → Piece 4 →
+> Piece 5) Mike approved together today.** Design:
+> `docs/superpowers/specs/2026-07-21-session17-piece5-drift-dashboard-design.md`.
+
+- [ ] Verify the FAIL-row policy holds across `baseline_monitor`/dashboard/report —
+      **explicitly parked** (Mike, 2026-07-21), not done this session.
+- [x] Baseline windows/thresholds sanity pass re: mixing `local`/`hil_jetson`/power
+      modes — already handled by pre-existing `runner_type`/`power_mode` slicing;
+      **strengthened further in Piece 4** (2026-07-21) by adding a `scenario`
+      dimension — `mission2_red` (stops after one step) was drift-comparing against
+      `mission2_no_ball` (a full round trip) before that fix. The DEEPER question —
+      are the 20-run window and 2/3/4/5σ bands themselves still well-calibrated
+      numbers, now that the DB holds real history? — is a **separate, still-parked**
+      item, recorded explicitly in the Piece 5 design spec's Scope section (found
+      during a cross-spec consistency review, 2026-07-21) so it doesn't silently vanish.
+- [x] **Feed the real `nav2_params.yaml` into `agentic_loop`'s `diagnose()` prompt** —
+      done exactly as scoped: the real file's text is now injected directly into the
+      prompt (direct context injection, not RAG). First-ever unit test coverage for
+      `tools/agentic_loop.py` in this project's history.
+- [x] `ai_test_generator`: **already resolved as moot** — the file was deleted in the
+      2026-07-19 code-review fix wave (CR-05) before this session started; nothing to
+      do here.
+- [ ] **Pipeline self-health metrics** (`ci_steps` table) — **explicitly parked**
+      (Mike, 2026-07-21), not done this session.
+- [ ] **Scheduled deliberate cold build** — **explicitly parked** (Mike, 2026-07-21),
+      not done this session.
+
+**Also shipped, not originally itemized here:** a new "Drift" tab in
+`dashboard/app.py` — per-metric control charts (baseline mean + shaded severity bands,
+`tools.baseline_monitor.check_history()`) across the WHOLE filtered run history, not
+just the last run; a trending badge (leading indicator, distinct from "flagged"); a
+sortable drill-down table; and a **read-only** "Diagnose with AI" button (no
+write/approve path anywhere in the dashboard — verified by three separate reviews,
+including a dedicated full-diff grep in the final whole-branch review). One
+Important finding in that final review (an AI-button crash risk on a filtered-out run
+id) was found and fixed same-day.
 
 ### Piece 6 — Repo hygiene (candidate, time permitting)
 

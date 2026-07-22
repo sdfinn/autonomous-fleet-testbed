@@ -888,3 +888,40 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   the infrastructure axis, not the robot-ambition axis") — from a completely
   unrelated hardware domain. Worth citing as external validation if that thesis ever
   needs outside evidence in a public writeup.
+- **2026-07-21 — Session 17 Pieces 3/4/5 shipped: logging, per-CI-run reporting,
+  interactive drift dashboard + AI-loop fix (Mike + Claude).** Three linked specs
+  (Foundation → Piece 4 → Piece 5), brainstormed together in one session, each built
+  via its own subagent-driven-development plan (7-8 tasks apiece), each individually
+  task-reviewed AND whole-branch-reviewed before merge — all three merges pushed to
+  `origin/main` same day (`ca5aa06`, `22f3a2c`, `d78fb9b`).
+  - **Foundation:** found and fixed a real, long-standing bug — CI has written
+    telemetry to a persistent path outside the repo (`~/fleet-ci-data/fleet_runs.db`)
+    since Session 12, while every tool's own default silently fell back to an in-repo
+    path instead. Two different databases; the dashboard and local reports were
+    reading the wrong one this whole time. Consolidated onto one, via
+    `tools/telemetry_logger.py`'s existing schema-owner role now also owning the
+    path. Also: `FLEET_TELEMETRY=off` opt-out for ad hoc runs, WAL mode baked into
+    `init_db()` (a manual one-time-only design was revised mid-review, once the
+    reviewer found a real gap — a fresh clone/recreated file would silently miss it).
+  - **Piece 4:** the two "stage 5" reports were near-duplicate — same unfiltered
+    query, same filename, just time-shifted. Rescoped to genuinely distinct per-run
+    reports (sim vs. HIL), added a drift banner + plain-language detail, embedded
+    photos, a GitHub Job Summary, and uniform 30-day retention. Final review caught a
+    directional-wording bug (drift text said "above baseline" for every metric —
+    backwards for 4 of 8 watched metrics) and found the SAME relative-path bug class
+    Foundation had just fixed, independently, in three more places (photo storage) —
+    fixed the same way, same session.
+  - **Piece 5:** a new interactive "Drift" tab (control charts, trending indicator,
+    drill-down) plus a real bug fix in `agentic_loop.diagnose()` (it let the LLM
+    infer a nav2 param's current value instead of reading the real file — caught
+    wrong once). The AI-loop dashboard integration is strictly read-only by design —
+    three separate reviews (including a dedicated full-diff grep for any write path
+    in the final whole-branch review) confirm no write/approve action exists in the
+    dashboard.
+  - **Process note worth recording:** all three final whole-branch reviews found at
+    least one real Important issue that a task-scoped review had missed — the
+    pattern held three times in a row. Whole-branch review earned its keep as a
+    distinct step, not a formality, on every single piece this session.
+  - **Docs updated same day:** CLAUDE.md (new/changed file entries, 2 new Gotchas —
+    a sandboxed-`/tmp` discovery and a recurring zero-variance-baseline test-design
+    trap that bit 4+ times), Release1Todo.md (Piece 4/5 checkboxes, Session Index).
