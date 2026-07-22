@@ -111,9 +111,11 @@ def test_generate_report_adds_drift_suffix_when_flagged(tmp_path):
 def test_generate_report_no_suffix_when_clean(tmp_path):
     db = str(tmp_path / "t.db")
     init_db(db)
-    for _ in range(10):
+    for rate in (0.94, 0.95, 0.96, 0.95, 0.96, 0.94, 0.95, 0.96, 0.95, 0.94):
         log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
-                step_log=[], db_path=db, runner_type="local", nav_success_rate=0.95)
+                step_log=[], db_path=db, runner_type="local", nav_success_rate=rate)
+    # Well within the baseline's natural spread — a genuine "no drift" comparison,
+    # not a vacuous pass from a zero-variance baseline being skipped entirely.
     log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
             step_log=[], db_path=db, runner_type="local", nav_success_rate=0.95)
     from tools.generate_test_report import generate_report
