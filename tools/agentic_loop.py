@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Agentic test loop: diagnose failures, propose fixes, await human approval."""
 import json
-import os
 import sqlite3
 import sys
 from pathlib import Path

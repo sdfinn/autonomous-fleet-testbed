@@ -1,6 +1,6 @@
 # Copyright 2026 Mike
 # SPDX-License-Identifier: Apache-2.0
-"""Streamlit telemetry dashboard over FLEET_DB (reports/fleet_runs.db by default).
+"""Streamlit telemetry dashboard over FLEET_DB (~/fleet-ci-data/fleet_runs.db by default).
 
 Session 17 code review fix wave (2026-07-19): AI-scenario tab and YOLO-era camera
 metrics removed with the rest of that subsystem (CR-05); filters are now derived from

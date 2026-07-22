@@ -52,6 +52,13 @@ def init_db(db_path: str = DB_PATH):
     if parent:
         os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(db_path)
+    # Whole-branch review (Finding 1): WAL mode is stored in the file's own header and
+    # persists once set, but a brand-new file (fresh clone, or recreated after
+    # deletion) otherwise starts in SQLite's default rollback-journal mode with no
+    # code path that ever sets it — bake it in here so every DB this code creates or
+    # opens ends up WAL, not just the one production file fixed by hand. Idempotent:
+    # a no-op on a DB already in WAL mode.
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS runs (
             id                      INTEGER PRIMARY KEY AUTOINCREMENT,
