@@ -59,12 +59,14 @@ from tools.mission2_harness import (BALL_AT_SPHERE_XY, BALL_REMOVAL_SETTLE_S,
                                     home_pair_similarity, judge_no_ball, judge_red,
                                     judge_yellow, log_variant_row, parse_reaction_events,
                                     remove_ball, spawn_ball)
-from tools.telemetry_logger import log_run
+from tools.telemetry_logger import PHOTO_DIR as _PHOTO_DIR, log_run
 
 log = get_logger('mission2_day')
 
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
-PHOTO_DIR = REPO_DIR / 'reports' / 'photos'     # always-visible workstation copy (Task 13g)
+PHOTO_DIR = pathlib.Path(_PHOTO_DIR)  # persistent across jobs (Piece 4 final-review fix) — was
+# REPO_DIR-relative, which broke across job checkouts on the same self-hosted runner; now the
+# same sibling-of-DB_PATH location tools/telemetry_logger.py and generate_test_report.py use.
 FAILURE_BAG_DIR = REPO_DIR / 'reports' / 'failure_bags'  # scp'd back from the Jetson on FAIL
 LAUNCH_FILE = 'src/nav_fleet/launch/sim_launch.py'
 NAV2_READY_MARK = 'Managed nodes are active'   # emitted once per lifecycle manager (x2)

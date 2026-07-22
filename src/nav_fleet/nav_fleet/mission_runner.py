@@ -41,9 +41,9 @@ from nav_fleet.missions import (MISSIONS, REACTION_FRAMES, REACTION_RANGE_M,
 from nav_fleet.nav_runner import NavRunner
 from nav_fleet.semantic_map import SEMANTIC_MAP
 from tools.log_setup import build_env_manifest, git_sha, resolve_level
-from tools.telemetry_logger import log_run
+from tools.telemetry_logger import PHOTO_DIR as _PHOTO_DIR, log_run
 
-PHOTO_DIR = pathlib.Path('reports/photos')
+PHOTO_DIR = pathlib.Path(_PHOTO_DIR)
 NAV_TIMEOUT_S = 90.0
 
 # Cleared before every navigate leg (see MissionRunner._clear_costmaps for the why).

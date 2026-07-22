@@ -199,3 +199,14 @@ def test_log_run_writes_when_telemetry_unset(tmp_path, monkeypatch):
     run_id = log_run(scenario="s", steps=1, final_x=0.0, final_y=0.0, result="PASS",
                       step_log=[], db_path=db)
     assert run_id is not None
+
+
+def test_photo_dir_is_sibling_of_db_path(monkeypatch, tmp_path):
+    override = str(tmp_path / "custom.db")
+    monkeypatch.setenv("FLEET_DB", override)
+    importlib.reload(telemetry_logger)
+    try:
+        assert telemetry_logger.PHOTO_DIR == os.path.join(str(tmp_path), "photos")
+    finally:
+        monkeypatch.undo()
+        importlib.reload(telemetry_logger)

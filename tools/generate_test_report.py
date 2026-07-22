@@ -22,13 +22,12 @@ from reportlab.platypus import (
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 from tools.baseline_monitor import check_run  # noqa: E402
-from tools.telemetry_logger import DB_PATH  # noqa: E402
+from tools.telemetry_logger import DB_PATH, PHOTO_DIR  # noqa: E402
 
 REPORT_PATH = os.getenv(
     "REPORT_PATH",
     os.path.join(_PROJECT_ROOT, "reports", "test_report.pdf")
 )
-PHOTO_DIR = os.path.join(_PROJECT_ROOT, "reports", "photos")
 PHOTO_WINDOW_SECONDS = 180
 
 _TABLE_STYLE = TableStyle([
@@ -88,7 +87,7 @@ def find_run_photos(row_timestamp: str, photo_dir: str = PHOTO_DIR,
 
 
 def build_job_summary(runner_type: str, rows: list, reports_by_row_id: dict,
-                       any_flagged: bool) -> str:
+                       any_flagged: bool, evidence_artifact: str = None) -> str:
     """Markdown for $GITHUB_STEP_SUMMARY — renders directly on the run's summary page,
     so PASS/FAIL and the drift verdict are visible with zero clicks."""
     lines = [f"## {'⚠ DRIFT DETECTED' if any_flagged else 'Report'} — {runner_type}", ""]
@@ -96,17 +95,24 @@ def build_job_summary(runner_type: str, rows: list, reports_by_row_id: dict,
         lines.append(f"- **{row['scenario']}**: {row['result']}")
         for r in reports_by_row_id.get(row["id"], []):
             if r.flagged:
+                word = "below" if r.direction == "down" else "above"
                 lines.append(
-                    f"  - ⚠ `{r.metric}` is {r.sigma:.1f}σ above baseline "
+                    f"  - ⚠ `{r.metric}` is {r.sigma:.1f}σ {word} baseline "
                     f"({r.current:.2f} vs {r.mean:.2f} typical)"
                 )
+    if evidence_artifact:
+        lines.append("")
+        lines.append(
+            f"Evidence (photos, Nav2 logs, failure bags) for this run: "
+            f"see the `{evidence_artifact}` artifact on this run's Actions page."
+        )
     lines.append("")
     return "\n".join(lines)
 
 
 def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
                      output_path: str = REPORT_PATH, config_path: str = None,
-                     photo_dir: str = PHOTO_DIR) -> str:
+                     photo_dir: str = PHOTO_DIR, evidence_artifact: str = None) -> str:
     rows = load_run_rows(runner_type, scenarios, db_path=db_path)
 
     reports_by_row_id = {
@@ -150,8 +156,9 @@ def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
         flagged = [r for r in reports if r.flagged]
         if flagged:
             for r in flagged:
+                word = "below" if r.direction == "down" else "above"
                 story.append(Paragraph(
-                    f"⚠ {r.metric} is {r.sigma:.1f}σ above baseline "
+                    f"⚠ {r.metric} is {r.sigma:.1f}σ {word} baseline "
                     f"({r.current:.2f} vs {r.mean:.2f} typical)",
                     ParagraphStyle("DriftDetail", parent=styles["Normal"],
                                    textColor=colors.red),
@@ -181,7 +188,8 @@ def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
         with open(summary_path, "a") as f:
-            f.write(build_job_summary(runner_type, rows, reports_by_row_id, any_flagged))
+            f.write(build_job_summary(runner_type, rows, reports_by_row_id, any_flagged,
+                                       evidence_artifact=evidence_artifact))
 
     return output_path
 
@@ -196,9 +204,14 @@ def main() -> None:
     parser.add_argument("--db", default=DB_PATH)
     parser.add_argument("--report-path", default=REPORT_PATH)
     parser.add_argument("--config", default=None)
+    parser.add_argument("--evidence-artifact", default=None,
+                         help="name of the GH Actions evidence artifact for this run "
+                              "(e.g. hil-mission-evidence-142) — omitted for sim reports, "
+                              "which have no separate evidence artifact")
     args = parser.parse_args()
     generate_report(args.runner_type, args.scenarios, db_path=args.db,
-                     output_path=args.report_path, config_path=args.config)
+                     output_path=args.report_path, config_path=args.config,
+                     evidence_artifact=args.evidence_artifact)
 
 
 if __name__ == "__main__":
