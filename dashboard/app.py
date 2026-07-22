@@ -14,11 +14,13 @@ import sys
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 # streamlit puts the SCRIPT's dir on sys.path, not the cwd — make repo-root imports work.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from tools.baseline_monitor import check_history, load_config  # noqa: E402
 from tools.goal_zones import end_zones  # noqa: E402
 from tools.telemetry_logger import DB_PATH  # noqa: E402
 
@@ -59,16 +61,18 @@ robot_type_filter = st.sidebar.selectbox("Robot Type", _filter_options(runs, "ro
 runner_type_filter = st.sidebar.selectbox("Runner", _filter_options(runs, "runner_type"))
 sim_engine_filter = st.sidebar.selectbox("Sim Engine", _filter_options(runs, "sim_engine"))
 power_mode_filter = st.sidebar.selectbox("Power Mode", _filter_options(runs, "power_mode"))
+scenario_filter = st.sidebar.selectbox("Scenario", _filter_options(runs, "scenario"))
 
 for column, choice in (("robot_type", robot_type_filter),
                        ("runner_type", runner_type_filter),
                        ("sim_engine", sim_engine_filter),
-                       ("power_mode", power_mode_filter)):
+                       ("power_mode", power_mode_filter),
+                       ("scenario", scenario_filter)):
     if choice != "All" and column in runs.columns:
         runs = runs[runs[column] == choice]
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    'Overview', 'Scenarios', 'Telemetry', 'Sensor Health'
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    'Overview', 'Scenarios', 'Telemetry', 'Sensor Health', 'Drift'
 ])
 
 # ── Tab 1: Overview ──────────────────────────────────────────────────────────
@@ -222,3 +226,85 @@ with tab4:
         lc1.metric('Avg Min Range (m)', f"{df_lidar['lidar_min_range'].mean():.2f}")
         lc2.metric('Avg Obstacles Detected', f"{df_lidar['num_obstacles_detected'].mean():.1f}")
         st.dataframe(df_lidar, use_container_width=True)
+
+# ── Tab 5: Drift ─────────────────────────────────────────────────────────────
+with tab5:
+    st.subheader('Drift Detection — Big Picture')
+    st.caption(
+        'Every watched metric over time against its own rolling baseline — not just '
+        'the last run. Filters above (Runner, Power Mode, Scenario) scope this view.'
+    )
+
+    _drift_runner_type = None if runner_type_filter == "All" else runner_type_filter
+    _drift_power_mode = None if power_mode_filter == "All" else power_mode_filter
+    _drift_scenario = None if scenario_filter == "All" else scenario_filter
+
+    history = check_history(
+        runner_type=_drift_runner_type,
+        power_mode=_drift_power_mode,
+        scenario=_drift_scenario,
+        db_path=DB_PATH,
+    )
+
+    if not history:
+        st.info('No runs match the current filters — widen them to see drift trends.')
+    else:
+        _cfg = load_config()
+        _bands = _cfg['sigma']
+        _severity_order = ('critical', 'error', 'warning', 'info')  # widest drawn first
+        _severity_colors = {
+            'info': 'rgba(255, 235, 59, 0.15)',
+            'warning': 'rgba(255, 152, 0, 0.15)',
+            'error': 'rgba(244, 67, 54, 0.15)',
+            'critical': 'rgba(183, 28, 28, 0.15)',
+        }
+
+        # Runs metadata (timestamp) for the x-axis — `runs` here is already filtered
+        # by the sidebar, so this join is scoped consistently with `history`.
+        _runs_by_id = runs.set_index('id')
+
+        by_metric = {}
+        for run_id in sorted(history):
+            if run_id not in _runs_by_id.index:
+                continue
+            for r in history[run_id]:
+                by_metric.setdefault(r.metric, []).append((run_id, r))
+
+        for metric, points in by_metric.items():
+            xs = [_runs_by_id.loc[run_id, 'timestamp'] for run_id, _ in points]
+            means = [r.mean for _, r in points]
+            stddevs = [r.stddev for _, r in points]
+            currents = [r.current for _, r in points]
+            flagged_flags = [r.flagged for _, r in points]
+
+            fig = go.Figure()
+            for severity in _severity_order:
+                threshold = _bands.get(severity)
+                if threshold is None:
+                    continue
+                upper = [m + threshold * sd for m, sd in zip(means, stddevs)]
+                lower = [m - threshold * sd for m, sd in zip(means, stddevs)]
+                fig.add_trace(go.Scatter(x=xs, y=upper, mode='lines',
+                                          line=dict(width=0), showlegend=False,
+                                          hoverinfo='skip'))
+                fig.add_trace(go.Scatter(x=xs, y=lower, mode='lines',
+                                          line=dict(width=0), fill='tonexty',
+                                          fillcolor=_severity_colors[severity],
+                                          name=severity, hoverinfo='skip'))
+
+            fig.add_trace(go.Scatter(x=xs, y=means, mode='lines',
+                                      line=dict(color='blue', dash='dash'),
+                                      name='baseline mean'))
+
+            point_colors = ['#e74c3c' if f else '#2ecc71' for f in flagged_flags]
+            fig.add_trace(go.Scatter(
+                x=xs, y=currents, mode='markers+lines',
+                marker=dict(color=point_colors, size=8),
+                line=dict(color='rgba(100,100,100,0.3)'),
+                name=metric,
+                text=[f'run {run_id}' for run_id, _ in points],
+                hovertemplate='%{text}<br>%{y:.3f}<extra></extra>',
+            ))
+            fig.update_layout(title=metric, showlegend=False, height=250,
+                               margin=dict(l=40, r=20, t=40, b=20))
+            st.plotly_chart(fig, use_container_width=True)
