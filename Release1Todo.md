@@ -4164,6 +4164,17 @@ were never actually visible on GitHub, found during the same final review.
 > Piece 5) Mike approved together today.** Design:
 > `docs/superpowers/specs/2026-07-21-session17-piece5-drift-dashboard-design.md`.
 
+> **Post-merge regression + fix (2026-07-22):** the very next CI run
+> (`29892759160`, stage-4) FAILed all 3 Mission 2 variants — root cause was Piece 4's
+> own `PHOTO_DIR`-absolute fix (above), which broke `tools/mission2_day.py`'s photo
+> scp pull-back (still assumed a checkout-relative path) and, separately, the
+> container-mode HIL path's bind mount (never updated to capture the new absolute
+> location). The robot itself behaved correctly on all 3 runs — this was pure
+> evidence-retrieval plumbing. Fixed same-day; see CLAUDE.md's "Making a path absolute
+> breaks every OTHER place..." Gotcha for the full diagnosis, and
+> `tests/test_mission2_day.py`'s new `test_pull_photos_*` tests (first-ever coverage
+> for this scp path).
+
 - [ ] Verify the FAIL-row policy holds across `baseline_monitor`/dashboard/report —
       **explicitly parked** (Mike, 2026-07-21), not done this session.
 - [x] Baseline windows/thresholds sanity pass re: mixing `local`/`hil_jetson`/power

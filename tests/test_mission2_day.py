@@ -89,6 +89,50 @@ def test_jetson_executor_container_mode_fails_loud_when_image_missing(monkeypatc
         JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
 
 
+def test_pull_photos_bare_metal_uses_absolute_path_verbatim(monkeypatch, tmp_path):
+    """2026-07-22 regression: PHOTO_DIR became absolute (Piece 4 final-review fix), but
+    _pull_photos still prepended 'autonomous-fleet-testbed/' assuming a relative path —
+    mangling the remote path and failing every scp, 3/3 CI runs. Bare-metal mission_runner
+    runs directly as JETSON_USER, so the logged path already IS the real host path."""
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    monkeypatch.setattr(mission2_day_module, 'PHOTO_DIR', tmp_path)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    log_text = 'photo saved: /home/mike/fleet-ci-data/photos/mission2_home_ref_1.png\n'
+    ex._pull_photos(log_text)
+    scp_cmd = next(c for c in calls if c[0] == 'scp')
+    assert scp_cmd[-2] == (
+        'mike@10.42.0.217:/home/mike/fleet-ci-data/photos/mission2_home_ref_1.png')
+
+
+def test_pull_photos_container_mode_translates_root_prefix_to_tilde(monkeypatch, tmp_path):
+    """Container mode: mission_runner's absolute path is INSIDE the container (root's
+    HOME, per the image's missing USER directive), mapped to JETSON_USER's real home via
+    the container-run bind mount — the scp path must be JETSON_USER's home, not root's."""
+    monkeypatch.setenv('HIL_CONTAINER', '1')
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    monkeypatch.setattr(mission2_day_module, 'PHOTO_DIR', tmp_path)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    log_text = 'photo saved: /root/fleet-ci-data/photos/mission2_home_ref_1.png\n'
+    ex._pull_photos(log_text)
+    scp_cmd = next(c for c in calls if c[0] == 'scp')
+    assert scp_cmd[-2] == (
+        'mike@10.42.0.217:~/fleet-ci-data/photos/mission2_home_ref_1.png')
+
+
 def test_pull_failure_bags_scps_the_directory_recursively(monkeypatch, tmp_path):
     """S17 Piece 3: a 'failure bag kept: <path>' log line must scp -r the whole bag
     directory back — a single-file scp (the photo pattern) would silently miss the

@@ -925,3 +925,23 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   - **Docs updated same day:** CLAUDE.md (new/changed file entries, 2 new Gotchas —
     a sandboxed-`/tmp` discovery and a recurring zero-variance-baseline test-design
     trap that bit 4+ times), Release1Todo.md (Piece 4/5 checkboxes, Session Index).
+- **2026-07-22 — Post-merge regression from Piece 4's own fix, caught by the very next
+  CI run, fixed same day (Mike + Claude).** Stage-4 (`29892759160`) FAILed all 3
+  Mission 2 variants overnight. Diagnosis from `mission2_day.log`: `mission_runner`'s
+  own on-Jetson checklist was 100% PASS on every variant (the robot genuinely
+  navigated and photographed correctly) — the failure was entirely evidence
+  pull-back. Root cause: Piece 4's final-review fix made `PHOTO_DIR` absolute
+  (fixing `stage-5-reports-*`), but `tools/mission2_day.py`'s `_pull_photos()` still
+  built the remote scp path assuming a checkout-relative string, and the
+  container-mode HIL path's bind mount never got updated to capture the new
+  absolute location at all — photos were written into the ephemeral container and
+  discarded on `--rm`. Fixed with a second bind mount
+  (`-v $HOME/fleet-ci-data:/root/fleet-ci-data`) plus a `_remote_photo_path()` helper
+  that uses the logged path verbatim for bare-metal and substitutes the container's
+  `/root` prefix for `~` in container mode. First-ever test coverage for this scp
+  path (`tests/test_mission2_day.py`). Full diagnosis lives in CLAUDE.md's "Making a
+  path absolute breaks every OTHER place..." Gotcha. **Process lesson:** none of
+  Piece 4's task/review steps exercised a live HIL day's SSH pull-back — only photo
+  existence-on-disk and dashboard rendering of already-local data — so this
+  consumption-side half of the same bug class Piece 4 fixed on the definition side
+  slipped through 3 individual task reviews and 1 whole-branch review undetected.

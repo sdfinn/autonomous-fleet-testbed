@@ -226,7 +226,9 @@ docker buildx build --platform linux/arm64 \
   in the `hil-mission-evidence` CI artifact upload — found during the same final
   review: `mission2_day.py`'s `_pull_failure_bags` scp'd bags back to the workstation,
   but `ci.yml` never actually uploaded them, so they existed locally but were never
-  visible on GitHub.
+  visible on GitHub. **This absolute-path fix broke `mission2_day.py`'s photo
+  pull-back the very next CI run** — see the "Making a path absolute breaks every OTHER
+  place..." Gotcha below for the regression and its 2026-07-22 fix.
 - **Telemetry database — `~/fleet-ci-data/fleet_runs.db`** (env var `FLEET_DB` to
   override; owned by `tools/telemetry_logger.DB_PATH`) — THE single source every tool
   reads/writes (telemetry_logger, baseline_monitor, dashboard, generate_test_report,
@@ -343,6 +345,42 @@ docker buildx build --platform linux/arm64 \
   `test_build_trend_summary_reports_stable_metric`): bypass `check_run()` entirely by
   hand-constructing a `BaselineReport` and testing only the CONSUMING function's own
   formatting logic — sound as long as that consumer never reads `.sigma`/`.stddev`.
+- **Making a path absolute breaks every OTHER place that assumed it was relative — a
+  same-day regression, not a hypothetical.** The Piece 4 final-review fix above made
+  `PHOTO_DIR` absolute; it fixed `stage-5-reports-*` but broke `tools/mission2_day.py`'s
+  `_pull_photos()`, which still built the remote scp path as
+  `f'...:autonomous-fleet-testbed/{rel}'` — correct when `rel` was checkout-relative,
+  nonsense once `rel` became absolute. Silent failure: `mission_runner`'s own on-Jetson
+  checklist still logged 100% PASS (the robot genuinely drove and photographed
+  correctly, both variants), but every scp pull-back failed
+  (`could not scp Jetson photo ...`, a WARNING not an error), so the workstation judge
+  saw zero photos and FAILed all 3 mission2 variants in the very next CI run
+  (29892759160, 2026-07-22) — a pure evidence-retrieval regression, not a
+  navigation/perception bug. Compounding wrinkle found during the fix: the
+  container-mode HIL path (`HIL_CONTAINER=1`) additionally lost the photos entirely —
+  the image has no `USER` directive (`ros:jazzy-ros-base` default = root), so `PHOTO_DIR`
+  resolves to `/root/fleet-ci-data` *inside the container*, which wasn't captured by the
+  existing `-v $HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports` bind mount at
+  all — photos were written into the ephemeral container and vanished on `--rm`. Fixed
+  (2026-07-22) with two changes in `tools/mission2_day.py`: (1) `_ssh_mission2` gained a
+  second bind mount, `-v $HOME/fleet-ci-data:/root/fleet-ci-data`, so the container's
+  root-HOME photos land in `JETSON_USER`'s real `fleet-ci-data` on the host; (2)
+  `_pull_photos` gained `_remote_photo_path()`, which uses the logged absolute path
+  verbatim for bare-metal (already the real host path) and substitutes the container's
+  `/root` prefix for `~` in container mode (relying on the remote shell's own tilde
+  expansion to land on `JETSON_USER`'s home) — covered by
+  `test_pull_photos_bare_metal_uses_absolute_path_verbatim` and
+  `test_pull_photos_container_mode_translates_root_prefix_to_tilde` in
+  `tests/test_mission2_day.py`, the first tests either code path has ever had.
+  `_pull_failure_bags` was NOT touched — `failure_bag.py`'s `BAG_DIR` is still
+  checkout-relative, so its existing `autonomous-fleet-testbed/{rel}` scp path is still
+  correct. **Lesson for next time: when a path constant changes from relative to
+  absolute (or vice versa), grep every OTHER consumer of that same log line / directory
+  convention, not just the one place the bug report points at** — Piece 4's own review
+  found 3 duplicate relative-path bugs by doing exactly this for the *definition* side;
+  this regression was the *consumption* side of the identical fix, missed because no
+  task/review step in Piece 4 exercised a live HIL day's SSH pull-back, only photo
+  existence-on-disk and dashboard rendering of already-local data.
 
 ## Nav2 Launch Gotchas (Session 10+)
 - `gz sim` WITHOUT `-s` launches a GUI that crashes on this machine (snap/glibc libpthread conflict)
