@@ -351,16 +351,21 @@ with tab5:
             from tools.agentic_loop import diagnose  # local import: avoid constructing
             # anthropic.Anthropic() (module-level in agentic_loop.py) unless this
             # button is actually clicked.
-            trend_context = build_trend_summary(history)
-            latest_run_id = max(history)
-            latest_row = _runs_by_id.loc[latest_run_id]
-            run_data = latest_row.to_dict()
-            run_data['id'] = latest_run_id
-            with st.spinner('Asking Claude...'):
-                response = diagnose(run_data, db_path=DB_PATH, trend_context=trend_context)
-            for block in response.content:
-                if block.type == 'text':
-                    st.markdown(block.text)
-                elif block.type == 'tool_use':
-                    st.write(f'**Proposed action:** `{block.name}`')
-                    st.json(block.input)
+            visible_ids = [rid for rid in history if rid in _runs_by_id.index]
+            if not visible_ids:
+                st.info('No runs in the current view to diagnose.')
+            else:
+                visible_history = {rid: history[rid] for rid in visible_ids}
+                trend_context = build_trend_summary(visible_history)
+                latest_run_id = max(visible_ids)
+                latest_row = _runs_by_id.loc[latest_run_id]
+                run_data = latest_row.to_dict()
+                run_data['id'] = latest_run_id
+                with st.spinner('Asking Claude...'):
+                    response = diagnose(run_data, db_path=DB_PATH, trend_context=trend_context)
+                for block in response.content:
+                    if block.type == 'text':
+                        st.markdown(block.text)
+                    elif block.type == 'tool_use':
+                        st.write(f'**Proposed action:** `{block.name}`')
+                        st.json(block.input)
