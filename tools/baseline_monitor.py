@@ -182,6 +182,44 @@ def check_run(
     return reports
 
 
+def check_history(
+    runner_type: str = None,
+    power_mode: str = None,
+    scenario: str = None,
+    db_path: str = DB_PATH,
+    n: int = None,
+    config_path: str = None,
+) -> dict:
+    """Drift verdict for EVERY run matching the given slice filters (None = no filter
+    on that column), not just one run_id — the trend view check_run() alone can't
+    provide. Includes FAIL rows (a failure's own metrics vs. the healthy baseline is
+    informative) — only the baseline window itself stays PASS-only, via check_run()'s
+    own existing query, unchanged here. Reuses check_run() per row; no duplicated
+    slicing/severity logic.
+
+    Returns {run_id: [BaselineReport, ...]}, ordered ascending by run id.
+    """
+    conn = sqlite3.connect(db_path)
+    where = []
+    params = []
+    for col, val in (("runner_type", runner_type), ("power_mode", power_mode),
+                      ("scenario", scenario)):
+        if val is not None:
+            where.append(f"{col} = ?")
+            params.append(val)
+    query = "SELECT id FROM runs"
+    if where:
+        query += " WHERE " + " AND ".join(where)
+    query += " ORDER BY id ASC"
+    row_ids = [r[0] for r in conn.execute(query, params).fetchall()]
+    conn.close()
+
+    return {
+        run_id: check_run(run_id, db_path=db_path, n=n, config_path=config_path)
+        for run_id in row_ids
+    }
+
+
 def check_latest_run(db_path: str = DB_PATH, n: int = None, config_path: str = None):
     """Check the most recently logged run. Returns None if DB is empty."""
     conn = sqlite3.connect(db_path)
