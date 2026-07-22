@@ -203,16 +203,26 @@ def test_build_job_summary_plain_language_for_flagged_metric(tmp_path):
 def test_build_job_summary_quiet_when_clean(tmp_path):
     db = str(tmp_path / "t.db")
     init_db(db)
-    for _ in range(10):
+    # Real variance (not 11 identical values — a zero-variance baseline makes
+    # check_run() skip the metric entirely, which would pass this test vacuously
+    # without ever exercising a genuine non-flagged BaselineReport; see
+    # _seed_baseline_and_outlier's comment and test_generate_report_no_suffix_when_clean
+    # for the same established pattern).
+    for rate in (0.94, 0.95, 0.96, 0.95, 0.96, 0.94, 0.95, 0.96, 0.95, 0.94):
         log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
-                step_log=[], db_path=db, runner_type="local", nav_success_rate=0.95)
+                step_log=[], db_path=db, runner_type="local", nav_success_rate=rate)
+    # Well within the baseline's natural spread — a genuine "no drift" comparison.
     log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
             step_log=[], db_path=db, runner_type="local", nav_success_rate=0.95)
     from tools.baseline_monitor import check_run
     from tools.generate_test_report import build_job_summary, load_run_rows
     rows = load_run_rows("local", ["mission1"], db_path=db)
     reports_by_row_id = {row["id"]: check_run(row["id"], db_path=db) for row in rows}
+    # Guard against the vacuous case for real: at least one metric must have actually
+    # been compared (a non-empty report list), not just silently skipped.
+    assert any(reports_by_row_id.values())
     any_flagged = any(r.flagged for rs in reports_by_row_id.values() for r in rs)
+    assert not any_flagged
     summary = build_job_summary("local", rows, reports_by_row_id, any_flagged)
     assert "DRIFT DETECTED" not in summary
 
