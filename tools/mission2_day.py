@@ -250,14 +250,29 @@ class JetsonExecutor(MissionExecutor):
 
     def _ssh_mission2(self, label):
         # HIL_CONTAINER=1 runs the mission inside the stage-3 arm64 GHCR image (consuming the
-        # arm64->HIL pipeline edge), mirroring scripts/hil_stage.sh. The bind-mounted reports
-        # dir puts photos on the Jetson host so the same scp path works either way. Bare-metal
-        # (HIL_CONTAINER unset) is the default — used for local proofs.
+        # arm64->HIL pipeline edge), mirroring scripts/hil_stage.sh. Bare-metal (HIL_CONTAINER
+        # unset) is the default — used for local proofs.
+        #
+        # Two bind mounts, two different writers:
+        #  - reports/ (relative, unchanged): failure_bag.py's BAG_DIR is still a
+        #    checkout-relative path ('reports/failure_bags'), which resolves inside the
+        #    container's WORKDIR (/ros2_ws) — this mount is what makes that land on the
+        #    Jetson host.
+        #  - fleet-ci-data (added post-regression, 2026-07-22): PHOTO_DIR (from
+        #    tools/telemetry_logger.py) is now an ABSOLUTE path, '~/fleet-ci-data/photos'.
+        #    The image has no USER directive (ros:jazzy-ros-base default = root), so that
+        #    resolves to /root/fleet-ci-data inside the container — nothing on the host
+        #    without this mount. Mounted at the same absolute path root's HOME already
+        #    resolves to, onto JETSON_USER's real fleet-ci-data dir on the host, so a photo
+        #    written by the containerized mission_runner actually reaches the Jetson
+        #    filesystem instead of vanishing when `--rm` tears the container down. See
+        #    _remote_photo_path() below for the matching scp-side path translation.
         if os.environ.get('HIL_CONTAINER') == '1':
             image = self.image
             cmd = (
                 "docker run --rm --name hil_mission2 --network host --ipc host "
                 "-v $HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports "
+                "-v $HOME/fleet-ci-data:/root/fleet-ci-data "
                 f"-e RUNNER_TYPE=hil_jetson -e POWER_MODE={POWER_MODE_LABEL} "
                 "-e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp -e ROS_DOMAIN_ID=0 "
                 f"{image} bash -c 'source /opt/ros/jazzy/setup.bash && "
@@ -286,9 +301,10 @@ class JetsonExecutor(MissionExecutor):
         for rel in re.findall(r'photo saved:\s*(\S+)', log_text):
             base = os.path.basename(rel)
             dest = PHOTO_DIR / base
+            remote_path = self._remote_photo_path(rel)
             rc = subprocess.run(
                 ['scp', '-o', 'BatchMode=yes',
-                 f'{JETSON_USER}@{self.ip}:autonomous-fleet-testbed/{rel}', str(dest)],
+                 f'{JETSON_USER}@{self.ip}:{remote_path}', str(dest)],
                 capture_output=True, text=True).returncode
             if rc == 0:
                 subprocess.run(['cp', '-f', str(dest),
@@ -297,6 +313,22 @@ class JetsonExecutor(MissionExecutor):
             else:
                 log.warning(f'could not scp Jetson photo {rel}')
         return local
+
+    def _remote_photo_path(self, rel):
+        """`rel` (from a 'photo saved: <path>' log line) is PHOTO_DIR-relative absolute
+        (2026-07-22 fix — was checkout-relative, see _ssh_mission2's comment) — but that
+        absolute path was recorded from wherever mission_runner actually ran, which isn't
+        always the real Jetson filesystem path:
+          - bare-metal: mission_runner runs directly as JETSON_USER, so `rel` already IS
+            the real host path — use it as-is.
+          - container: `rel` is a path INSIDE the container (root's HOME, e.g.
+            '/root/fleet-ci-data/...'), which the container-run bind mount
+            (-v $HOME/fleet-ci-data:/root/fleet-ci-data) maps onto JETSON_USER's real
+            fleet-ci-data dir on the host — substitute the container's root prefix for
+            '~' so the remote shell expands it to JETSON_USER's actual home."""
+        if self.image is not None:
+            return '~' + rel[len('/root'):]
+        return rel
 
     def _pull_failure_bags(self, log_text):
         """scp -r every 'failure bag kept: <path>' from the Jetson to reports/failure_bags/
