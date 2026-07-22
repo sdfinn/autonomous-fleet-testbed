@@ -34,9 +34,10 @@ def _insert(
     camera_hz_mean=20.0,
     runner_type=None,
     power_mode=None,
+    scenario="baseline_test",
 ):
     return log_run(
-        scenario="baseline_test",
+        scenario=scenario,
         steps=steps,
         final_x=1.5,
         final_y=1.0,
@@ -170,6 +171,32 @@ def test_null_power_rows_baseline_against_each_other(db):
     reports = {r.metric: r for r in check_run(null_run, db_path=db)}
     assert "nav_success_rate" in reports, "NULL-power baseline produced no report"
     assert reports["nav_success_rate"].flagged
+
+
+def test_baseline_sliced_by_scenario(db):
+    """Piece 4 prerequisite: mixing scenarios in one baseline window produces a false
+    drift signal from the scenario mix shifting, not from anything actually getting
+    worse. scenario must be sliced exactly like runner_type/power_mode already are.
+    Same runner_type/power_mode for both cohorts — only scenario differs — so this
+    fails today (scenario isn't in slice_cols yet) and passes once it is.
+    """
+    for rate in _COHORT_HI:
+        _insert(db, nav_success_rate=rate, runner_type="hil_jetson", power_mode="15W",
+                scenario="mission2_no_ball")
+    for rate in _COHORT_LO:
+        _insert(db, nav_success_rate=rate, runner_type="hil_jetson", power_mode="15W",
+                scenario="mission2_red")
+
+    # A mission2_red run at 0.10 (much worse than either cohort) is a huge outlier vs
+    # the mission2_red baseline (~0.50) — flagged only if mission2_no_ball rows were
+    # correctly excluded from this scenario's own baseline. Without scenario slicing,
+    # the mixed baseline (~0.72, sd ~0.23) gives sigma ~2.7; with slicing, the tight
+    # mission2_red baseline (sd ~0.008) gives sigma ~50.
+    red_run = _insert(db, nav_success_rate=0.10, runner_type="hil_jetson",
+                       power_mode="15W", scenario="mission2_red")
+    red_reports = {r.metric: r for r in check_run(red_run, db_path=db)}
+    assert red_reports["nav_success_rate"].flagged
+    assert red_reports["nav_success_rate"].sigma > 10
 
 
 # ── CR-01/CR-02 (Session 17 code review): direction-aware flagging + config wiring ──────

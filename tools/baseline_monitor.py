@@ -113,14 +113,16 @@ def check_run(
         conn.close()
         return []
 
-    # Compare like with like (Session 16, review finding I4): the baseline window must
-    # only contain runs from the SAME execution context as the run under check —
-    # otherwise a 15W hil_jetson row would drift-compare against 25W sim history (or
-    # vice versa) and every metric would flag on the platform delta, not on real drift.
-    # Slice on (runner_type, power_mode). power_mode is NULL on all pre-Session-16 sim
+    # Compare like with like (Session 16 finding I4, extended Session 17 Piece 4): the
+    # baseline window must only contain runs from the SAME execution context AND the
+    # SAME mission scenario as the run under check — otherwise a mission2_red row
+    # (which stops after one step) would drift-compare against mission2_no_ball history
+    # (a full round trip), or a 15W hil_jetson row against 25W sim history, and every
+    # metric would flag on the context/scenario delta, not on real drift. Slice on
+    # (runner_type, power_mode, scenario). power_mode is NULL on all pre-Session-16 sim
     # rows, so a NULL-power run must baseline against NULL-power history: use `IS ?`
     # (NULL-safe equality in SQLite) rather than `= ?` (which never matches NULL).
-    slice_cols = [c for c in ("runner_type", "power_mode") if c in available]
+    slice_cols = [c for c in ("runner_type", "power_mode", "scenario") if c in available]
 
     metric_names = list(metrics)
     col_list = ", ".join(metric_names)
