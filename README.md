@@ -136,5 +136,5 @@ physical, shared machines.
 | `robot_profiles/` | Per-robot capability YAML (drives requirement skips) |
 | `dashboard/` | Streamlit telemetry dashboard |
 | `scripts/` | `hil_stage.sh` — the whole HIL stage, runnable locally or from CI |
-| `reports/` | Telemetry DB (`fleet_runs.db`), generated reports, mission photos |
+| `reports/` | Generated reports, mission photos (telemetry DB lives at `~/fleet-ci-data/fleet_runs.db` — see CLAUDE.md) |
 | `.github/workflows/ci.yml` | The 6-stage pipeline (see architecture above) |

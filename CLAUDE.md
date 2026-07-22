@@ -145,10 +145,24 @@ docker buildx build --platform linux/arm64 \
 - `requirements/`   — Traceability matrix and requirement specs
 - `docs/`           — architecture review notes, simulation-environments writeup, project
   overview slide deck (`autonomous-fleet-testbed-overview.pptx`, python-pptx generated)
-- `reports/fleet_runs.db` — SQLite telemetry store (`FLEET_DB` env var) — the single source
-  all tools read/write (telemetry_logger, baseline_monitor drift detection, dashboard,
-  generate_test_report, validate_telemetry, agentic_loop). `reports/history/` is
-  empty/unused — the JSON-per-run idea was dropped in the 2026-07-03 Session 12 review.
+- `reports/` — generated PDF reports and mission photos (`reports/photos/`, untracked).
+  The telemetry DB does **not** live here — see the `Telemetry database` entry below.
+  (`reports/history/`, the old empty/unused JSON-per-run idea dropped at the 2026-07-03
+  Session 12 review, was deleted along with this fix — Session 17 Foundation piece,
+  2026-07-21.)
+- **Telemetry database — `~/fleet-ci-data/fleet_runs.db`** (env var `FLEET_DB` to
+  override; owned by `tools/telemetry_logger.DB_PATH`) — THE single source every tool
+  reads/writes (telemetry_logger, baseline_monitor, dashboard, generate_test_report,
+  validate_telemetry, agentic_loop). Lives outside the repo deliberately: the
+  self-hosted CI runner's checkout is ephemeral, so history has to survive somewhere
+  that isn't wiped between runs — local dev and every CI job write to this same file,
+  since they're the same physical machine (Session 17 Foundation piece, 2026-07-21).
+  **This fixes a real bug**, not a hypothetical one: from Session 12 to Session 17, CI
+  wrote here while every tool's own *default* silently fell back to the in-repo
+  `reports/fleet_runs.db` instead — two different databases, with the dashboard and
+  local report generation only ever seeing whichever ad hoc local runs happened to hit
+  the wrong one. `FLEET_TELEMETRY=off` skips writing a telemetry row entirely, for ad
+  hoc/experimental runs that shouldn't join the drift-tracked record.
 - `.github/workflows/ci.yml` — 6-stage CI pipeline (job keys renumbered 2026-07-10 to match
   execution order — Gazebo is `stage-2-gazebo`, arm64 is `stage-3-arm64`, both gate
   `stage-4-isaac`; if older docs/notes say `stage-2-arm64`/`stage-3-gazebo`, that's the
@@ -178,9 +192,13 @@ docker buildx build --platform linux/arm64 \
   Ambient-only = black surfaces. Both the SDF world and URDF gazebo blocks use `<diffuse>`.
 - Isaac Sim session (Session 11): requires NVIDIA driver 570+. Driver 595.71.05 already installed.
 - `requirements.txt` is a full pip freeze of the local ROS2 venv — NOT for CI use. Use `requirements-ci.txt` in CI jobs.
-- DB path env var is `FLEET_DB` (default: `reports/fleet_runs.db`) — used by telemetry_logger,
+- DB path env var is `FLEET_DB` (default: `~/fleet-ci-data/fleet_runs.db`, owned by
+  `tools/telemetry_logger.DB_PATH` — Session 17 Foundation piece, 2026-07-21; previously
+  each of 6 files redeclared its own default independently, which is exactly how it
+  drifted out of sync with CI's real path for 5 sessions) — used by telemetry_logger,
   validate_telemetry, dashboard, baseline_monitor, generate_test_report, agentic_loop
-  (ai_test_generator/scenario_analyzer deleted 2026-07-19 — S17 review CR-05, rebuilt fresh in R2)
+  (ai_test_generator/scenario_analyzer deleted 2026-07-19 — S17 review CR-05, rebuilt
+  fresh in R2). `FLEET_TELEMETRY=off` skips writing a telemetry row entirely.
 - **`ANTHROPIC_API_KEY` in `.bashrc` doesn't reach non-interactive shells/tools.** Ubuntu's
   default `.bashrc` has an early guard (`case $- in *i*) ;; *) return;; esac`) that skips
   the entire rest of the file when the shell isn't interactive — which includes Claude
