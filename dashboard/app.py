@@ -20,7 +20,7 @@ import streamlit as st
 # streamlit puts the SCRIPT's dir on sys.path, not the cwd — make repo-root imports work.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.baseline_monitor import check_history, is_trending_worse, load_config  # noqa: E402
+from tools.baseline_monitor import build_trend_summary, check_history, is_trending_worse, load_config  # noqa: E402
 from tools.goal_zones import end_zones  # noqa: E402
 from tools.telemetry_logger import DB_PATH  # noqa: E402
 
@@ -338,3 +338,29 @@ with tab5:
                 'flagged_metrics': ', '.join(flagged_metrics) if flagged_metrics else '—',
             })
         st.dataframe(pd.DataFrame(detail_rows), use_container_width=True)
+
+        st.divider()
+        st.subheader('AI Diagnosis (read-only)')
+        st.caption(
+            'Feeds this filtered view\'s trend to Claude for a proposed diagnosis. '
+            'Read-only — nothing here writes any file. Applying a fix still means '
+            'running `python -m tools.agentic_loop` from the terminal, where the '
+            'existing human-approval gate is unchanged.'
+        )
+        if st.button('Diagnose with AI'):
+            from tools.agentic_loop import diagnose  # local import: avoid constructing
+            # anthropic.Anthropic() (module-level in agentic_loop.py) unless this
+            # button is actually clicked.
+            trend_context = build_trend_summary(history)
+            latest_run_id = max(history)
+            latest_row = _runs_by_id.loc[latest_run_id]
+            run_data = latest_row.to_dict()
+            run_data['id'] = latest_run_id
+            with st.spinner('Asking Claude...'):
+                response = diagnose(run_data, db_path=DB_PATH, trend_context=trend_context)
+            for block in response.content:
+                if block.type == 'text':
+                    st.markdown(block.text)
+                elif block.type == 'tool_use':
+                    st.write(f'**Proposed action:** `{block.name}`')
+                    st.json(block.input)
