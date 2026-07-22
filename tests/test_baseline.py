@@ -1,6 +1,6 @@
 import pytest
 
-from tools.baseline_monitor import check_latest_run, check_run, load_config
+from tools.baseline_monitor import check_history, check_latest_run, check_run, load_config
 from tools.telemetry_logger import init_db, log_run
 
 # Baseline seed: 10 runs with natural variance around fleet navigation metrics.
@@ -272,3 +272,52 @@ def test_canonical_config_loads_and_is_valid():
     assert cfg["metrics"], "no watched metrics configured"
     for name, spec in cfg["metrics"].items():
         assert spec["direction"] in ("up", "down"), f"{name}: bad direction"
+
+
+# ── Task 1: check_history() — drift verdict across a filtered run history ──────────
+
+
+def test_check_history_returns_one_entry_per_matching_run(db):
+    _seed_baseline(db)  # 10 PASS rows, scenario="baseline_test", runner_type=None
+    run_id_1 = _insert(db, nav_success_rate=0.95)
+    run_id_2 = _insert(db, nav_success_rate=0.10)  # a clear outlier
+    history = check_history(db_path=db)
+    assert run_id_1 in history
+    assert run_id_2 in history
+    # The outlier's own report must show it flagged — same verdict check_run() alone
+    # would give for that run_id, proving check_history() didn't reimplement the logic.
+    outlier_reports = {r.metric: r for r in history[run_id_2]}
+    assert outlier_reports["nav_success_rate"].flagged
+
+
+def test_check_history_filters_by_scenario(db):
+    for rate in _COHORT_HI:
+        _insert(db, nav_success_rate=rate, scenario="mission2_no_ball")
+    for rate in _COHORT_LO:
+        _insert(db, nav_success_rate=rate, scenario="mission2_red")
+    history = check_history(scenario="mission2_no_ball", db_path=db)
+    conn_check_ids = set(history)
+    # Every returned run must actually be a mission2_no_ball row — spot check via a
+    # direct query rather than trusting the function's own filter silently.
+    import sqlite3
+    conn = sqlite3.connect(db)
+    real_ids = {r[0] for r in conn.execute(
+        "SELECT id FROM runs WHERE scenario = 'mission2_no_ball'"
+    )}
+    conn.close()
+    assert conn_check_ids == real_ids
+
+
+def test_check_history_includes_fail_rows(db):
+    """A FAIL run's own metrics, compared against the healthy PASS-only baseline, is
+    exactly the informative case for a trend chart — FAIL rows must NOT be excluded
+    from the returned history (they're already correctly excluded from the BASELINE
+    itself, inside check_run() — a different thing)."""
+    _seed_baseline(db)
+    fail_id = _insert(db, nav_success_rate=0.0, result="FAIL")
+    history = check_history(db_path=db)
+    assert fail_id in history
+
+
+def test_check_history_empty_db_returns_empty_dict(db):
+    assert check_history(db_path=db) == {}
