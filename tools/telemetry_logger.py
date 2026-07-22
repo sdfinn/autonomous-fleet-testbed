@@ -13,7 +13,7 @@ import os
 import sqlite3
 import time
 
-DB_PATH = os.environ.get("FLEET_DB", "reports/fleet_runs.db")
+DB_PATH = os.environ.get("FLEET_DB", os.path.expanduser("~/fleet-ci-data/fleet_runs.db"))
 
 # Required per-run fields, created with the table (order matches the INSERT below).
 BASE_COLUMNS = ("id", "scenario", "timestamp", "steps", "final_x", "final_y", "result")
@@ -48,6 +48,9 @@ RUNS_COLUMNS = {
 
 
 def init_db(db_path: str = DB_PATH):
+    parent = os.path.dirname(db_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS runs (
