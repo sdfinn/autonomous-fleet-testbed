@@ -87,6 +87,23 @@ def find_run_photos(row_timestamp: str, photo_dir: str = PHOTO_DIR,
     return [path for _, path in matches]
 
 
+def build_job_summary(runner_type: str, rows: list, reports_by_row_id: dict,
+                       any_flagged: bool) -> str:
+    """Markdown for $GITHUB_STEP_SUMMARY — renders directly on the run's summary page,
+    so PASS/FAIL and the drift verdict are visible with zero clicks."""
+    lines = [f"## {'⚠ DRIFT DETECTED' if any_flagged else 'Report'} — {runner_type}", ""]
+    for row in rows:
+        lines.append(f"- **{row['scenario']}**: {row['result']}")
+        for r in reports_by_row_id.get(row["id"], []):
+            if r.flagged:
+                lines.append(
+                    f"  - ⚠ `{r.metric}` is {r.sigma:.1f}σ above baseline "
+                    f"({r.current:.2f} vs {r.mean:.2f} typical)"
+                )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
                      output_path: str = REPORT_PATH, config_path: str = None,
                      photo_dir: str = PHOTO_DIR) -> str:
@@ -160,6 +177,12 @@ def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
 
     doc.build(story)
     print(f"Report saved to {output_path}")
+
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a") as f:
+            f.write(build_job_summary(runner_type, rows, reports_by_row_id, any_flagged))
+
     return output_path
 
 

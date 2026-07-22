@@ -183,3 +183,61 @@ def test_generate_report_embeds_matching_photo(tmp_path):
                                    photo_dir=str(photo_dir))
     assert os.path.exists(result_path)
     assert os.path.getsize(result_path) > 1000
+
+
+def test_build_job_summary_plain_language_for_flagged_metric(tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    outlier_id = _seed_baseline_and_outlier(db)
+    from tools.baseline_monitor import check_run
+    from tools.generate_test_report import build_job_summary, load_run_rows
+    rows = load_run_rows("local", ["mission1"], db_path=db)
+    reports_by_row_id = {row["id"]: check_run(row["id"], db_path=db) for row in rows}
+    any_flagged = any(r.flagged for rs in reports_by_row_id.values() for r in rs)
+    summary = build_job_summary("local", rows, reports_by_row_id, any_flagged)
+    assert "DRIFT DETECTED" in summary
+    assert "nav_success_rate" in summary
+    assert "σ" in summary  # plain-language sigma detail, not silence
+
+
+def test_build_job_summary_quiet_when_clean(tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    for _ in range(10):
+        log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
+                step_log=[], db_path=db, runner_type="local", nav_success_rate=0.95)
+    log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
+            step_log=[], db_path=db, runner_type="local", nav_success_rate=0.95)
+    from tools.baseline_monitor import check_run
+    from tools.generate_test_report import build_job_summary, load_run_rows
+    rows = load_run_rows("local", ["mission1"], db_path=db)
+    reports_by_row_id = {row["id"]: check_run(row["id"], db_path=db) for row in rows}
+    any_flagged = any(r.flagged for rs in reports_by_row_id.values() for r in rs)
+    summary = build_job_summary("local", rows, reports_by_row_id, any_flagged)
+    assert "DRIFT DETECTED" not in summary
+
+
+def test_generate_report_writes_github_step_summary(tmp_path, monkeypatch):
+    summary_file = tmp_path / "step_summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_file))
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
+            step_log=[], db_path=db, runner_type="local")
+    from tools.generate_test_report import generate_report
+    out = str(tmp_path / "report.pdf")
+    generate_report("local", ["mission1"], db_path=db, output_path=out)
+    assert summary_file.exists()
+    assert "mission1" in summary_file.read_text()
+
+
+def test_generate_report_no_summary_write_when_env_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
+            step_log=[], db_path=db, runner_type="local")
+    from tools.generate_test_report import generate_report
+    out = str(tmp_path / "report.pdf")
+    # Must not raise even though GITHUB_STEP_SUMMARY is unset (local/dev invocation).
+    generate_report("local", ["mission1"], db_path=db, output_path=out)
