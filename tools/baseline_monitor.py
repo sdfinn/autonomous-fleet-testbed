@@ -24,7 +24,7 @@ from pathlib import Path
 
 import yaml
 
-DB_PATH = os.environ.get("FLEET_DB", "reports/fleet_runs.db")
+from tools.telemetry_logger import DB_PATH
 # Canonical config: repo-root config/drift_config.yaml (overridable for tests/tools).
 DEFAULT_CONFIG_PATH = str(Path(__file__).resolve().parent.parent / "config" / "drift_config.yaml")
 

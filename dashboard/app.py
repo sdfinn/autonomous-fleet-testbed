@@ -20,11 +20,7 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.goal_zones import end_zones  # noqa: E402
-
-DB_PATH = os.environ.get(
-    "FLEET_DB",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                 "reports", "fleet_runs.db"))
+from tools.telemetry_logger import DB_PATH  # noqa: E402
 
 COLOR_MAP = {
     "PASS":    "#2ecc71",

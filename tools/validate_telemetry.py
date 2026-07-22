@@ -22,9 +22,7 @@ from pandera.typing import Series
 # canonical form (ci.yml uses it); this bootstrap keeps the script form working too.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.telemetry_logger import BASE_COLUMNS, RUNS_COLUMNS  # noqa: E402
-
-DB_PATH = os.environ.get("FLEET_DB", "reports/fleet_runs.db")
+from tools.telemetry_logger import BASE_COLUMNS, DB_PATH, RUNS_COLUMNS  # noqa: E402
 
 
 class RunsModel(DataFrameModel):
