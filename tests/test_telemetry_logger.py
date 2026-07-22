@@ -14,6 +14,18 @@ def test_power_mode_column_exists(tmp_path):
     assert "power_mode" in cols
 
 
+def test_init_db_sets_wal_mode_on_fresh_file(tmp_path):
+    """Whole-branch review finding: a brand-new DB file (fresh clone, or recreated
+    after deletion) must end up in WAL mode via init_db() itself — not rely on a
+    one-time manual PRAGMA against the one production file that was fixed by hand.
+    Open a SEPARATE connection to the same file afterward, since journal_mode is a
+    property of the file, not the connection that set it."""
+    db = str(tmp_path / "fresh.db")
+    init_db(db)
+    mode = sqlite3.connect(db).execute("PRAGMA journal_mode").fetchone()[0]
+    assert mode.lower() == "wal"
+
+
 def test_log_run_records_power_mode(tmp_path):
     db = str(tmp_path / "t.db")
     log_run(scenario="s", steps=1, final_x=0.0, final_y=0.0, result="PASS",
