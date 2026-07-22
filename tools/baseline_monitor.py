@@ -220,6 +220,20 @@ def check_history(
     }
 
 
+def is_trending_worse(values: list, direction: str, window: int = 3) -> bool:
+    """True if the last `window` values are moving strictly monotonically toward the
+    metric's configured WORSE direction ('down' = lower is worse, 'up' = higher is
+    worse) — a leading indicator distinct from 'flagged' (which requires crossing the
+    info sigma band). Not a regression model, deliberately simple. Fewer than
+    `window` values returns False."""
+    if len(values) < window:
+        return False
+    recent = values[-window:]
+    if direction == "down":
+        return all(recent[i] > recent[i + 1] for i in range(len(recent) - 1))
+    return all(recent[i] < recent[i + 1] for i in range(len(recent) - 1))
+
+
 def check_latest_run(db_path: str = DB_PATH, n: int = None, config_path: str = None):
     """Check the most recently logged run. Returns None if DB is empty."""
     conn = sqlite3.connect(db_path)

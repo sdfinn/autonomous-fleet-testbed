@@ -1,6 +1,6 @@
 import pytest
 
-from tools.baseline_monitor import check_history, check_latest_run, check_run, load_config
+from tools.baseline_monitor import check_history, check_latest_run, check_run, is_trending_worse, load_config
 from tools.telemetry_logger import init_db, log_run
 
 # Baseline seed: 10 runs with natural variance around fleet navigation metrics.
@@ -321,3 +321,51 @@ def test_check_history_includes_fail_rows(db):
 
 def test_check_history_empty_db_returns_empty_dict(db):
     assert check_history(db_path=db) == {}
+
+
+# ── Task 2: is_trending_worse() — leading indicator ──────────────────────────────────
+
+
+def test_is_trending_worse_detects_monotonic_decrease_for_down_direction():
+    # nav_success_rate: direction=down (lower is worse) — strictly decreasing = trending.
+    assert is_trending_worse([0.95, 0.93, 0.91, 0.89], direction="down", window=3)
+
+
+def test_is_trending_worse_detects_monotonic_increase_for_up_direction():
+    # mean_position_error: direction=up (higher is worse) — strictly increasing = trending.
+    assert is_trending_worse([0.10, 0.12, 0.15, 0.19], direction="up", window=3)
+
+
+def test_is_trending_worse_false_when_flat():
+    assert not is_trending_worse([0.95, 0.95, 0.95, 0.95], direction="down", window=3)
+
+
+def test_is_trending_worse_false_when_improving():
+    # Decreasing values with direction=up (higher is worse) means IMPROVING, not trending.
+    assert not is_trending_worse([0.19, 0.15, 0.12, 0.10], direction="up", window=3)
+
+
+def test_is_trending_worse_false_when_fewer_than_window():
+    assert not is_trending_worse([0.95, 0.93], direction="down", window=3)
+
+
+def test_is_trending_worse_only_looks_at_last_window_values():
+    # An early non-monotonic blip outside the window must not prevent detection —
+    # only the LAST `window` values matter.
+    assert is_trending_worse([0.50, 0.99, 0.95, 0.93, 0.91], direction="down", window=3)
+
+
+def test_is_trending_worse_does_not_know_about_flagged_status():
+    """Design note (spec's testing section lists 'a metric already flagged' as an
+    edge case): is_trending_worse() takes only raw values — it has no concept of
+    'flagged' at all, deliberately, since that's a property of a specific point's
+    deviation from ITS OWN baseline (check_run()'s job), not of the sequence's shape.
+    A monotonically-worsening sequence is reported as trending regardless of whether
+    its last point would separately be classified as flagged elsewhere — the caller
+    (dashboard Task 6) is responsible for suppressing the trending badge when the
+    metric is ALSO already flagged (`if not already_flagged and is_trending_worse(...)`),
+    not this function. This test locks in that the function itself doesn't special-case
+    it, so a future change can't silently break that separation of concerns."""
+    # A sequence that would also read as a large-sigma outlier if checked against a
+    # tight baseline — is_trending_worse still just reports the monotonic shape.
+    assert is_trending_worse([0.95, 0.50, 0.10], direction="down", window=3)
