@@ -7,7 +7,7 @@ import argparse
 import os
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Plain-script safety — see tools/validate_telemetry.py for the why (same trap).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -15,7 +15,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import (
+    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+)
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -26,6 +28,8 @@ REPORT_PATH = os.getenv(
     "REPORT_PATH",
     os.path.join(_PROJECT_ROOT, "reports", "test_report.pdf")
 )
+PHOTO_DIR = os.path.join(_PROJECT_ROOT, "reports", "photos")
+PHOTO_WINDOW_SECONDS = 180
 
 _TABLE_STYLE = TableStyle([
     ("BACKGROUND",   (0, 0), (-1, 0),  colors.grey),
@@ -54,8 +58,38 @@ def load_run_rows(runner_type: str, scenarios: list, db_path: str = DB_PATH) -> 
     return rows
 
 
+def find_run_photos(row_timestamp: str, photo_dir: str = PHOTO_DIR,
+                     window_seconds: int = PHOTO_WINDOW_SECONDS) -> list:
+    """Photos taken in the window immediately before this row's own timestamp. There's
+    no DB column linking a row to its photo(s) — proximity in time is the correlation
+    signal instead, since missions run sequentially on one machine and each mission's
+    own photo(s) land well inside the window before that mission's telemetry row is
+    logged. Returns paths oldest-first."""
+    if not os.path.isdir(photo_dir):
+        return []
+    row_dt = datetime.strptime(row_timestamp, "%Y-%m-%dT%H:%M:%S")
+    matches = []
+    for name in os.listdir(photo_dir):
+        if not name.endswith(".png"):
+            continue
+        parts = name[:-4].rsplit("_", 2)  # label, YYYYmmdd, HHMMSS
+        if len(parts) != 3:
+            continue
+        _, date_part, time_part = parts
+        try:
+            photo_dt = datetime.strptime(date_part + time_part, "%Y%m%d%H%M%S")
+        except ValueError:
+            continue
+        delta = (row_dt - photo_dt).total_seconds()
+        if 0 <= delta <= window_seconds:
+            matches.append((photo_dt, os.path.join(photo_dir, name)))
+    matches.sort()
+    return [path for _, path in matches]
+
+
 def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
-                     output_path: str = REPORT_PATH, config_path: str = None) -> str:
+                     output_path: str = REPORT_PATH, config_path: str = None,
+                     photo_dir: str = PHOTO_DIR) -> str:
     rows = load_run_rows(runner_type, scenarios, db_path=db_path)
 
     reports_by_row_id = {
@@ -119,6 +153,9 @@ def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
         else:
             story.append(Paragraph("No metrics available for comparison.",
                                     styles["Normal"]))
+        for photo_path in find_run_photos(row["timestamp"], photo_dir=photo_dir):
+            story.append(Spacer(1, 8))
+            story.append(RLImage(photo_path, width=300, height=225))
         story.append(Spacer(1, 16))
 
     doc.build(story)
