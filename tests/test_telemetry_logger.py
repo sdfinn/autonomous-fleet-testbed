@@ -1,6 +1,9 @@
 """Unit tests for tools/telemetry_logger.py schema + log_run fields."""
+import importlib
+import os
 import sqlite3
 
+from tools import telemetry_logger
 from tools.telemetry_logger import init_db, log_run
 
 
@@ -120,3 +123,41 @@ def test_failure_reason_values_validated(db_path):
     log_run(scenario="s", steps=1, final_x=0.0, final_y=0.0, result="FAIL",
             step_log=[], db_path=db_path, failure_reason="robot_exploded")
     assert validate_runs(db_path) is False
+
+
+def _reload_telemetry_logger_after(monkeypatch):
+    """Restores tools.telemetry_logger to reflect the real environment after a test
+    reloads it under a monkeypatched FLEET_DB. DB_PATH is bound once, at import time
+    (same pattern the module used before this change) — re-evaluating it after a test
+    changes the env var requires an explicit reload, and monkeypatch's automatic
+    teardown alone won't re-run that module-level assignment."""
+    monkeypatch.undo()
+    importlib.reload(telemetry_logger)
+
+
+def test_db_path_defaults_to_home_fleet_ci_data(monkeypatch):
+    monkeypatch.delenv("FLEET_DB", raising=False)
+    importlib.reload(telemetry_logger)
+    try:
+        assert telemetry_logger.DB_PATH == os.path.expanduser(
+            "~/fleet-ci-data/fleet_runs.db"
+        )
+    finally:
+        _reload_telemetry_logger_after(monkeypatch)
+
+
+def test_db_path_honors_fleet_db_override(monkeypatch, tmp_path):
+    override = str(tmp_path / "custom.db")
+    monkeypatch.setenv("FLEET_DB", override)
+    importlib.reload(telemetry_logger)
+    try:
+        assert telemetry_logger.DB_PATH == override
+    finally:
+        _reload_telemetry_logger_after(monkeypatch)
+
+
+def test_init_db_creates_missing_parent_directory(tmp_path):
+    db = tmp_path / "nested" / "does_not_exist_yet" / "t.db"
+    assert not db.parent.exists()
+    init_db(str(db))
+    assert db.exists()
