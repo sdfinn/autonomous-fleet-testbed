@@ -3,6 +3,7 @@
 """Smoke tests for the Stage-5 reporting path (S17 Piece 4): telemetry rows in →
 schema validation green → per-run PDF out, scoped to one runner_type's own scenarios."""
 import os
+from datetime import datetime, timedelta
 
 from tools.telemetry_logger import init_db, log_run
 from tools.validate_telemetry import detect_schema_drift, validate_runs, validate_steps
@@ -122,3 +123,63 @@ def test_generate_report_no_suffix_when_clean(tmp_path):
     out = str(tmp_path / "report.pdf")
     result_path = generate_report("local", ["mission1"], db_path=db, output_path=out)
     assert result_path == out
+
+
+def test_find_run_photos_matches_within_window(tmp_path):
+    from tools.generate_test_report import find_run_photos
+    photo_dir = tmp_path / "photos"
+    photo_dir.mkdir()
+    # Row timestamp 2026-07-21T10:05:00; a photo 90s earlier is well within a 180s window.
+    (photo_dir / "mission1_step2_20260721_100330.png").write_bytes(b"fake-png")
+    matches = find_run_photos("2026-07-21T10:05:00", photo_dir=str(photo_dir),
+                               window_seconds=180)
+    assert matches == [str(photo_dir / "mission1_step2_20260721_100330.png")]
+
+
+def test_find_run_photos_excludes_outside_window(tmp_path):
+    from tools.generate_test_report import find_run_photos
+    photo_dir = tmp_path / "photos"
+    photo_dir.mkdir()
+    # 400s before the row — outside a 180s window.
+    (photo_dir / "mission1_step2_20260721_095800.png").write_bytes(b"fake-png")
+    matches = find_run_photos("2026-07-21T10:05:00", photo_dir=str(photo_dir),
+                               window_seconds=180)
+    assert matches == []
+
+
+def test_find_run_photos_excludes_photos_after_the_row(tmp_path):
+    from tools.generate_test_report import find_run_photos
+    photo_dir = tmp_path / "photos"
+    photo_dir.mkdir()
+    # A photo AFTER the row's own timestamp belongs to a later run, not this one.
+    (photo_dir / "mission1_step2_20260721_100600.png").write_bytes(b"fake-png")
+    matches = find_run_photos("2026-07-21T10:05:00", photo_dir=str(photo_dir),
+                               window_seconds=180)
+    assert matches == []
+
+
+def test_generate_report_embeds_matching_photo(tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+    # Read back the row's own timestamp so the fake photo lands inside the window.
+    import sqlite3
+    conn = sqlite3.connect(db)
+    ts = conn.execute("SELECT timestamp FROM runs WHERE id = ?", (run_id,)).fetchone()[0]
+    conn.close()
+    photo_dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
+    photo_name = f"mission1_step2_{(photo_dt - timedelta(seconds=5)).strftime('%Y%m%d_%H%M%S')}.png"
+    photo_dir = tmp_path / "photos"
+    photo_dir.mkdir()
+    # A real tiny PNG (pillow is already a project dependency — nav_fleet/image_io.py
+    # uses it — so this is safer than a hand-rolled byte blob reportlab might reject).
+    from PIL import Image as PILImage
+    PILImage.new("RGB", (4, 4), color=(0, 128, 0)).save(photo_dir / photo_name)
+
+    from tools.generate_test_report import generate_report
+    out = str(tmp_path / "report.pdf")
+    result_path = generate_report("local", ["mission1"], db_path=db, output_path=out,
+                                   photo_dir=str(photo_dir))
+    assert os.path.exists(result_path)
+    assert os.path.getsize(result_path) > 1000
