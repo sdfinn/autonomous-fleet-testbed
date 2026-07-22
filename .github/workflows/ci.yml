@@ -394,7 +394,9 @@ jobs:
             /tmp/hil_stage/day_red.out
             /tmp/hil_stage/nav2_hil_*.log
             reports/photos/*.png
+            reports/failure_bags/**
           if-no-files-found: warn
+          retention-days: 30
 
       - name: Show sim log tail on failure
         if: failure()
@@ -428,14 +430,18 @@ jobs:
     runs-on: [self-hosted, x86, gpu, rtx5080]
     needs: stage-2-gazebo
     env:
-      REPORT_PATH: reports/latest_report.pdf
+      REPORT_PATH: reports/sim-report-${{ github.run_number }}.pdf
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate report
+      - name: Generate report (this run's own sim scenarios only, per Piece 4)
         run: |
           source ~/fleet-env/bin/activate
-          python -m tools.generate_test_report
+          python -m tools.generate_test_report \
+            --runner-type local \
+            --scenario bedroom_nav \
+            --scenario mission1 \
+            --report-path "$REPORT_PATH"
 
       - name: Validate telemetry schema
         run: |
@@ -451,7 +457,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-report-${{ github.run_number }}-sim
-          path: reports/latest_report.pdf
+          # Glob, not the exact REPORT_PATH: generate_test_report appends a -DRIFT
+          # suffix to the actual filename when a metric is flagged, which isn't known
+          # until the step above runs — this must match either form.
+          path: reports/sim-report-${{ github.run_number }}*.pdf
+          retention-days: 30
 
   # Phase 1 (now): the HIL telemetry row lives on the Jetson's local DB (printed to the
   # stage-4-hil log) — this job re-reports sim-path data after a hardware-path success,
@@ -466,14 +476,19 @@ jobs:
     # kind — but still skip when stage-4 was SKIPPED (docs-only pushes).
     if: ${{ !cancelled() && needs.stage-4-hil.result != 'skipped' }}
     env:
-      REPORT_PATH: reports/latest_report.pdf
+      REPORT_PATH: reports/hil-report-${{ github.run_number }}.pdf
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate report
+      - name: Generate report (this run's own HIL scenarios only, per Piece 4)
         run: |
           source ~/fleet-env/bin/activate
-          python -m tools.generate_test_report
+          python -m tools.generate_test_report \
+            --runner-type hil_jetson \
+            --scenario mission2_no_ball \
+            --scenario mission2_yellow \
+            --scenario mission2_red \
+            --report-path "$REPORT_PATH"
 
       - name: Validate telemetry schema
         run: |
@@ -489,4 +504,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-report-${{ github.run_number }}-hw
-          path: reports/latest_report.pdf
+          path: reports/hil-report-${{ github.run_number }}*.pdf
+          retention-days: 30
