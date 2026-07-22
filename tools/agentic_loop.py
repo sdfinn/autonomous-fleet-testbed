@@ -22,6 +22,17 @@ except ModuleNotFoundError:  # no colcon overlay (non-interactive shell) — imp
 
 client = anthropic.Anthropic()
 
+NAV2_PARAMS_PATH = Path(__file__).resolve().parent.parent / 'src' / 'nav_fleet' / 'config' / 'nav2_params.yaml'
+
+
+def load_nav2_params_text(path=NAV2_PARAMS_PATH):
+    """Raw text of the real nav2_params.yaml — injected into diagnose()'s prompt so
+    Claude reads actual current values instead of inferring them from memory (the
+    bug: it once claimed 0.55 for inflation_radius when the real value is 0.25).
+    Direct context injection, no RAG — matches this project's standing decision."""
+    return Path(path).read_text()
+
+
 TOOLS = [
     {
         'name': 'propose_nav_param_change',
@@ -126,8 +137,14 @@ def resolve_goals(goals):
     return resolved
 
 
-def diagnose(run_data, db_path=FLEET_DB):
-    """Call Claude with telemetry + drift context; get structured diagnosis and proposed action."""
+def diagnose(run_data, db_path=FLEET_DB, trend_context=None):
+    """Call Claude with telemetry + drift context; get structured diagnosis and proposed action.
+
+    trend_context (Piece 5, optional): a plain-text summary from
+    tools.baseline_monitor.build_trend_summary() — the dashboard's "Diagnose with AI"
+    button feeds the currently-filtered view's big-picture trend here, not just this
+    one run. None (the default) matches the original single-run CLI behavior exactly.
+    """
     locations_str = '\n'.join(f'  {k}: {v}' for k, v in SEMANTIC_MAP.items())
 
     # Reuse the real drift detector (Session 12) instead of re-deriving pass/fail from
@@ -143,6 +160,8 @@ def diagnose(run_data, db_path=FLEET_DB):
     else:
         drift_str = '  Not enough baseline history yet (need 3+ prior PASS runs).'
 
+    nav2_params_text = load_nav2_params_text()
+
     prompt = f"""You are an autonomous robotics test engineer.
 
 The latest nav test run (id={run_data['id']}, scenario={run_data['scenario']},
@@ -152,6 +171,20 @@ result={run_data['result']}, sim_engine={run_data.get('sim_engine')}):
 Drift report against the rolling baseline (config/drift_config.yaml sigma thresholds):
 {drift_str}
 
+The REAL current contents of src/nav_fleet/config/nav2_params.yaml — use these exact
+values for `current_value` if proposing a param change. Do not guess or infer a
+current value from memory or training data; read it from this text:
+{nav2_params_text}
+"""
+
+    if trend_context:
+        prompt += f"""
+Big-picture trend context across the currently-filtered dashboard view (not just this
+one run):
+{trend_context}
+"""
+
+    prompt += f"""
 Available named locations in this environment (use these in mission plans):
 {locations_str}
 
