@@ -21,10 +21,8 @@ from reportlab.lib.styles import getSampleStyleSheet
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-DB_PATH = os.getenv(
-    "FLEET_DB",
-    os.path.join(_PROJECT_ROOT, "reports", "fleet_runs.db")
-)
+from tools.telemetry_logger import DB_PATH  # noqa: E402
+
 REPORT_PATH = os.getenv(
     "REPORT_PATH",
     os.path.join(_PROJECT_ROOT, "reports", "test_report.pdf")

@@ -10,6 +10,7 @@ from pathlib import Path
 import anthropic
 
 from tools.baseline_monitor import check_run
+from tools.telemetry_logger import DB_PATH as FLEET_DB
 # Canonical map lives in the nav_fleet package (Session 15) — the workspace overlay
 # (auto-sourced by .bashrc) normally makes it importable here. Fall back to importing
 # from source when the overlay isn't inherited (e.g. a non-interactive shell — see
@@ -21,8 +22,6 @@ except ModuleNotFoundError:  # no colcon overlay (non-interactive shell) — imp
     from nav_fleet.semantic_map import SEMANTIC_MAP
 
 client = anthropic.Anthropic()
-
-FLEET_DB = os.environ.get("FLEET_DB", "reports/fleet_runs.db")
 
 TOOLS = [
     {
