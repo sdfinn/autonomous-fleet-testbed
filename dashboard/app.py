@@ -20,7 +20,7 @@ import streamlit as st
 # streamlit puts the SCRIPT's dir on sys.path, not the cwd — make repo-root imports work.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.baseline_monitor import check_history, load_config  # noqa: E402
+from tools.baseline_monitor import check_history, is_trending_worse, load_config  # noqa: E402
 from tools.goal_zones import end_zones  # noqa: E402
 from tools.telemetry_logger import DB_PATH  # noqa: E402
 
@@ -270,6 +270,19 @@ with tab5:
             for r in history[run_id]:
                 by_metric.setdefault(r.metric, []).append((run_id, r))
 
+        _trending_metrics = []
+        for metric, points in by_metric.items():
+            _values = [r.current for _, r in points]
+            _direction = points[-1][1].direction
+            _already_flagged = points[-1][1].flagged
+            if not _already_flagged and is_trending_worse(_values, _direction):
+                _trending_metrics.append(metric)
+        if _trending_metrics:
+            st.warning(
+                f'⚠️ Trending toward drift (not yet flagged): '
+                f'{", ".join(_trending_metrics)}'
+            )
+
         for metric, points in by_metric.items():
             xs = [_runs_by_id.loc[run_id, 'timestamp'] for run_id, _ in points]
             means = [r.mean for _, r in points]
@@ -308,3 +321,20 @@ with tab5:
             fig.update_layout(title=metric, showlegend=False, height=250,
                                margin=dict(l=40, r=20, t=40, b=20))
             st.plotly_chart(fig, use_container_width=True)
+
+        st.divider()
+        st.subheader('Run Detail (drill-down)')
+        detail_rows = []
+        for run_id in sorted(history, reverse=True):
+            if run_id not in _runs_by_id.index:
+                continue
+            row = _runs_by_id.loc[run_id]
+            flagged_metrics = [r.metric for r in history[run_id] if r.flagged]
+            detail_rows.append({
+                'run_id': run_id,
+                'scenario': row['scenario'],
+                'timestamp': row['timestamp'],
+                'result': row['result'],
+                'flagged_metrics': ', '.join(flagged_metrics) if flagged_metrics else '—',
+            })
+        st.dataframe(pd.DataFrame(detail_rows), use_container_width=True)
