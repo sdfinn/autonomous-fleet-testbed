@@ -35,6 +35,16 @@ deliberate cold arm64 build (reproducibility proof), and a FAIL-row-policy
 verification pass across baseline_monitor/dashboard/report. These stay on
 Release1Todo's Piece 5 list as parked, not folded into this spec.
 
+Also parked here (found during the cross-spec consistency review, 2026-07-21): a
+**baseline window-size/sigma-band calibration review** — are the 20-run rolling
+window and the 2.0/3.0/4.0/5.0σ bands in `config/drift_config.yaml` still the right
+numbers, now that the DB holds real accumulated history? Piece 4's spec named this as
+Piece 5's territory; it wasn't otherwise picked up anywhere, so it's recorded here
+explicitly rather than silently dropped. Distinct from the scenario-slicing fix
+(Piece 4, already handled) and from the older runner_type/power_mode mixing item
+above (already handled by existing slicing) — this is specifically about whether the
+threshold *numbers* themselves are well-calibrated.
+
 ## Design
 
 ### 1. New "Drift" tab
@@ -108,8 +118,9 @@ Release1Todo's Piece 5 list as parked, not folded into this spec.
 
 ## Out of scope (explicitly, for this piece)
 
-- CI pipeline self-health tracking, monthly cold build, FAIL-row-policy verification
-  (parked, per Scope section above).
+- CI pipeline self-health tracking, monthly cold build, FAIL-row-policy verification,
+  baseline window-size/sigma-band calibration review (all parked, per Scope section
+  above).
 - Full interactive approve/apply from the dashboard (stretch goal, later).
 - Any change to Piece 4's per-run reports (this piece only touches the workstation
   dashboard).
