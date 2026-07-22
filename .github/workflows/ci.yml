@@ -488,7 +488,8 @@ jobs:
             --scenario mission2_no_ball \
             --scenario mission2_yellow \
             --scenario mission2_red \
-            --report-path "$REPORT_PATH"
+            --report-path "$REPORT_PATH" \
+            --evidence-artifact "hil-mission-evidence-${{ github.run_number }}"
 
       - name: Validate telemetry schema
         run: |

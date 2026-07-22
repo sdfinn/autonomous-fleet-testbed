@@ -251,3 +251,67 @@ def test_generate_report_no_summary_write_when_env_unset(tmp_path, monkeypatch):
     out = str(tmp_path / "report.pdf")
     # Must not raise even though GITHUB_STEP_SUMMARY is unset (local/dev invocation).
     generate_report("local", ["mission1"], db_path=db, output_path=out)
+
+
+# ── Finding 1: directional wording (whole-branch review) ───────────────────────────────
+
+
+def test_drift_detail_says_below_for_down_direction_metric(tmp_path):
+    """nav_success_rate is direction=down (lower=worse) — a flagged low value must say
+    'below baseline', not 'above' (the bug this fix corrects: sigma is always positive,
+    so the old hardcoded 'above' wording was backwards for down-direction metrics)."""
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    _seed_baseline_and_outlier(db)  # outlier is nav_success_rate=0.10, well below baseline
+    from tools.baseline_monitor import check_run
+    from tools.generate_test_report import build_job_summary, load_run_rows
+    rows = load_run_rows("local", ["mission1"], db_path=db)
+    reports_by_row_id = {row["id"]: check_run(row["id"], db_path=db) for row in rows}
+    summary = build_job_summary("local", rows, reports_by_row_id, True)
+    assert "below baseline" in summary
+    assert "above baseline" not in summary
+
+
+def test_drift_detail_says_above_for_up_direction_metric(tmp_path):
+    """mean_position_error is direction=up (higher=worse) — a flagged high value must
+    say 'above baseline'."""
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    for err in (0.10, 0.12, 0.14, 0.11, 0.13, 0.10, 0.12, 0.14, 0.11, 0.13):
+        log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
+                step_log=[], db_path=db, runner_type="local", mean_position_error=err)
+    log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
+            step_log=[], db_path=db, runner_type="local", mean_position_error=5.0)
+    from tools.baseline_monitor import check_run
+    from tools.generate_test_report import build_job_summary, load_run_rows
+    rows = load_run_rows("local", ["mission1"], db_path=db)
+    reports_by_row_id = {row["id"]: check_run(row["id"], db_path=db) for row in rows}
+    summary = build_job_summary("local", rows, reports_by_row_id, True)
+    assert "above baseline" in summary
+    assert "below baseline" not in summary
+
+
+# ── Finding 3: evidence-artifact link in the Job Summary ───────────────────────────────
+
+
+def test_build_job_summary_includes_evidence_artifact_when_given(tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    log_run(scenario="mission2_no_ball", steps=5, final_x=0.0, final_y=0.0, result="PASS",
+            step_log=[], db_path=db, runner_type="hil_jetson")
+    from tools.generate_test_report import build_job_summary, load_run_rows
+    rows = load_run_rows("hil_jetson", ["mission2_no_ball"], db_path=db)
+    summary = build_job_summary("hil_jetson", rows, {}, False,
+                                 evidence_artifact="hil-mission-evidence-142")
+    assert "hil-mission-evidence-142" in summary
+
+
+def test_build_job_summary_omits_evidence_line_when_not_given(tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
+            step_log=[], db_path=db, runner_type="local")
+    from tools.generate_test_report import build_job_summary, load_run_rows
+    rows = load_run_rows("local", ["mission1"], db_path=db)
+    summary = build_job_summary("local", rows, {}, False)
+    assert "Evidence" not in summary

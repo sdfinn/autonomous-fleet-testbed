@@ -14,6 +14,7 @@ import sqlite3
 import time
 
 DB_PATH = os.environ.get("FLEET_DB", os.path.expanduser("~/fleet-ci-data/fleet_runs.db"))
+PHOTO_DIR = os.path.join(os.path.dirname(DB_PATH), "photos")
 
 # Required per-run fields, created with the table (order matches the INSERT below).
 BASE_COLUMNS = ("id", "scenario", "timestamp", "steps", "final_x", "final_y", "result")
