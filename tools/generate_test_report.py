@@ -57,18 +57,33 @@ def load_run_rows(runner_type: str, scenarios: list, db_path: str = DB_PATH) -> 
 def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
                      output_path: str = REPORT_PATH, config_path: str = None) -> str:
     rows = load_run_rows(runner_type, scenarios, db_path=db_path)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     reports_by_row_id = {
         row["id"]: check_run(row["id"], db_path=db_path, config_path=config_path)
         for row in rows
     }
+    any_flagged = any(
+        r.flagged for reports in reports_by_row_id.values() for r in reports
+    )
+
+    if any_flagged:
+        root, ext = os.path.splitext(output_path)
+        output_path = f"{root}-DRIFT{ext}"
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     doc = SimpleDocTemplate(output_path, pagesize=letter)
     styles = getSampleStyleSheet()
     story = []
 
-    story.append(Paragraph(f"Test Report — {runner_type}", styles["Title"]))
+    if any_flagged:
+        story.append(Paragraph(
+            "⚠ DRIFT DETECTED",
+            ParagraphStyle("DriftBanner", parent=styles["Title"], textColor=colors.red),
+        ))
+    else:
+        story.append(Paragraph(f"Test Report — {runner_type}", styles["Title"]))
+
     story.append(Paragraph(
         f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  "
         f"Scenarios: {', '.join(scenarios)}",
@@ -81,6 +96,15 @@ def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
             f"{row['scenario']} — {row['result']}", styles["Heading2"]
         ))
         reports = reports_by_row_id[row["id"]]
+        flagged = [r for r in reports if r.flagged]
+        if flagged:
+            for r in flagged:
+                story.append(Paragraph(
+                    f"⚠ {r.metric} is {r.sigma:.1f}σ above baseline "
+                    f"({r.current:.2f} vs {r.mean:.2f} typical)",
+                    ParagraphStyle("DriftDetail", parent=styles["Normal"],
+                                   textColor=colors.red),
+                ))
         metric_table = [["Metric", "Current", "Baseline"]]
         for r in reports:
             metric_table.append([

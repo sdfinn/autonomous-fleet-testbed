@@ -82,3 +82,41 @@ def test_generate_report_has_no_trend_chart_functions():
     import tools.generate_test_report as gtr
     assert not hasattr(gtr, "make_pass_fail_chart")
     assert not hasattr(gtr, "make_position_scatter")
+
+
+def _seed_baseline_and_outlier(db_path):
+    """10 PASS rows with natural variance (mean ~0.95, matching tests/test_baseline.py's
+    established pattern — flat identical values would give zero variance, which
+    check_run() explicitly skips) then one wild outlier."""
+    for rate in (0.94, 0.95, 0.96, 0.95, 0.96, 0.94, 0.95, 0.96, 0.95, 0.94):
+        log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
+                step_log=[], db_path=db_path, runner_type="local",
+                nav_success_rate=rate)
+    return log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                    result="PASS", step_log=[], db_path=db_path, runner_type="local",
+                    nav_success_rate=0.10)
+
+
+def test_generate_report_adds_drift_suffix_when_flagged(tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    _seed_baseline_and_outlier(db)
+    from tools.generate_test_report import generate_report
+    out = str(tmp_path / "report.pdf")
+    result_path = generate_report("local", ["mission1"], db_path=db, output_path=out)
+    assert result_path == str(tmp_path / "report-DRIFT.pdf")
+    assert os.path.exists(result_path)
+
+
+def test_generate_report_no_suffix_when_clean(tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    for _ in range(10):
+        log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
+                step_log=[], db_path=db, runner_type="local", nav_success_rate=0.95)
+    log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0, result="PASS",
+            step_log=[], db_path=db, runner_type="local", nav_success_rate=0.95)
+    from tools.generate_test_report import generate_report
+    out = str(tmp_path / "report.pdf")
+    result_path = generate_report("local", ["mission1"], db_path=db, output_path=out)
+    assert result_path == out
