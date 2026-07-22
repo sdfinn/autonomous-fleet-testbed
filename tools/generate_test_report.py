@@ -1,7 +1,9 @@
 # Copyright 2026 Mike
 # SPDX-License-Identifier: Apache-2.0
-"""Auto-generate a PDF test report from the last 100 runs."""
-import io
+"""Generate a per-run PDF report (+ GitHub Job Summary) scoped to one runner_type's
+own scenarios — not a rolling window of the last N runs. Historical trend views live
+in the Piece 5 dashboard, not here."""
+import argparse
 import os
 import sqlite3
 import sys
@@ -10,17 +12,14 @@ from datetime import datetime
 # Plain-script safety — see tools/validate_telemetry.py for the why (same trap).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import matplotlib.pyplot as plt
-import pandas as pd
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import (
-    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
-)
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+from tools.baseline_monitor import check_run  # noqa: E402
 from tools.telemetry_logger import DB_PATH  # noqa: E402
 
 REPORT_PATH = os.getenv(
@@ -35,133 +34,95 @@ _RESULT_COLORS = {
     "TIMEOUT": "#888888",
 }
 
+_TABLE_STYLE = TableStyle([
+    ("BACKGROUND",   (0, 0), (-1, 0),  colors.grey),
+    ("TEXTCOLOR",    (0, 0), (-1, 0),  colors.whitesmoke),
+    ("FONTNAME",     (0, 0), (-1, 0),  "Helvetica-Bold"),
+    ("GRID",         (0, 0), (-1, -1), 0.5, colors.black),
+    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
+])
 
-def load_data(db_path=DB_PATH):
+
+def load_run_rows(runner_type: str, scenarios: list, db_path: str = DB_PATH) -> list:
+    """The latest row for each of `scenarios`, filtered to `runner_type` — 'this run's
+    own result(s)', not a rolling window. A scenario with no matching row is omitted."""
     conn = sqlite3.connect(db_path)
-    runs = pd.read_sql("SELECT * FROM runs ORDER BY id DESC LIMIT 100", conn)
+    conn.row_factory = sqlite3.Row
+    rows = []
+    for scenario in scenarios:
+        row = conn.execute(
+            "SELECT * FROM runs WHERE runner_type = ? AND scenario = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (runner_type, scenario),
+        ).fetchone()
+        if row is not None:
+            rows.append(dict(row))
     conn.close()
-    return runs
+    return rows
 
 
-def make_pass_fail_chart(runs) -> io.BytesIO:
-    fig, ax = plt.subplots(figsize=(6, 3))
-    stats = runs.groupby("scenario")["result"].value_counts().unstack(fill_value=0)
-    bar_colors = [_RESULT_COLORS.get(col, "#aaaaaa") for col in stats.columns]
-    stats.plot(kind="bar", ax=ax, color=bar_colors)
-    ax.set_title("Pass / Fail by Scenario")
-    ax.set_xlabel("")
-    ax.set_ylabel("Count")
-    ax.legend(loc="upper right")
-    plt.tight_layout()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=120)
-    plt.close(fig)
-    buf.seek(0)
-    return buf
-
-
-def make_position_scatter(runs) -> io.BytesIO:
-    from tools.goal_zones import end_zones  # local import: keeps report usable standalone
-    fig, ax = plt.subplots(figsize=(5, 5))
-    for result, group in runs.groupby("result"):
-        ax.scatter(
-            group["final_x"], group["final_y"],
-            c=_RESULT_COLORS.get(result, "#aaaaaa"),
-            label=result, alpha=0.7, s=40,
-        )
-    # End zones derived from mission data (S17 review CR-12) — one box per distinct
-    # final goal (home_base for the missions, bedroom_goal for the BR-01 nav test).
-    for zone in end_zones():
-        rect = plt.Rectangle(
-            (zone["x"] - zone["tol"], zone["y"] - zone["tol"]),
-            2 * zone["tol"], 2 * zone["tol"],
-            linewidth=2, edgecolor="blue", facecolor="none", linestyle="--",
-        )
-        ax.add_patch(rect)
-        ax.annotate(zone["label"], (zone["x"], zone["y"] + zone["tol"] + 0.05),
-                    ha="center", fontsize=6, color="blue")
-    ax.set_title("Final Robot Positions")
-    ax.set_xlabel("X (m)")
-    ax.set_ylabel("Y (m)")
-    ax.legend()
-    plt.tight_layout()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=120)
-    plt.close(fig)
-    buf.seek(0)
-    return buf
-
-
-def generate_report(db_path=DB_PATH, output_path=REPORT_PATH):
+def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
+                     output_path: str = REPORT_PATH, config_path: str = None) -> str:
+    rows = load_run_rows(runner_type, scenarios, db_path=db_path)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    runs = load_data(db_path)
-    total = len(runs)
-    passed = (runs["result"] == "PASS").sum()
-    pass_rate = f"{100 * passed / max(total, 1):.1f}%"
+    reports_by_row_id = {
+        row["id"]: check_run(row["id"], db_path=db_path, config_path=config_path)
+        for row in rows
+    }
 
     doc = SimpleDocTemplate(output_path, pagesize=letter)
     styles = getSampleStyleSheet()
     story = []
 
-    story.append(Paragraph("Autonomous Navigation Test Report", styles["Title"]))
+    story.append(Paragraph(f"Test Report — {runner_type}", styles["Title"]))
     story.append(Paragraph(
         f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  "
-        f"Runs analyzed: {total}  |  Pass rate: {pass_rate}",
+        f"Scenarios: {', '.join(scenarios)}",
         styles["Normal"],
     ))
     story.append(Spacer(1, 12))
 
-    metric_fields = [
-        ("Nav Success Rate", "nav_success_rate"),
-        ("Mean Position Error", "mean_position_error"),
-        ("Mean Time to Goal", "mean_time_to_goal"),
-        ("Collision Rate", "collision_rate"),
-        ("Odom Hz Mean", "odom_hz_mean"),
-        ("LiDAR Hz Mean", "lidar_hz_mean"),
-        ("Camera Hz Mean", "camera_hz_mean"),
-    ]
-    summary_data = [
-        ["Metric", "Value"],
-        ["Total Runs", str(total)],
-        ["Passed", str(int(passed))],
-        ["Failed", str(total - int(passed))],
-        ["Pass Rate", pass_rate],
-    ]
-
-    for label, col in metric_fields:
-        if col in runs.columns:
-            avg = runs[col].mean()
-            summary_data.append([
-                label,
-                f"{avg:.2f}" if not pd.isna(avg) else "N/A",
+    for row in rows:
+        story.append(Paragraph(
+            f"{row['scenario']} — {row['result']}", styles["Heading2"]
+        ))
+        reports = reports_by_row_id[row["id"]]
+        metric_table = [["Metric", "Current", "Baseline"]]
+        for r in reports:
+            metric_table.append([
+                r.metric,
+                f"{r.current:.2f}",
+                f"{r.mean:.2f} ± {r.stddev:.2f}",
             ])
-
-    if "steps" in runs.columns:
-        avg_steps = runs[runs["result"] == "PASS"]["steps"].mean()
-        summary_data.append([
-            "Avg Steps (PASS)",
-            f"{avg_steps:.0f}" if not pd.isna(avg_steps) else "N/A",
-        ])
-    t = Table(summary_data, colWidths=[200, 200])
-    t.setStyle(TableStyle([
-        ("BACKGROUND",   (0, 0), (-1, 0),  colors.grey),
-        ("TEXTCOLOR",    (0, 0), (-1, 0),  colors.whitesmoke),
-        ("FONTNAME",     (0, 0), (-1, 0),  "Helvetica-Bold"),
-        ("GRID",         (0, 0), (-1, -1), 0.5, colors.black),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
-    ]))
-    story.append(t)
-    story.append(Spacer(1, 20))
-
-    story.append(RLImage(make_pass_fail_chart(runs), width=450, height=225))
-    story.append(Spacer(1, 12))
-    story.append(RLImage(make_position_scatter(runs), width=375, height=375))
+        if len(metric_table) > 1:
+            t = Table(metric_table, colWidths=[180, 100, 140])
+            t.setStyle(_TABLE_STYLE)
+            story.append(t)
+        else:
+            story.append(Paragraph("No metrics available for comparison.",
+                                    styles["Normal"]))
+        story.append(Spacer(1, 16))
 
     doc.build(story)
     print(f"Report saved to {output_path}")
     return output_path
 
 
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Generate a per-run PDF report for one runner_type's own scenarios"
+    )
+    parser.add_argument("--runner-type", required=True)
+    parser.add_argument("--scenario", action="append", required=True, dest="scenarios",
+                         help="repeatable — one of this stage's known scenarios")
+    parser.add_argument("--db", default=DB_PATH)
+    parser.add_argument("--report-path", default=REPORT_PATH)
+    parser.add_argument("--config", default=None)
+    args = parser.parse_args()
+    generate_report(args.runner_type, args.scenarios, db_path=args.db,
+                     output_path=args.report_path, config_path=args.config)
+
+
 if __name__ == "__main__":
-    generate_report()
+    main()
