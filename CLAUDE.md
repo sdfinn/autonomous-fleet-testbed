@@ -109,7 +109,49 @@ docker buildx build --platform linux/arm64 \
     propose a nav2 param change / harder SDF world / mission plan, human approves.
     Requires `ANTHROPIC_API_KEY`. **Must run as `python -m tools.agentic_loop`, not
     `python tools/agentic_loop.py`** — the plain-script form fails with
-    `ModuleNotFoundError` (see Gotchas).
+    `ModuleNotFoundError` (see Gotchas). **`diagnose()` bug fixed, Session 17 Piece 5
+    (2026-07-21):** it used to let Claude *infer* `current_value` for a nav2 param
+    from memory — caught wrong once, claimed 0.55 for `inflation_radius` when the real
+    value is 0.25. Now injects `src/nav_fleet/config/nav2_params.yaml`'s real text
+    directly into the prompt (`load_nav2_params_text()`) — direct context injection,
+    not RAG, matching this project's standing no-RAG decision. Also gained an optional
+    `trend_context` param (unused by the CLI's own `run_loop()`, which is unaffected)
+    for `dashboard/app.py`'s Drift tab to feed big-picture context from
+    `tools.baseline_monitor.build_trend_summary()`. First-ever unit test coverage for
+    this file (`tests/test_agentic_loop.py`) — safe to import in pytest because
+    `anthropic.Anthropic()` doesn't raise without an API key at construction (verified
+    empirically), only on an actual `messages.create()` call, which every test
+    monkeypatches.
+  - `baseline_monitor.py` — Session 12+: `check_run(run_id)` compares one run against a
+    rolling PASS-only baseline (config-driven, `config/drift_config.yaml`), sliced by
+    `(runner_type, power_mode, scenario)` — the `scenario` dimension added Session 17
+    Piece 4 (2026-07-21): without it, a `mission2_red` run (stops after one step) was
+    drift-comparing against `mission2_no_ball` history (a full round trip), letting the
+    recent scenario mix masquerade as real drift. **New in Session 17 Piece 5
+    (2026-07-21):** `check_history(runner_type=, power_mode=, scenario=)` — the same
+    drift verdict across a WHOLE filtered run history (not just one `run_id`), reusing
+    `check_run()` per row, used by `dashboard/app.py`'s Drift tab for trend charts.
+    `is_trending_worse(values, direction, window=3)` — a pure, direction-aware leading
+    indicator (strict monotonic worsening over the last 3 points) distinct from
+    "flagged"; deliberately has no concept of flagged status, that's the caller's job
+    to combine. `build_trend_summary(history)` — plain-text per-metric summary (flagged
+    count + trending status) fed to `agentic_loop.diagnose()`'s new `trend_context` arg.
+  - `generate_test_report.py` — Session 12: originally a blanket "last 100 runs" PDF.
+    **Rewritten Session 17 Piece 4 (2026-07-21):** `generate_report(runner_type,
+    scenarios, ...)` now scopes to one CI stage's own results only — the latest row
+    per known scenario for that `runner_type` (`stage-2-gazebo` → `local` +
+    `['bedroom_nav', 'mission1']`; `stage-4-hil` → `hil_jetson` +
+    `['mission2_no_ball', 'mission2_yellow', 'mission2_red']`) — replacing the old
+    unfiltered query that made `stage-5-reports-sim`/`-hw` produce near-duplicate
+    reports. Historical trend charts (`make_pass_fail_chart`/`make_position_scatter`,
+    `matplotlib`/`pandas` deps) removed entirely — that view is `dashboard/app.py`'s
+    Drift tab now. Gained a bold red "⚠ DRIFT DETECTED" banner + a `-DRIFT` filename
+    suffix when any watched metric flags (informational only — never fails the CI
+    job), a GitHub Job Summary write (`$GITHUB_STEP_SUMMARY`, append mode, no-op
+    locally), and inline photo embedding via `find_run_photos()` — time-window
+    correlation (a photo taken in the seconds before a row's own timestamp), since
+    there's no DB column linking a row to its photo. CLI now requires `--runner-type`
+    and repeatable `--scenario` flags (breaking change from the old no-arg form).
   - `log_setup.py` — S17 Piece 3 (2026-07-20): shared logging setup for `tools/` and
     (pending) `nav_fleet/` modules. `FLEET_LOG_LEVEL` env var (default INFO) is the
     single debug switch, same env-var-driven pattern as `FLEET_DB`/`POWER_MODE_ID`.
@@ -139,6 +181,29 @@ docker buildx build --platform linux/arm64 \
     local or over `ssh` using `JETSON_USER`/`JETSON_IP` — same env vars as
     `scripts/hil_stage.sh`) and `scp -r`/`cp -r`s the session dir into
     `reports/ros_logs/`. `--host ''` forces local (no ssh).
+- `dashboard/app.py` — Session 12: Streamlit telemetry dashboard, 4 tabs (Overview,
+  Scenarios, Telemetry, Sensor Health). **Gained a 5th "Drift" tab, Session 17 Piece 5
+  (2026-07-21):** a `scenario` sidebar filter (alongside the existing robot_type/
+  runner_type/sim_engine/power_mode four), one small-multiple control chart per
+  watched metric (`tools.baseline_monitor.check_history()` — baseline mean line,
+  shaded severity bands drawn widest-first as base layers, points red when flagged),
+  a trending badge (distinct yellow/orange banner, explicitly excludes anything
+  already flagged — `is_trending_worse()`), a sortable/searchable drill-down table
+  (`st.dataframe`, not fragile Plotly click-event wiring — a deliberate fallback per
+  the design spec), and a **read-only** "Diagnose with AI" button
+  (`tools.agentic_loop.diagnose()`, fed `build_trend_summary()`'s big-picture context
+  from the currently-filtered view). The button imports `tools.agentic_loop` LOCALLY
+  inside its own `if st.button(...):` block specifically so `agentic_loop.py`'s
+  module-level `client = anthropic.Anthropic()` is never constructed just from
+  loading the dashboard page. No write/approve action exists anywhere in the
+  dashboard — applying a proposed fix still means running `agentic_loop` from a
+  terminal, where `human_approval()`'s existing gate is untouched. Zero automated
+  test coverage for this file, by design (Streamlit script, executes top-to-bottom on
+  import including a live DB read — confirmed unsafe to import in pytest); the new
+  Drift-tab logic was verified via Streamlit's `AppTest` harness against the real
+  populated DB plus a deliberately-flagged synthetic-DB check (a guaranteed outlier,
+  confirmed to render as a red point outside the shaded bands — proving the flagged
+  path, not just the clean one) and a live GUI pass.
 - `tests/`          — pytest test suite
 - `config/`         — drift_config.yaml
 - `robot_profiles/` — Per-robot capability YAML
@@ -149,7 +214,19 @@ docker buildx build --platform linux/arm64 \
   The telemetry DB does **not** live here — see the `Telemetry database` entry below.
   (`reports/history/`, the old empty/unused JSON-per-run idea dropped at the 2026-07-03
   Session 12 review, was deleted along with this fix — Session 17 Foundation piece,
-  2026-07-21.)
+  2026-07-21.) **`reports/photos/` is now a persistent absolute path, not
+  checkout-relative — Session 17 Piece 4 final-review fix (2026-07-21):** the exact
+  same bug class Foundation fixed for `FLEET_DB`, found independently in THREE places
+  (`nav_fleet/mission_runner.py`, `tools/mission2_day.py`, `tools/generate_test_report.py`
+  each had their own relative `reports/photos` default). Since `actions/checkout@v4`
+  wipes each CI job's workspace clean, no run's photos ever reached
+  `stage-5-reports-*`'s checkout to be embedded — all three now import `PHOTO_DIR`
+  from `tools.telemetry_logger` (sibling directory of `DB_PATH`, the same persistent
+  `~/fleet-ci-data/` location). `reports/failure_bags/` (S17 Piece 3) is now included
+  in the `hil-mission-evidence` CI artifact upload — found during the same final
+  review: `mission2_day.py`'s `_pull_failure_bags` scp'd bags back to the workstation,
+  but `ci.yml` never actually uploaded them, so they existed locally but were never
+  visible on GitHub.
 - **Telemetry database — `~/fleet-ci-data/fleet_runs.db`** (env var `FLEET_DB` to
   override; owned by `tools/telemetry_logger.DB_PATH`) — THE single source every tool
   reads/writes (telemetry_logger, baseline_monitor, dashboard, generate_test_report,
@@ -242,6 +319,30 @@ docker buildx build --platform linux/arm64 \
   a pytest run in this repo, not just `tools/log_setup.py`'s. Fix: any code creating
   its own logger must explicitly set `.propagate = True` rather than trust the
   default — see `tools/log_setup.get_logger()`.
+- **Claude Code's own Bash tool runs with an isolated `/tmp`, separate from the real
+  filesystem the user's browser/file manager sees.** Found 2026-07-21 (Session 17
+  Piece 4): files written to `/tmp/...` via the Bash tool exist and are readable from
+  *later* Bash calls in the same session, but Mike couldn't open them — they were
+  never on his real filesystem. Files written inside the repo checkout (e.g.
+  `reports/scratch-name.pdf`, cleaned up after) don't have this problem — that
+  directory IS the real, shared filesystem (confirmed: it's what the IDE has open all
+  session). Rule: when a file needs to be handed to the user directly (not served over
+  a network port like Streamlit, which works fine from `/tmp` since a port isn't a
+  filesystem path), write it inside the repo, not `/tmp`.
+- **A "clean run" / "no drift" test that seeds a rolling baseline with IDENTICAL
+  values gives a vacuous pass, not a real one.** Recurred at least 4 times across
+  Session 17 (Foundation, Piece 4 ×2, Piece 5) — `baseline_monitor.check_run()`
+  explicitly skips any metric whose baseline has zero variance
+  (`if sd == 0.0: continue`), so a test seeding e.g. 11 identical
+  `nav_success_rate=0.95` rows never actually compares anything — `flagged=False` is
+  true only because nothing was checked, not because a real comparison found no
+  drift. The fix pattern used throughout, matching `tests/test_baseline.py`'s
+  original `_BASELINE_NAV_SUCCESS_RATES`: seed with real (small) variance
+  (`0.94, 0.95, 0.96, 0.95, ...`) so `check_run()` performs a genuine comparison. The
+  other legitimate way to dodge this trap (used once, in
+  `test_build_trend_summary_reports_stable_metric`): bypass `check_run()` entirely by
+  hand-constructing a `BaselineReport` and testing only the CONSUMING function's own
+  formatting logic — sound as long as that consumer never reads `.sigma`/`.stddev`.
 
 ## Nav2 Launch Gotchas (Session 10+)
 - `gz sim` WITHOUT `-s` launches a GUI that crashes on this machine (snap/glibc libpthread conflict)
