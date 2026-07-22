@@ -69,10 +69,16 @@ two default paths on one box that disagree.
   `~/fleet-ci-data/`.
 - `FLEET_DB` env var override is preserved (tests and deliberate one-offs still need
   it).
-- WAL mode (`PRAGMA journal_mode=WAL;`) is enabled **once**, directly against the real
-  file, as part of cutover — it's stored in the SQLite file header and persists across
-  every future connection/process, so no per-`connect()`-call changes are needed
-  anywhere in the codebase.
+- WAL mode (`PRAGMA journal_mode=WAL;`) was enabled once, directly against the real
+  file, as part of cutover. **Revised post-implementation (Mike, 2026-07-21, from the
+  final whole-branch review):** that one-time step alone leaves a real gap — a
+  brand-new DB file (a fresh clone on another machine, or the file recreated after
+  deletion) starts in SQLite's default journal mode with nothing to ever flip it to
+  WAL, since the setting lives in the file's own header and a new file has no header
+  reflecting the choice yet. Leaving it manual-only was judged too fragile to trust.
+  `init_db()` now runs `PRAGMA journal_mode=WAL` on every call (idempotent — a no-op
+  once already set), so every DB this codebase ever creates gets the guarantee
+  automatically, not just the one file fixed by hand.
 - `ci.yml`'s now-redundant `FLEET_DB: /home/mike/fleet-ci-data/fleet_runs.db` lines
   (stage-2/3/4/5) are removed — one less place declaring the path.
 
