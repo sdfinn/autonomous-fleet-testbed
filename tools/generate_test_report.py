@@ -27,13 +27,6 @@ REPORT_PATH = os.getenv(
     os.path.join(_PROJECT_ROOT, "reports", "test_report.pdf")
 )
 
-_RESULT_COLORS = {
-    "PASS":    "#00cc44",
-    "FAIL":    "#ff4444",
-    "STOPPED": "#ff8800",
-    "TIMEOUT": "#888888",
-}
-
 _TABLE_STYLE = TableStyle([
     ("BACKGROUND",   (0, 0), (-1, 0),  colors.grey),
     ("TEXTCOLOR",    (0, 0), (-1, 0),  colors.whitesmoke),
