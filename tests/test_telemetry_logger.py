@@ -161,3 +161,29 @@ def test_init_db_creates_missing_parent_directory(tmp_path):
     assert not db.parent.exists()
     init_db(str(db))
     assert db.exists()
+
+
+def test_log_run_skips_write_when_telemetry_off(tmp_path, monkeypatch):
+    monkeypatch.setenv("FLEET_TELEMETRY", "off")
+    db = str(tmp_path / "t.db")
+    result = log_run(scenario="s", steps=1, final_x=0.0, final_y=0.0, result="PASS",
+                      step_log=[], db_path=db)
+    assert result is None
+    assert not os.path.exists(db)
+
+
+def test_log_run_writes_when_telemetry_on(tmp_path, monkeypatch):
+    monkeypatch.setenv("FLEET_TELEMETRY", "on")
+    db = str(tmp_path / "t.db")
+    run_id = log_run(scenario="s", steps=1, final_x=0.0, final_y=0.0, result="PASS",
+                      step_log=[], db_path=db)
+    assert run_id is not None
+    assert os.path.exists(db)
+
+
+def test_log_run_writes_when_telemetry_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv("FLEET_TELEMETRY", raising=False)
+    db = str(tmp_path / "t.db")
+    run_id = log_run(scenario="s", steps=1, final_x=0.0, final_y=0.0, result="PASS",
+                      step_log=[], db_path=db)
+    assert run_id is not None

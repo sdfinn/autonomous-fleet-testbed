@@ -93,7 +93,14 @@ def log_run(scenario: str, steps: int, final_x: float, final_y: float,
     `scenario`/`steps`/`final_x`/`final_y`/`result` are required; every other field is
     an optional telemetry column passed by name (must exist in RUNS_COLUMNS — a typo'd
     name raises instead of silently vanishing). None values are left NULL.
+
+    Returns the new row's id, or None if FLEET_TELEMETRY=off skipped the write
+    entirely (for ad hoc/experimental runs that shouldn't join the drift-tracked
+    record — no scratch DB, no partial write, a true no-op).
     """
+    if os.environ.get("FLEET_TELEMETRY", "on") == "off":
+        return None
+
     unknown = set(metrics) - set(RUNS_COLUMNS)
     if unknown:
         raise TypeError(f"unknown telemetry column(s): {sorted(unknown)} — "
