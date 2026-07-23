@@ -1,0 +1,44 @@
+name: GHCR image retention
+
+# Session 17 Piece 6: stage-3-arm64 pushes a uniquely git-sha-tagged image per
+# build to GHCR and never deletes an old one — this reports (and, once a human
+# has reviewed a real report and flips the `delete` input, prunes) everything
+# past the newest 15 unprotected versions. `latest` and `buildcache-v2` (the
+# registry build-cache ref stage-3's warm builds depend on) are never touched.
+#
+# Deliberately report-only until manually flipped: the scheduled run and the
+# workflow_dispatch default both leave `delete` unset/false, so nothing is
+# ever deleted without someone explicitly ticking the box for that one run.
+
+on:
+  schedule:
+    - cron: '0 6 * * 0'  # weekly, Sunday 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      delete:
+        description: 'Actually delete candidates (unchecked = report only)'
+        type: boolean
+        default: false
+
+permissions:
+  packages: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report / prune old GHCR image versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PACKAGE="$(basename "${{ github.repository }}")"
+          ARGS=(--owner "${{ github.repository_owner }}" --package "$PACKAGE" \
+                --keep-n 15 --protect latest --protect buildcache-v2)
+          if [ "${{ github.event.inputs.delete }}" = "true" ]; then
+            python3 -m tools.ghcr_prune "${ARGS[@]}" --delete
+          else
+            python3 -m tools.ghcr_prune "${ARGS[@]}"
+          fi
