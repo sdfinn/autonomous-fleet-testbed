@@ -4372,12 +4372,13 @@ id) was found and fixed same-day.
         return-timestamp bracketing any SSH/subprocess call whose latency matters)
         should become the standard for any FUTURE container-per-invocation SSH call
         added to this codebase, not just this one.
-- [ ] **"Drift/Report content shows up near stage-1-quality on the run Summary page" —
-      REOPENED 2026-07-23 (Mike pushed back — correctly).** The earlier "stale report"
-      explanation (staleness of the SPECIFIC instance first pasted, 2026-07-22 21:24
-      vs. the run being viewed) was confirmed real via the telemetry DB and still
-      stands on its own — but it does NOT explain the ordering complaint Mike raised
-      against a *specific, current* run: [run 30012997097](https://github.com/sdfinn/autonomous-fleet-testbed/actions/runs/30012997097).
+- [ ] **CI report Summary page — mixed status: the "wrong job" mystery is SOLVED (GitHub
+      bug, not ours); two real report-content gaps are still open TODOs.** REOPENED
+      2026-07-23 after Mike correctly pushed back on the original "stale report/user
+      error" close-out. The earlier staleness explanation (the SPECIFIC instance first
+      pasted really was 2026-07-22 21:24 data) was confirmed real via the telemetry DB
+      and still stands on its own — but didn't explain the ordering complaint against a
+      *specific, current* run: [run 30012997097](https://github.com/sdfinn/autonomous-fleet-testbed/actions/runs/30012997097).
       Two things confirmed by code/API on that exact run, one thing NOT yet confirmed:
       - **Confirmed — `stage-1-quality` still never calls `generate_test_report.py`.**
         Verified again against `.github/workflows/ci.yml`: only `stage-5-reports-sim`
@@ -4404,19 +4405,23 @@ id) was found and fixed same-day.
         `mission2_day.py`, same self-hosted runner, same persistent `PHOTO_DIR`).
         `find_run_photos()`'s time-window correlation may not be matching HIL rows for
         some reason — not investigated further, flagging only.
-      - **NOT confirmed — the exact page-layout/ordering claim itself.** Could not
-        render the actual GitHub Summary page this session (repo is private, `WebFetch`
-        401s on unauthenticated fetch of private-repo URLs; browser tooling was
-        declined). Best-evidence, UNVERIFIED hypothesis: GitHub's run Summary page
-        concatenates every job's own `$GITHUB_STEP_SUMMARY` markdown into one combined
-        panel — our own `##` headers (`## Report — hil_jetson`, etc.) may be the ONLY
-        visual separator between different jobs' content there, with no separate
-        "this came from stage-5-reports-hw" job label GitHub adds itself — which would
-        make content visually read as adjacent to/part of whatever's above it,
-        regardless of which job actually produced it. **Needs Mike to confirm or
-        refute** (paste the literal page text/a screenshot, or describe exactly what
-        heading sits directly above the "Report — hil_jetson" block) before treating
-        this as settled either way.
+      - **CONFIRMED 2026-07-23 — this is a GitHub product-side bug, not ours, not user
+        error.** Mike supplied the literal page URL after a hard refresh:
+        `.../runs/30012997097#summary-89225829704`. `89225829704` is
+        `stage-1-quality`'s own job ID — confirmed directly against the run's
+        authoritative jobs API (`gh api .../runs/30012997097/jobs`), not inferred. So
+        GitHub is rendering the `hil_jetson`/`local` drift report content — which
+        `stage-1-quality` cannot possibly have produced (its job spec in `ci.yml` is
+        checkout → setup-python → apt/pip installs → flake8 → pytest, zero
+        `$GITHUB_STEP_SUMMARY` writes anywhere, re-verified line by line) — anchored
+        under `stage-1-quality`'s own job-summary panel, and showing STALE data from a
+        different (2026-07-22 21:24) run on top of that. GitHub's Summary page is
+        mis-mapping/mis-caching job-summary content client-side; this is not fixable in
+        this repo's code. **Not a to-do for us** — no code change possible here.
+        **Workaround, add to team knowledge:** don't trust the per-job anchor view of a
+        run's Summary page for report/drift content — verify against the telemetry DB
+        directly, or download and read the PDF artifact, both of which were
+        independently confirmed correct for this run.
 - [x] **Claude Code CLI startup hook: dashboard reminder.** Added
       `.claude/settings.json` (new, committed — first project-level Claude Code
       settings file for this repo) with a `SessionStart` hook that echoes
