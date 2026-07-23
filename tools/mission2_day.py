@@ -59,6 +59,7 @@ from tools.mission2_harness import (BALL_AT_SPHERE_XY, BALL_REMOVAL_SETTLE_S,
                                     home_pair_similarity, judge_no_ball, judge_red,
                                     judge_yellow, log_variant_row, parse_reaction_events,
                                     remove_ball, spawn_ball)
+from tools.pipeline_matrix import load_stage
 from tools.telemetry_logger import PHOTO_DIR as _PHOTO_DIR, log_run
 
 log = get_logger('mission2_day')
@@ -643,6 +644,15 @@ def run_red(executor, ball_ops, ball_xy, red_name, hold_s):
     return ok
 
 
+def hil_variant_names():
+    """The HIL day's variant names, declared once in config/pipeline_matrix.yaml
+    (as full 'mission2_*' scenario names, stripped here to the bare form run_day's
+    results dict uses) — replaces a separately hardcoded tuple that could silently
+    drift out of sync with ci.yml's --stage hil report scoping (Piece 6)."""
+    _, scenarios = load_stage('hil')
+    return [s.removeprefix('mission2_') for s in scenarios]
+
+
 def run_day(executor, ball_ops, ball_xy, hold_s):
     """The reusable day core — SAME on sim and HIL, only executor + BallOps differ."""
     results = {}
@@ -650,7 +660,7 @@ def run_day(executor, ball_ops, ball_xy, hold_s):
     results['yellow'], red_name = run_yellow(executor, ball_ops, ball_xy, yellow_name)
     results['red'] = run_red(executor, ball_ops, ball_xy, red_name, hold_s)
     log.info('\n=== SUMMARY ===')
-    for name in ('no_ball', 'yellow', 'red'):
+    for name in hil_variant_names():
         log.info(f'  {name:8s}: {"PASS" if results[name] else "FAIL"}')
     return all(results.values())
 

@@ -1,0 +1,21 @@
+# Single declared source for which scenarios belong to which CI report stage
+# (Session 17 Piece 6 — "declared pipeline input, not hardcode", first seed of
+# R3 input-ization). Consumed by:
+#   - tools/generate_test_report.py's --stage flag (used by ci.yml's
+#     stage-5-reports-sim / stage-5-reports-hw steps instead of a hand-typed
+#     --scenario list)
+#   - tools/mission2_day.py's day-summary loop (the hil.scenarios list here,
+#     minus the "mission2_" prefix, replaces a separately hardcoded tuple)
+#
+# The mission2_day.py EXECUTION sequence itself (run_no_ball -> run_yellow ->
+# run_red) stays hardcoded Python on purpose — each variant's choreography is
+# genuinely different (ball placement timing, judge logic), not interchangeable
+# data. Only the scenario NAME list is declared here.
+
+sim:
+  runner_type: local
+  scenarios: [bedroom_nav, mission1]
+
+hil:
+  runner_type: hil_jetson
+  scenarios: [mission2_no_ball, mission2_yellow, mission2_red]
