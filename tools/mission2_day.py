@@ -421,10 +421,16 @@ def _pkill(pattern):
 def sweep_orphans():
     """Kill any Gazebo/Nav2/bridge/TF/ekf orphans (best-effort). The orchestrator's own
     cmdline ('python -m tools.mission2_day') matches none of these patterns, so there is no
-    self-match to bracket-trick around here."""
+    self-match to bracket-trick around here.
+
+    Scoped to 'gz sim -s' (the headless SERVER, always launched with -s -r) — NOT a bare
+    'gz sim', which also matches the separate GUI viewer ('gz sim -g', no -s). A live
+    2026-07-22 GUI-watched run found the old bare pattern killing an observer's viewer
+    within seconds of every run starting, since this sweep runs before the stack even
+    launches (Piece 7)."""
     for pat in _SWEEP_PATTERNS:
         _pkill(pat)
-    subprocess.run(['pkill', '-f', 'gz sim'], check=False)
+    subprocess.run(['pkill', '-f', 'gz sim -s'], check=False)
 
 
 def launch_stack(log_path):
