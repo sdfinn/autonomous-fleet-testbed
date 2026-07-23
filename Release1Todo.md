@@ -32,7 +32,7 @@ holds strategy background and the decisions log; nothing here requires reading i
 | 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | ✅ (2026-07-14 — NVMe fresh install executed 2026-07-13, runner re-registered, full 8-job CI cycle green (run 29301726080), manual HIL run on the NVMe install PASS first-attempt 2026-07-14; see `docs/runbooks/JetsonInstallSession14.md`) |
 | 15 | Gazebo + Real Jetson Hardware-in-the-Loop (Mission 1) | ✅ (2026-07-11 — Mission 1 PASS on x86 sim AND real-Jetson HIL, merged to main; CI stage designed but not yet implemented — see `docs/runbooks/Mission1HILSession15.md` + `docs/session15-hil-ci-stage-design.md`) |
 | 16 | HIL CI Stage with Gazebo + Mission 2 | ✅ (SIGNED OFF 2026-07-19 — `stage-4-hil` live (container mission, 25W-build/15W-mission), Mission 2 Option B verified round trip shipped + merged (PR #4, 7a86150); sign-off bar met: Mike-watched GUI container day GREEN + clean full-pipeline CI run 29697469463 + cold rebuild proven (659s, run 29667247639); real-USB-camera tier re-deferred → Session 19 tier #1; the 2026-07-18 "yellow bug" did NOT reproduce (12/12 local + 1/1 CI green) — instrumented, see Session 16 sign-off block) |
-| 17 | Harden, Stabilize & Review (pre-robot gate) | 🔄 (Pieces 3/4/5 SHIPPED 2026-07-21 — logging, per-CI-run reporting, interactive drift dashboard + AI-loop fix; 3 whole-branch reviews, all merged to main, pushed to origin; Pieces 1/2 partially done — see their own sections; Piece 6/7 not started; gate question still open) |
+| 17 | Harden, Stabilize & Review (pre-robot gate) | 🔄 (Pieces 3/4/5 SHIPPED 2026-07-21, Piece 6 SHIPPED 2026-07-22 — logging, per-CI-run reporting, interactive drift dashboard + AI-loop fix, repo hygiene + GHCR/disk retention + declared mission matrix; all merged to main, pushed to origin; Pieces 1/2 partially done — see their own sections; Piece 7 not started; gate question still open) |
 | 18 | Real Robot: Deploy + Sim-to-Real Comparison | ⬜ (was 16 until 2026-07-12, then 17 until the same evening) |
 | 19 | Real-Robot Expansion & Deferred Capability (pick-list) | ⬜ (rewritten 2026-07-17 as a menu ordered by robot-day de-risking; was "Agentic Loop on Real Hardware + Advanced Missions") |
 | 20 | Future Releases: Working Plan (R2–R5, living) | 🔄 (executed 2026-07-17/18 — ladder relabeled, all candidates placed; LIVING section, updated as decisions change) |
@@ -4210,20 +4210,33 @@ id) was found and fixed same-day.
 
 ### Piece 6 — Repo hygiene (candidate, time permitting)
 
-- [ ] The pre-public cleanup pass (repo is private; personal/career context in docs is
-      fine today but needs a sweep before any public flip) — this session is a natural
-      slot since the repo gets read end-to-end anyway. Includes deciding the
-      `reports/photos/` tracking policy (currently untracked in the workstation repo).
-- [ ] **Image/disk purge strategy** (Mike 2026-07-18): CI pushes a uniquely-tagged arm64
-      image per build to GHCR (accumulates forever) + docker layer caches grow on BOTH
-      hosts. Keep-last-N GHCR tags (retention policy or cleanup job) + scheduled selective
-      prune on workstation and Jetson — must SPARE the registry-cache layers stage-3's
-      warm 150 s builds depend on (a naive `prune -a` costs us ~8 min/build).
-- [ ] **Stage-tiered mission matrix, remaining half** (Mike 2026-07-18): stage-4 already
-      runs ONLY the deployment mission (shipped in Session 16 Task 13); finish the design
-      by making "current/deployment mission" a DECLARED pipeline input (env/profile
-      config, not hardcode) — deliberately the first seed of R3 input-ization — and
-      center stage-5 reports on that mission with regression results summarized.
+> **SHIPPED 2026-07-22** — all three items done, 3 commits on main
+> (`7a57c80`/`282bccd`/`1958bcd`), 238/238 local tests green (13 new).
+
+- [x] The pre-public cleanup pass — `reports/photos/` tracking policy decided:
+      untracked 2 stale PNGs that predated the Piece 4 PHOTO_DIR-absolute fix (photos
+      live at `~/fleet-ci-data` now, never repo-relative again) and gitignored the
+      directory, plus `reports/failure_bags/` (same bug class, hadn't fired yet). The
+      broader personal/career-content doc sweep stays explicitly deferred to the actual
+      public-flip milestone, per the standing private-repo decision — not done today.
+- [x] **Image/disk purge strategy** (Mike 2026-07-18) — `tools/ghcr_prune.py` +
+      scheduled `ghcr-cleanup.yml` (keep-newest-15, protect `latest`/`buildcache-v2`;
+      **report-only by design** — a live dry run found 136 real deletion candidates out
+      of 153 versions, confirming the problem, but flipping `--delete` on is Mike's call
+      after reviewing a real scheduled report, not done automatically). Local side:
+      stage-4-hil now prunes old local Jetson docker images every run (keep current +
+      last 2, never touches `:latest`) — the registry-cache layers stage-3's warm builds
+      depend on are untouched either way (separate mechanism, `type=registry` buildx
+      cache, already GC'd by the existing `keepBytes` policy).
+- [x] **Stage-tiered mission matrix, remaining half** (Mike 2026-07-18) —
+      `config/pipeline_matrix.yaml` is now the single declared source (via
+      `tools.pipeline_matrix.load_stage`); `generate_test_report.py` gained a
+      `--stage {sim,hil}` flag ci.yml's two report steps now use instead of a
+      hand-typed `--scenario` list; `mission2_day.py`'s summary loop reads the same
+      `hil.scenarios` list instead of a separately hardcoded tuple. The mission
+      EXECUTION sequence (`run_no_ball`→`run_yellow`→`run_red`) stays hardcoded
+      Python on purpose — each variant's choreography is genuinely different, not
+      interchangeable data; only the scenario NAME list is declared.
 
 ### Piece 7 — Demo prep (Mike, 2026-07-18)
 
