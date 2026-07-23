@@ -382,6 +382,67 @@ docker buildx build --platform linux/arm64 \
   task/review step in Piece 4 exercised a live HIL day's SSH pull-back, only photo
   existence-on-disk and dashboard rendering of already-local data.
 
+- **The Jetson's `~/fleet-ci-data/` can be silently poisoned root-owned by a container-mode
+  HIL run, breaking every later bare-metal run — found 2026-07-22 (Piece 7 timing exercise).**
+  Root cause: the arm64 Docker image has no `USER` directive (default = root), and the
+  2026-07-22 photo-pullback fix's bind mount (`-v $HOME/fleet-ci-data:/root/fleet-ci-data`)
+  doesn't remap UIDs — every file a container-mode run (`HIL_CONTAINER=1`, which every
+  CI `stage-4-hil` run uses) writes there lands root-owned on the Jetson's real disk. A
+  later bare-metal run (`HIL_CONTAINER` unset — any manual local proof) runs
+  `mission_runner.py` as `mike` over plain SSH, which then can't create files in a
+  root-owned directory (mode 755 — group/other have no write bit): `PermissionError` on
+  the first photo save, immediately followed by a cascading
+  `sqlite3.OperationalError: attempt to write a readonly database` when it tries to log
+  even the crash itself — looks exactly like the robot never started (it didn't: it died
+  at mission step 1, before any navigation). Fix applied: `chown -R mike:mike
+  ~/fleet-ci-data` + `chmod -R u+rwX,g+rwX` + setgid (`g+s`) on the directories so a
+  FUTURE root-written file still lands in a group mike can traverse/create alongside.
+  This can recur any time a container-mode run touches the directory again — if a bare-
+  metal run gets a `PermissionError`/readonly-database crash with zero navigation
+  logged, check `ls -la ~/fleet-ci-data` on the Jetson before assuming a code regression.
+- **A real motion-start stall on HIL exists starting from the 2nd goal of a Mission 2 day
+  onward and is NOT visible in any Nav2 log line — confirmed live 2026-07-22, root cause
+  still unknown, NOT fixed (Piece 7 stays open until it is).** Live-narrated observation
+  (Mike watching the Gazebo viewer while Claude tailed the Jetson's real Nav2 stdout log
+  and correlated timestamps in real time, twice) confirmed: the FIRST goal of a HIL day
+  (fresh Nav2 stack) starts the robot moving right when `controller_server` logs
+  "Received a goal, begin computing control effort" — no stall. The 2nd and 3rd goals
+  (no_ball→yellow, yellow→red transitions) do NOT: the robot visibly sits still for a
+  real, observable stretch AFTER that same log line appears, then starts moving on its
+  own with no further log activity in between — no abort, reject, or retry logged by
+  bt_navigator/controller_server/planner_server.
+  **Ruled out:** fresh-process cold start alone — bt_navigator/controller_server are the
+  SAME persistent processes across all 3 runs (only `mission_runner` restarts per run
+  over SSH), yet goal #1 on that persistent stack is clean and #2/#3 aren't.
+  **Also ruled out (weaker, worth re-checking):** "goal right after a cancellation is
+  slow to settle" — no_ball's own run ends via NORMAL SUCCESS (arrival home), not a
+  cancelled goal, yet the FOLLOWING transition (into yellow's first goal) still stalled.
+  So the trigger looks like "which goal number this is for the Nav2 stack's lifetime,"
+  not specifically "did the prior goal get cancelled."
+  **Diagnostic plan for next time (not yet done, in this order):**
+  1. Add timestamped debug logging in `nav_runner.py` around goal dispatch — log the
+     instant the goal is sent, the instant the "goal accepted" callback fires, and the
+     instant odometry/feedback first shows non-negligible velocity. This turns the stall
+     into something measurable from a log, not something that needs a human watching a
+     screen every time.
+  2. Live-watch `/robot_001/cmd_vel` publish activity (`ros2 topic echo`) during a
+     transition: is the controller actually publishing near-zero velocity commands
+     during the stall (a controller-side issue — e.g. RPP still converging/rotating),
+     or is it publishing real commands that aren't reaching the simulated robot (a
+     bridge/DDS issue)? This is the fastest way to split the hypothesis space in half.
+  3. Check whether the same stall appears on a goal WITHIN a single run (e.g. no_ball's
+     own return-home leg, its 2nd goal within the same mission_runner process) — this
+     would tell us whether the trigger is "2nd+ goal of the whole Nav2 stack's uptime"
+     (survives across mission_runner restarts) vs. something scoped to inter-run
+     transitions specifically.
+  4. If (1)-(3) point at costmap/localization settling rather than the controller
+     itself, check AMCL/costmap timestamps around the stall — the log already shows a
+     "Received request to clear entirely the global/local costmap" line right at goal
+     start; worth checking whether that clear-and-rebuild has a real settle cost that
+     grows after the first goal.
+  Piece 7 (Release1Todo.md) tracks this as confirmed-but-unroot-caused — do not mark it
+  done until an actual fix (not just a diagnosis) lands.
+
 ## Nav2 Launch Gotchas (Session 10+)
 - `gz sim` WITHOUT `-s` launches a GUI that crashes on this machine (snap/glibc libpthread conflict)
   and takes the Gazebo server down with it. Always use `gz sim -s -r <world>` (server only).
