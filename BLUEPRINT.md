@@ -945,3 +945,73 @@ Our current SEMANTIC_MAP in `agentic_loop.py` is a static lookup table — a fir
   existence-on-disk and dashboard rendering of already-local data — so this
   consumption-side half of the same bug class Piece 4 fixed on the definition side
   slipped through 3 individual task reviews and 1 whole-branch review undetected.
+- **2026-07-22 — NVIDIA "State of Simulation for Physical AI" (Mike, via tldrai).**
+  HuggingFace/NVIDIA blog, first in a series. Checked against this project rather
+  than accepted at face value:
+  1. **The article's "three-computer paradigm"** (training computer / simulation
+     computer / on-robot computer) **is this project's tiered dev loop, already
+     built, just unnamed in that vocabulary** — x86 bare-metal Tier 1 (~1s builds) →
+     self-hosted GPU CI runner → Jetson HIL. Worth adopting this phrasing in the
+     "Architecture framing" section below — it's a direct hook into how NVIDIA and
+     AMR companies already describe the same problem, no translation needed for that
+     audience.
+  2. **Isaac Lab 3.0 decoupled from Omniverse**, now supporting an interchangeable
+     headless high-throughput physics backend (**Newton**, NVIDIA/DeepMind/Disney)
+     alongside the full photorealistic Isaac Sim backend. Relevant because this
+     project's own Isaac Sim friction (2026-07-02 entry above: DDS TRANSIENT_LOCAL
+     restart dance, RTX lidar workarounds, GUI-mode clock quirks) was friction *with
+     the full Omniverse stack specifically* — if Isaac work resumes under the
+     relabeled roadmap (R4 Autonomy & Perception), Newton's headless path is worth
+     evaluating before re-adopting the heavier stack this project already paid
+     tuition on once.
+  3. **Third independent corroboration for the still-unwritten Cosmos-era
+     positioning paragraph** (queued 2026-07-17, referenced again in the 2026-07-21
+     Robot Report entry above): "policies are stress-tested, data is amplified, and
+     increasingly, [simulation is] where entire training pipelines begin" is the
+     vendor-side statement of the same thesis this project's Mission 2 judge
+     architecture already embodies from the test-infrastructure side — non-
+     deterministic black-box models need a deterministic, perception-independent
+     judge to be trustworthy in production. Two independent sources now (NVIDIA's
+     own framing + the Robot Report survey) instead of one; worth citing both when
+     that paragraph is actually written.
+- **2026-07-22 — ByteByteGo "Inside Roblox's Bet on World Models" (Mike, via
+  tldrnewsletter).** A different industry (gaming, not robotics) — most of the
+  article (self-forcing latency compression, edge-GPU data centers, multiplayer
+  sync, creator-economy business model) doesn't map onto this project and isn't
+  forced to. Two things that genuinely do:
+  1. **Roblox's hybrid architecture is the same split this project already uses,
+     independently arrived at from a completely different domain.** Roblox's game
+     engine/data model stays the deterministic single source of truth (object
+     positions, physics, rules); a generative video world model ("Super Upsampler")
+     only adds texture/lighting/detail on top, conditioned on — never overriding —
+     that ground truth. That is structurally identical to Mission 2's judge design:
+     the semantic map, `mission_runner`'s state machine, and the ground-truth poller
+     stay authoritative; the swappable perception component (HSV thresholding today,
+     a foundation-model node like Cosmos Edge later) is judged against that ground
+     truth rather than trusted outright. **Third independent corroboration** (after
+     NVIDIA's own framing and the Robot Report survey) that "deterministic
+     ground-truth substrate + verified non-deterministic model on top" is the
+     converged answer across at least three unrelated industries for productionizing
+     generative/black-box components — strengthens the Cosmos-era paragraph's case
+     further; cite this as evidence the pattern isn't robotics-specific.
+  2. **The article's own failure mode for un-anchored world models** — "turn the
+     camera away from something and then back, and the model quietly changes it" —
+     is a vivid, non-technical way to explain *why* drift detection and
+     ground-truth judging matter, worth stealing as a plain-language analogy for
+     public-facing positioning copy (the report/dashboard "can a less-technical
+     reader understand this in under a minute" bar already tracked in Release1Todo's
+     Piece 4 section). Different domain (visual scene consistency vs. this
+     project's metric/behavioral drift), so it's a rhetorical borrow, not a
+     technical one — noted as such, not overclaimed.
+  One minor, real technical echo: the article's emphasis on sub-frame latency
+  (self-forcing cut 5s → 30ms for playability) is a small but genuine data point for
+  the already-parked Cosmos Edge workstation↔Jetson inference-split question
+  (2026-07-17 entry) — real-time reaction thresholds (Mission 2's distance-triggered
+  ball reactions) are latency-sensitive the same way, so inference latency deserves
+  explicit measurement whenever that spike is actually attempted, not just accuracy.
+- **2026-07-22 — Photo pull-back fix confirmed green on real hardware (Mike).** CI run
+  `29927613607` (commit `7df72f3`, the `_pull_photos`/bind-mount fix above) came back
+  fully green — all 8 jobs, including Stage 4 HIL (Mission 2 day: no_ball → yellow →
+  red, 4m5s) and both Stage 5 reports (sim + HIL) uploading PDFs cleanly. Closes out
+  the overnight regression same-day, workstation and Jetson left up for Mike to review
+  in the morning.
