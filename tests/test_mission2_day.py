@@ -7,9 +7,11 @@ import subprocess
 
 import pytest
 
+import re
+
 import tools.mission2_day as mission2_day_module
 from tools.mission2_day import (ExecResult, JetsonExecutor, RetreatDetector, _parse_checklist,
-                                 hil_variant_names)
+                                 hil_variant_names, sweep_orphans)
 
 
 def test_parse_checklist_recovers_rows():
@@ -216,3 +218,23 @@ def test_hil_variant_names_matches_the_declared_pipeline_matrix():
     config/pipeline_matrix.yaml's hil.scenarios (minus the 'mission2_' prefix), not a
     separately hardcoded tuple that could silently drift out of sync with it."""
     assert hil_variant_names() == ['no_ball', 'yellow', 'red']
+
+
+def test_sweep_orphans_never_matches_the_gui_viewer_only_process(monkeypatch):
+    """Piece 7 (found during a live timed GUI run, 2026-07-22): sweep_orphans() used to
+    pkill a bare 'gz sim' pattern, which matches BOTH the headless server ('gz sim -s -r
+    world.sdf') AND the separate GUI viewer ('gz sim -g') — killing an observer's viewer
+    within seconds of every mission2_day run starting, since launch_stack() sweeps before
+    it launches. None of the patterns swept may match a viewer-only cmdline; at least one
+    must still match the real server cmdline."""
+    patterns = []
+    monkeypatch.setattr(
+        mission2_day_module.subprocess, 'run',
+        lambda cmd, **kw: patterns.append(cmd[cmd.index('-f') + 1]))
+
+    sweep_orphans()
+
+    viewer_cmdline = 'gz sim -g'
+    server_cmdline = 'gz sim -s -r /home/mike/autonomous-fleet-testbed/worlds/bedroom_simple.sdf'
+    assert not any(re.search(p, viewer_cmdline) for p in patterns)
+    assert any(re.search(p, server_cmdline) for p in patterns)
