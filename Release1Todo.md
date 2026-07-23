@@ -4249,6 +4249,45 @@ id) was found and fixed same-day.
       mission-process startup. Overlap the bookkeeping with the next run's startup (keep
       verdict print ORDER stable) so the filmed sequence flows run-to-run without a
       visible "nothing is happening" stretch. Sim-testable now; robot day inherits it.
+      **2026-07-22 investigation (live-narrated HIL day, Mike watching + Claude
+      correlating Nav2 logs in real time):** three real findings, root cause of the dead
+      air itself still NOT found —
+      1. **Fixed:** `sweep_orphans()`'s `pkill -f 'gz sim'` was killing the separate GUI
+         viewer (`gz sim -g`) within seconds of every non-HIL mission2_day run starting
+         — scoped to `'gz sim -s'` (the server only). Doesn't affect the HIL day path
+         (`--no-launch` skips this sweep entirely).
+      2. **Fixed:** the Jetson's `~/fleet-ci-data/` (photos + telemetry DB) was left
+         root-owned after a container-mode CI run (root has no `USER` in the Dockerfile;
+         bind mounts don't remap UIDs) — silently broke every subsequent bare-metal
+         manual run with a `PermissionError` → cascading `sqlite3 readonly database`
+         error. `chown -R mike:mike` + setgid `chmod` applied; see CLAUDE.md Gotchas for
+         the durable fix and recurrence risk.
+      3. **Confirmed, NOT explained, NOT FIXED — this item is not done:** sim timing
+         (148s day) vs HIL timing (190s day) — the gap is NOT primarily SSH/rclpy
+         process startup (~4-5s measured) or inter-run bookkeeping (~1s measured, same
+         as sim). Live narration (Mike watching the viewer, Claude tailing the real
+         Nav2 log and correlating timestamps) confirmed a REAL stall between Nav2
+         logging "goal accepted, computing control effort" and the robot actually
+         moving — starting from the 2nd goal of the day onward, but NOT the 1st, even
+         though bt_navigator/controller_server are the SAME persistent processes across
+         all three runs (only `mission_runner` restarts per run). Ruled out: cold
+         process start alone (goal #1 on that same persistent stack is clean); also
+         ruled out (weaker): "slow to settle right after a cancellation" — no_ball's own
+         run ends via normal success, not a cancel, yet the transition into yellow's
+         first goal still stalled. Looks like "which goal number this is for the stack's
+         lifetime," not "did the prior goal get cancelled." Nothing in
+         bt_navigator/controller_server/planner_server's own log output shows this gap
+         — no abort, reject, or retry logged. **Diagnostic plan for next time** (full
+         4-step version in CLAUDE.md Gotchas): (1) timestamped debug logging in
+         `nav_runner.py` around goal-dispatch → accepted → first-real-motion, so this is
+         measurable from a log instead of needing a human watching a screen; (2)
+         live-watch `/robot_001/cmd_vel` during a transition to split "controller isn't
+         producing real commands yet" vs "commands aren't reaching the simulated
+         robot"; (3) check whether the same stall appears on a goal WITHIN one run
+         (e.g. no_ball's own return-home leg) to isolate "stack-lifetime goal count" vs
+         "inter-run transition specifically"; (4) if pointed at costmap/localization,
+         check AMCL/costmap settle timing around the "clear entirely" log lines already
+         seen at goal start.
 
 ### Session Complete When
 - [ ] The gate question — **"have we done everything we can so the robot is good to go

@@ -36,6 +36,9 @@ reports/photos/
 # (failure_bag.py), unlike photos/DB, but still shouldn't be committed
 reports/failure_bags/
 
+# Pulled ROS2 log sessions (tools/pull_ros_logs.py) — debugging artifact, not source
+reports/ros_logs/
+
 # Generated maps (from SLAM)
 maps/*.pgm
 maps/*.yaml
