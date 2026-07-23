@@ -32,7 +32,7 @@ holds strategy background and the decisions log; nothing here requires reading i
 | 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | ✅ (2026-07-14 — NVMe fresh install executed 2026-07-13, runner re-registered, full 8-job CI cycle green (run 29301726080), manual HIL run on the NVMe install PASS first-attempt 2026-07-14; see `docs/runbooks/JetsonInstallSession14.md`) |
 | 15 | Gazebo + Real Jetson Hardware-in-the-Loop (Mission 1) | ✅ (2026-07-11 — Mission 1 PASS on x86 sim AND real-Jetson HIL, merged to main; CI stage designed but not yet implemented — see `docs/runbooks/Mission1HILSession15.md` + `docs/session15-hil-ci-stage-design.md`) |
 | 16 | HIL CI Stage with Gazebo + Mission 2 | ✅ (SIGNED OFF 2026-07-19 — `stage-4-hil` live (container mission, 25W-build/15W-mission), Mission 2 Option B verified round trip shipped + merged (PR #4, 7a86150); sign-off bar met: Mike-watched GUI container day GREEN + clean full-pipeline CI run 29697469463 + cold rebuild proven (659s, run 29667247639); real-USB-camera tier re-deferred → Session 19 tier #1; the 2026-07-18 "yellow bug" did NOT reproduce (12/12 local + 1/1 CI green) — instrumented, see Session 16 sign-off block) |
-| 17 | Harden, Stabilize & Review (pre-robot gate) | 🔄 (Pieces 3/4/5 SHIPPED 2026-07-21, Piece 6 SHIPPED 2026-07-22 — logging, per-CI-run reporting, interactive drift dashboard + AI-loop fix, repo hygiene + GHCR/disk retention + declared mission matrix; all merged to main, pushed to origin; Pieces 1/2 partially done — see their own sections; Piece 7 not started; gate question still open) |
+| 17 | Harden, Stabilize & Review (pre-robot gate) | 🔄 (Pieces 3/4/5 SHIPPED 2026-07-21, Piece 6 SHIPPED 2026-07-22 — logging, per-CI-run reporting, interactive drift dashboard + AI-loop fix, repo hygiene + GHCR/disk retention + declared mission matrix; all merged to main, pushed to origin; Pieces 1/2 partially done — see their own sections; Piece 7 timing investigation + Piece 8 close-out steps in progress 2026-07-22/23 — see their own sections; gate question still open) |
 | 18 | Real Robot: Deploy + Sim-to-Real Comparison | ⬜ (was 16 until 2026-07-12, then 17 until the same evening) |
 | 19 | Real-Robot Expansion & Deferred Capability (pick-list) | ⬜ (rewritten 2026-07-17 as a menu ordered by robot-day de-risking; was "Agentic Loop on Real Hardware + Advanced Missions") |
 | 20 | Future Releases: Working Plan (R2–R5, living) | 🔄 (executed 2026-07-17/18 — ladder relabeled, all candidates placed; LIVING section, updated as decisions change) |
@@ -4288,6 +4288,57 @@ id) was found and fixed same-day.
          "inter-run transition specifically"; (4) if pointed at costmap/localization,
          check AMCL/costmap settle timing around the "clear entirely" log lines already
          seen at goal start.
+
+### Piece 8 — Final Session 17 close-out steps (Mike, 2026-07-23)
+
+- [x] **`[timing]` instrumentation crashed live HIL — found, fixed.** The Piece 7
+      diagnostic logging added in commit `ce55503` (goal-dispatch/accept/first-motion
+      timestamps in `nav_runner.py`) crashed the very next HIL day it ran on
+      (`mission2_yellow`, run 30009878120): rclpy's executor delivers a
+      `send_goal_async` future's completion and its `feedback_callback` as independent
+      async events with no ordering guarantee — `feedback_cb` was observed firing
+      before the code that records `accept_time` had run, `TypeError` on `None - float`,
+      killing the mission mid-navigation (robot stopped 0.94 m short of home, no arrival
+      photo). Confirmed via the actual traceback in the downloaded
+      `hil-mission-evidence-112` artifact's `day_yellow.out`, not guessed. `mission2_red`
+      failed independently in the same run for an unrelated, pre-existing reason (its
+      red-ball reaction never fired — the robot completed a full round trip as if no
+      ball were present; not investigated further here). Fix (commit `40663b5`): guard
+      `feedback_cb` against `accept_time` still being `None` instead of assuming
+      ordering. 239/239 local tests green after the fix.
+- [ ] **HIL inter-scenario delay — real, not the Piece 7 motion-start stall; root cause
+      still open.** Mike's observed "~30s stationary" between scenarios is NOT the
+      goal-accept→first-motion stall Piece 7 item 3 documented (today's `[timing]` data
+      shows that sub-second in every case, 0.03–0.99s). It's dead time BETWEEN one
+      scenario's mission_runner process ending and the next one's first goal moving:
+      measured 15.19s (no_ball's last motion → yellow's first motion, a clean
+      non-crashed transition) and 21.67s (yellow's crash point → red's first motion,
+      inflated by crash-recovery overhead). The 2026-07-22 investigation's "~1s
+      bookkeeping, ~4-5s SSH/rclpy startup" measurement doesn't explain a 15s+ gap —
+      leading suspect, not yet verified: CI runs container-mode (`HIL_CONTAINER=1`),
+      and that 2026-07-22 measurement may have been bare-metal: a fresh `docker run` +
+      in-container rclpy bring-up per scenario could plausibly account for most of it.
+      Next step: timestamp the `docker run` invocation itself on the Jetson side and
+      compare against the first `[timing] goal dispatched` line of that scenario.
+      **Open design question (Mike, logged not decided):** does Mission 2 need three
+      separate scenario runs (no_ball/yellow/red) at all, each paying this per-run
+      startup cost, or could one mission encode all the branches artifact needs in a
+      single run? Revisit as its own discussion, not decided here.
+- [x] **"Drift detected on stage-1-quality" — user-error/stale-report, not a bug.**
+      `stage-1-quality` never runs `generate_test_report.py` — it's pure lint + unit
+      tests. The `## Report —` / `## ⚠ DRIFT DETECTED —` blocks Mike saw only come from
+      `stage-5-reports-sim` (`local`) and `stage-5-reports-hw` (`hil_jetson`). The
+      specific instance he pasted (`mission2_no_ball: FAIL`, 104.1σ) belonged to a
+      *different, older* run (2026-07-22 21:24) than the one he was actively looking
+      at — confirmed against the telemetry DB. The drift itself was real for that older
+      run, just misattributed while reading. No code change; note for next time: check
+      the run number on the Summary page you're reading.
+- [x] **Claude Code CLI startup hook: dashboard reminder.** Added
+      `.claude/settings.json` (new, committed — first project-level Claude Code
+      settings file for this repo) with a `SessionStart` hook that echoes
+      `streamlit run dashboard/app.py`. Deliberately minimal per Mike's "for now" —
+      no other startup behavior attached. Takes effect on the next new session (or
+      after `/hooks` reloads config), not retroactively in a session already running.
 
 ### Session Complete When
 - [ ] The gate question — **"have we done everything we can so the robot is good to go
