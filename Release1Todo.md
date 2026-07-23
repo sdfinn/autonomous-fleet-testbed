@@ -4306,33 +4306,117 @@ id) was found and fixed same-day.
       ball were present; not investigated further here). Fix (commit `40663b5`): guard
       `feedback_cb` against `accept_time` still being `None` instead of assuming
       ordering. 239/239 local tests green after the fix.
-- [ ] **HIL inter-scenario delay — real, not the Piece 7 motion-start stall; root cause
-      still open.** Mike's observed "~30s stationary" between scenarios is NOT the
-      goal-accept→first-motion stall Piece 7 item 3 documented (today's `[timing]` data
-      shows that sub-second in every case, 0.03–0.99s). It's dead time BETWEEN one
-      scenario's mission_runner process ending and the next one's first goal moving:
-      measured 15.19s (no_ball's last motion → yellow's first motion, a clean
-      non-crashed transition) and 21.67s (yellow's crash point → red's first motion,
-      inflated by crash-recovery overhead). The 2026-07-22 investigation's "~1s
-      bookkeeping, ~4-5s SSH/rclpy startup" measurement doesn't explain a 15s+ gap —
-      leading suspect, not yet verified: CI runs container-mode (`HIL_CONTAINER=1`),
-      and that 2026-07-22 measurement may have been bare-metal: a fresh `docker run` +
-      in-container rclpy bring-up per scenario could plausibly account for most of it.
-      Next step: timestamp the `docker run` invocation itself on the Jetson side and
-      compare against the first `[timing] goal dispatched` line of that scenario.
-      **Open design question (Mike, logged not decided):** does Mission 2 need three
-      separate scenario runs (no_ball/yellow/red) at all, each paying this per-run
-      startup cost, or could one mission encode all the branches artifact needs in a
-      single run? Revisit as its own discussion, not decided here.
-- [x] **"Drift detected on stage-1-quality" — user-error/stale-report, not a bug.**
-      `stage-1-quality` never runs `generate_test_report.py` — it's pure lint + unit
-      tests. The `## Report —` / `## ⚠ DRIFT DETECTED —` blocks Mike saw only come from
-      `stage-5-reports-sim` (`local`) and `stage-5-reports-hw` (`hil_jetson`). The
-      specific instance he pasted (`mission2_no_ball: FAIL`, 104.1σ) belonged to a
-      *different, older* run (2026-07-22 21:24) than the one he was actively looking
-      at — confirmed against the telemetry DB. The drift itself was real for that older
-      run, just misattributed while reading. No code change; note for next time: check
-      the run number on the Summary page you're reading.
+- [ ] **HIL inter-scenario delay — ROOT CAUSE FOUND (2026-07-23, live timestamped HIL
+      day), FIX NOT YET IMPLEMENTED.** Mike's observed "~30s stationary, twice per day"
+      is real and now fully accounted for with hard numbers, not a Nav2/motion issue —
+      the goal-accept→first-motion path (Piece 7 item 3's original suspect) is
+      confirmed sub-second in every case (0.03–1.0s across two separate live runs,
+      crashed and clean). The real cost is **Docker container lifecycle**, paid once
+      per scenario because `tools/mission2_day.py`'s `JetsonExecutor._ssh_mission2()`
+      does a fresh `docker run --rm --name hil_mission2 --network host --ipc host ...`
+      for EVERY scenario (3×/day) instead of once. Measured live (manual HIL day,
+      commit `4664134`, container mode, added two temporary `[timing]` log lines around
+      the `subprocess.run(['ssh', ...])` call in `_ssh_mission2`, still uncommitted in
+      the working tree as of this writing):
+      | stage | measured | robot moving? |
+      |---|---|---|
+      | previous scenario's container teardown (`--rm` + SSH close, after mission_runner's own last log line) | ~9.2s | no |
+      | workstation bookkeeping (judge + telemetry + next `ssh` dispatch) | ~1.6s | no |
+      | next scenario's container startup (`docker run` → mission_runner's first log line) | ~4.9s | no |
+      | goal accept → first motion | ~0.2–1.0s | starting |
+      | **total per transition** | **~15.6–16.1s** | — |
+      Two transitions/day (no_ball→yellow, yellow→red) ≈ 31s total — matches Mike's
+      "~30s × 2" observation almost exactly. Raw evidence: `/tmp/hil_stage_manual/day_*.out`
+      and `/tmp/hil_stage_manual_day.log` from the live run (not committed anywhere —
+      local scratch only, re-derivable by rerunning `scripts/hil_stage.sh day` with the
+      same two temp log lines).
+      **Fix to implement (not started):** launch ONE `docker run` for the whole HIL day
+      (kept alive, e.g. detached `-d` with a keep-alive command or a long-running shell),
+      and invoke each scenario's `mission_runner` via `docker exec` inside that same
+      container instead of a fresh `docker run --rm` per scenario. This still validates
+      the exact shipped arm64 image (the container's actual purpose — bare-metal mode
+      already gets free per-scenario process isolation from a fresh SSH'd `python3`
+      call, so containerization was never doing double duty as isolation) and should
+      cut ~14s of the ~15.6–16.1s per-transition cost to near zero. Needs: (1) change
+      `_ssh_mission2` to `docker exec` an already-running container instead of `docker
+      run --rm`; (2) start that container once per day (probably in `JetsonExecutor.
+      __init__` or a new `day()`-level setup step) and stop it once at teardown; (3)
+      re-verify the two bind mounts (`reports/`, `fleet-ci-data`) and `--network host
+      --ipc host` flags still apply correctly to a long-lived container; (4) rerun a
+      live timestamped HIL day afterward to confirm the ~14s/transition actually
+      disappears, using the same measurement method above.
+      **Open design question (Mike, logged not decided, separate from the fix above):**
+      does Mission 2 need three separate scenario runs (no_ball/yellow/red) at all, or
+      could one mission encode all the branches in a single run? Revisit as its own
+      discussion — NOT required to land the container fix above, which helps either way.
+- [ ] **Expand `[timing]`-style logging beyond Mission 2 HIL — not started.** Two
+      distinct instrumentation additions made during this investigation, with different
+      scope and status:
+      - `nav_runner.py`'s `[timing]` lines (goal dispatched/accepted/first-feedback/
+        first-real-motion — commits `ce55503`/`40663b5`) live in the SHARED
+        `NavRunner.send_goal()`, so every mission's every `navigate` step already gets
+        this for free, including Mission 1 — no further work needed here, already
+        effectively "expanded to all missions" by construction.
+      - `mission2_day.py`'s `[timing] ssh dispatch`/`ssh returned` lines (added
+        2026-07-23 for this investigation) are narrow — specific to
+        `JetsonExecutor._ssh_mission2`, the container-mode HIL day orchestrator — and
+        are STILL UNCOMMITTED in the working tree. These were essential to pinpointing
+        the container-lifecycle cost above (the `nav_runner` timing alone only proved
+        the delay WASN'T a Nav2 stall; these two lines are what proved WHERE it
+        actually was). To do: (1) decide whether to commit these two lines as a
+        permanent regression tripwire (cheap, low-risk — no control-flow change, just
+        two `log.info()` calls around an existing `subprocess.run`) — recommended yes,
+        even after the container fix lands, so any future regression in container
+        start/stop cost shows up in the log instead of needing another live-timed
+        investigation to rediscover; (2) if kept, this pattern (dispatch-timestamp +
+        return-timestamp bracketing any SSH/subprocess call whose latency matters)
+        should become the standard for any FUTURE container-per-invocation SSH call
+        added to this codebase, not just this one.
+- [ ] **"Drift/Report content shows up near stage-1-quality on the run Summary page" —
+      REOPENED 2026-07-23 (Mike pushed back — correctly).** The earlier "stale report"
+      explanation (staleness of the SPECIFIC instance first pasted, 2026-07-22 21:24
+      vs. the run being viewed) was confirmed real via the telemetry DB and still
+      stands on its own — but it does NOT explain the ordering complaint Mike raised
+      against a *specific, current* run: [run 30012997097](https://github.com/sdfinn/autonomous-fleet-testbed/actions/runs/30012997097).
+      Two things confirmed by code/API on that exact run, one thing NOT yet confirmed:
+      - **Confirmed — `stage-1-quality` still never calls `generate_test_report.py`.**
+        Verified again against `.github/workflows/ci.yml`: only `stage-5-reports-sim`
+        (writes `## Report —`/`## ⚠ DRIFT DETECTED — local`) and `stage-5-reports-hw`
+        (writes the `hil_jetson` block) touch `$GITHUB_STEP_SUMMARY`.
+      - **Confirmed, real gap, NOT user error: the summary text never links the PDF.**
+        Read `generate_test_report.py`'s `build_job_summary()` directly — it never
+        mentions the PDF artifact name (`test-report-113-sim`/`test-report-113-hw`)
+        anywhere in the markdown it writes, for either job (`evidence_artifact` is only
+        wired for the HIL job's Nav2/photo evidence, and isn't even passed on the sim
+        job's call in `ci.yml`). Both PDFs DO exist and were successfully generated —
+        downloaded and verified directly via the Actions API: `test-report-113-sim`
+        (128KB, contains photos) and `test-report-113-hw` (2KB, text-only — see
+        separate finding below) — but GitHub only lists them generically at the very
+        bottom of the run page under "Artifacts," disconnected from the report text
+        above. A reader has no inline link/mention telling them the PDF exists or
+        where. **Fix (not started):** have `build_job_summary()` also print the PDF's
+        own artifact name (would need `generate_report()`/the CI step to pass its own
+        artifact name in, mirroring how `evidence_artifact` is already threaded
+        through) so the summary text is self-contained.
+      - **Secondary finding, unplanned: `test-report-113-hw` (hil_jetson PDF) is
+        suspiciously small (2KB vs. sim's 128KB) — text-only, ZERO embedded photos**,
+        even though Mission 2's photos exist locally at that point (scp'd back by
+        `mission2_day.py`, same self-hosted runner, same persistent `PHOTO_DIR`).
+        `find_run_photos()`'s time-window correlation may not be matching HIL rows for
+        some reason — not investigated further, flagging only.
+      - **NOT confirmed — the exact page-layout/ordering claim itself.** Could not
+        render the actual GitHub Summary page this session (repo is private, `WebFetch`
+        401s on unauthenticated fetch of private-repo URLs; browser tooling was
+        declined). Best-evidence, UNVERIFIED hypothesis: GitHub's run Summary page
+        concatenates every job's own `$GITHUB_STEP_SUMMARY` markdown into one combined
+        panel — our own `##` headers (`## Report — hil_jetson`, etc.) may be the ONLY
+        visual separator between different jobs' content there, with no separate
+        "this came from stage-5-reports-hw" job label GitHub adds itself — which would
+        make content visually read as adjacent to/part of whatever's above it,
+        regardless of which job actually produced it. **Needs Mike to confirm or
+        refute** (paste the literal page text/a screenshot, or describe exactly what
+        heading sits directly above the "Report — hil_jetson" block) before treating
+        this as settled either way.
 - [x] **Claude Code CLI startup hook: dashboard reminder.** Added
       `.claude/settings.json` (new, committed — first project-level Claude Code
       settings file for this repo) with a `SessionStart` hook that echoes
