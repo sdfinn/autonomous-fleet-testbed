@@ -398,6 +398,26 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Prune old local docker images on the Jetson (keep current + last 2)
+        # Piece 6: every run pulls a new uniquely-tagged arm64 image onto the Jetson
+        # (the "Pull the stage-3 arm64 image" step above) and nothing ever removes an
+        # old one. Unlike GHCR (tools/ghcr_prune.py + ghcr-cleanup.yml, report-only by
+        # design), this is local disk on real hardware with no registry-permanence
+        # concern, so a small rolling-window prune here is safe to run every run.
+        # Never touches :latest. Best-effort: never fails the job.
+        if: always()
+        run: |
+          REPO="${HIL_IMAGE%:*}"
+          ssh -o BatchMode=yes ${JETSON_USER}@${JETSON_IP} bash -s -- "$REPO" <<'REMOTE' || true
+            repo="$1"
+            docker images "$repo" --format '{{.ID}};{{.Tag}};{{.CreatedAt}}' \
+              | grep -v ';latest;' \
+              | sort -t';' -k3 -r \
+              | tail -n +3 \
+              | cut -d';' -f1 \
+              | xargs -r docker rmi -f
+          REMOTE
+
       - name: Show sim log tail on failure
         if: failure()
         run: tail -n 60 /tmp/hil_stage/sim.log 2>/dev/null || true
