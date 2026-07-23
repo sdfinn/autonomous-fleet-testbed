@@ -454,13 +454,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate report (this run's own sim scenarios only, per Piece 4)
+      - name: Generate report (this run's own sim scenarios only, per Piece 4/6)
+        # --stage sim reads runner-type + scenarios from config/pipeline_matrix.yaml
+        # (Piece 6) instead of a hand-typed list here.
         run: |
           source ~/fleet-env/bin/activate
           python -m tools.generate_test_report \
-            --runner-type local \
-            --scenario bedroom_nav \
-            --scenario mission1 \
+            --stage sim \
             --report-path "$REPORT_PATH"
 
       - name: Validate telemetry schema
@@ -500,14 +500,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate report (this run's own HIL scenarios only, per Piece 4)
+      - name: Generate report (this run's own HIL scenarios only, per Piece 4/6)
+        # --stage hil reads runner-type + scenarios from config/pipeline_matrix.yaml
+        # (Piece 6) instead of a hand-typed list here.
         run: |
           source ~/fleet-env/bin/activate
           python -m tools.generate_test_report \
-            --runner-type hil_jetson \
-            --scenario mission2_no_ball \
-            --scenario mission2_yellow \
-            --scenario mission2_red \
+            --stage hil \
             --report-path "$REPORT_PATH" \
             --evidence-artifact "hil-mission-evidence-${{ github.run_number }}"
 

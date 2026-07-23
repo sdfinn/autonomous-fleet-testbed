@@ -5,6 +5,8 @@ schema validation green → per-run PDF out, scoped to one runner_type's own sce
 import os
 from datetime import datetime, timedelta
 
+import pytest
+
 from tools.telemetry_logger import init_db, log_run
 from tools.validate_telemetry import detect_schema_drift, validate_runs, validate_steps
 
@@ -315,3 +317,44 @@ def test_build_job_summary_omits_evidence_line_when_not_given(tmp_path):
     rows = load_run_rows("local", ["mission1"], db_path=db)
     summary = build_job_summary("local", rows, {}, False)
     assert "Evidence" not in summary
+
+
+# ── Piece 6: --stage as a declared alternative to --runner-type/--scenario ─────────────
+
+
+def test_resolve_runner_and_scenarios_from_stage():
+    from tools.generate_test_report import resolve_runner_and_scenarios
+    runner_type, scenarios = resolve_runner_and_scenarios(
+        stage="sim", runner_type=None, scenarios=None,
+        load_stage=lambda s: ("local", ["bedroom_nav", "mission1"]),
+    )
+    assert runner_type == "local"
+    assert scenarios == ["bedroom_nav", "mission1"]
+
+
+def test_resolve_runner_and_scenarios_from_explicit_flags():
+    from tools.generate_test_report import resolve_runner_and_scenarios
+    runner_type, scenarios = resolve_runner_and_scenarios(
+        stage=None, runner_type="local", scenarios=["mission1"],
+        load_stage=lambda s: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+    assert runner_type == "local"
+    assert scenarios == ["mission1"]
+
+
+def test_resolve_runner_and_scenarios_rejects_stage_plus_explicit_flags():
+    from tools.generate_test_report import resolve_runner_and_scenarios
+    with pytest.raises(ValueError):
+        resolve_runner_and_scenarios(
+            stage="sim", runner_type="local", scenarios=None,
+            load_stage=lambda s: ("local", ["mission1"]),
+        )
+
+
+def test_resolve_runner_and_scenarios_rejects_neither_stage_nor_flags():
+    from tools.generate_test_report import resolve_runner_and_scenarios
+    with pytest.raises(ValueError):
+        resolve_runner_and_scenarios(
+            stage=None, runner_type=None, scenarios=None,
+            load_stage=lambda s: ("local", ["mission1"]),
+        )

@@ -8,7 +8,8 @@ import subprocess
 import pytest
 
 import tools.mission2_day as mission2_day_module
-from tools.mission2_day import ExecResult, JetsonExecutor, RetreatDetector, _parse_checklist
+from tools.mission2_day import (ExecResult, JetsonExecutor, RetreatDetector, _parse_checklist,
+                                 hil_variant_names)
 
 
 def test_parse_checklist_recovers_rows():
@@ -208,3 +209,10 @@ def test_startup_crash_row_logged_when_process_died_before_completion_line(monke
     assert row['failure_reason'] == 'startup_crash'
     assert row['runner_type'] == 'hil_jetson'
     assert row['sim_engine'] == 'real'
+
+
+def test_hil_variant_names_matches_the_declared_pipeline_matrix():
+    """Piece 6: run_day's summary loop must iterate the SAME variant names declared in
+    config/pipeline_matrix.yaml's hil.scenarios (minus the 'mission2_' prefix), not a
+    separately hardcoded tuple that could silently drift out of sync with it."""
+    assert hil_variant_names() == ['no_ball', 'yellow', 'red']

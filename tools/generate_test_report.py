@@ -194,12 +194,34 @@ def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
     return output_path
 
 
+def resolve_runner_and_scenarios(stage, runner_type, scenarios, load_stage=None):
+    """Resolve (runner_type, scenarios) from either --stage or the explicit flags.
+
+    Piece 6: --stage is the declared, config-backed path (config/pipeline_matrix.yaml
+    via tools.pipeline_matrix.load_stage); --runner-type/--scenario remain for ad hoc
+    use. Exactly one of the two forms must be given.
+    """
+    if stage and (runner_type or scenarios):
+        raise ValueError("pass --stage on its own, not together with --runner-type/--scenario")
+    if stage:
+        if load_stage is None:
+            from tools.pipeline_matrix import load_stage
+        return load_stage(stage)
+    if runner_type and scenarios:
+        return runner_type, scenarios
+    raise ValueError("must pass either --stage or both --runner-type and --scenario")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate a per-run PDF report for one runner_type's own scenarios"
     )
-    parser.add_argument("--runner-type", required=True)
-    parser.add_argument("--scenario", action="append", required=True, dest="scenarios",
+    parser.add_argument("--stage", choices=["sim", "hil"], default=None,
+                         help="declared source (config/pipeline_matrix.yaml) for "
+                              "runner-type + scenarios — mutually exclusive with "
+                              "--runner-type/--scenario")
+    parser.add_argument("--runner-type", default=None)
+    parser.add_argument("--scenario", action="append", default=None, dest="scenarios",
                          help="repeatable — one of this stage's known scenarios")
     parser.add_argument("--db", default=DB_PATH)
     parser.add_argument("--report-path", default=REPORT_PATH)
@@ -209,7 +231,9 @@ def main() -> None:
                               "(e.g. hil-mission-evidence-142) — omitted for sim reports, "
                               "which have no separate evidence artifact")
     args = parser.parse_args()
-    generate_report(args.runner_type, args.scenarios, db_path=args.db,
+    runner_type, scenarios = resolve_runner_and_scenarios(
+        args.stage, args.runner_type, args.scenarios)
+    generate_report(runner_type, scenarios, db_path=args.db,
                      output_path=args.report_path, config_path=args.config,
                      evidence_artifact=args.evidence_artifact)
 
