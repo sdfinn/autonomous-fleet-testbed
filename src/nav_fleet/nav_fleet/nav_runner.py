@@ -27,6 +27,14 @@ from nav_fleet.goal_retry import (COLD_ABORT_RETRIES, classify_result)
 from nav_fleet.missions import yaw_to_quaternion
 from tools.log_setup import build_env_manifest, git_sha, resolve_level
 
+# S17 Piece 7 timing investigation (2026-07-22): the HIL motion-start stall — the
+# robot sits still for a real, observable stretch after Nav2 logs "goal accepted" —
+# is invisible in bt_navigator/controller_server's own log output. This threshold
+# turns feedback pose deltas into a velocity estimate so "first real motion" becomes
+# a timestamped log line instead of something that needs a human watching a screen.
+# 0.03 m/s is comfortably above AMCL localization jitter while the robot is at rest.
+MOTION_VELOCITY_THRESHOLD_MPS = 0.03
+
 
 class NavRunner(Node):
 
@@ -129,9 +137,47 @@ class NavRunner(Node):
             # state is ACTIVE. A goal sent in that gap is rejected ("Action server is
             # inactive"), so retry a few times with a short backoff rather than treating one
             # rejection as final.
+            # Timing instrumentation (S17 Piece 7, 2026-07-22): a mutable dict rather than
+            # closure-captured locals because feedback_cb is registered before accept_time
+            # is known — feedback only starts flowing once the goal is actually accepted
+            # and executing, so accept_time is always set by the time feedback arrives.
+            motion_state = {
+                'accept_time': None, 'last_xy': None, 'last_time': None, 'logged': False,
+            }
+
+            def feedback_cb(feedback_msg):
+                now = time.time()
+                pos = feedback_msg.feedback.current_pose.pose.position
+                xy = (pos.x, pos.y)
+                prev_xy, prev_time = motion_state['last_xy'], motion_state['last_time']
+                motion_state['last_xy'], motion_state['last_time'] = xy, now
+                if prev_xy is None:
+                    self.get_logger().info(
+                        f'[timing] first feedback at {now:.3f} '
+                        f'(+{now - motion_state["accept_time"]:.3f}s since accept), '
+                        f'pose=({xy[0]:.3f}, {xy[1]:.3f})')
+                    return
+                if motion_state['logged']:
+                    return
+                dt = now - prev_time
+                if dt <= 0:
+                    return
+                velocity = math.hypot(xy[0] - prev_xy[0], xy[1] - prev_xy[1]) / dt
+                if velocity > MOTION_VELOCITY_THRESHOLD_MPS:
+                    motion_state['logged'] = True
+                    self.get_logger().info(
+                        f'[timing] first real motion at {now:.3f} '
+                        f'(+{now - motion_state["accept_time"]:.3f}s since accept), '
+                        f'velocity={velocity:.3f} m/s')
+
             goal_handle = None
             for a in range(5):
-                send_goal_future = self._action_client.send_goal_async(goal)
+                dispatch_time = time.time()
+                self.get_logger().info(
+                    f'[timing] goal dispatched at {dispatch_time:.3f} -> '
+                    f'({x:.2f}, {y:.2f})')
+                send_goal_future = self._action_client.send_goal_async(
+                    goal, feedback_callback=feedback_cb)
 
                 deadline = time.time() + 10.0
                 while time.time() < deadline:
@@ -156,6 +202,10 @@ class NavRunner(Node):
                 return ('send_fail',)
 
             accept_time = time.time()
+            motion_state['accept_time'] = accept_time
+            self.get_logger().info(
+                f'[timing] goal accepted at {accept_time:.3f} '
+                f'(+{accept_time - dispatch_time:.3f}s since dispatch)')
             self._last_goal_handle = goal_handle  # for cancel-on-final-failure (zombie guard)
             start_xy = self._pose_xy()  # for the cold-abort displacement check
             result_future = goal_handle.get_result_async()

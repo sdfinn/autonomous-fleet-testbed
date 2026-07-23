@@ -63,7 +63,7 @@ class _FakeActionClient:
     def wait_for_server(self, timeout_sec=None):
         return True
 
-    def send_goal_async(self, goal):
+    def send_goal_async(self, goal, feedback_callback=None):
         self.send_calls += 1
         return _FakeFuture(self._handles.pop(0))
 
