@@ -151,10 +151,19 @@ class NavRunner(Node):
                 xy = (pos.x, pos.y)
                 prev_xy, prev_time = motion_state['last_xy'], motion_state['last_time']
                 motion_state['last_xy'], motion_state['last_time'] = xy, now
+                # accept_time can still be None here: rclpy's executor delivers the
+                # send_goal_async future's completion and this feedback callback as
+                # independent async events, with no ordering guarantee between them —
+                # confirmed live 2026-07-23 (HIL yellow-scenario crash, TypeError on
+                # None - float) when feedback for a goal arrived before our own code,
+                # still polling send_goal_future.done(), reached the line that records
+                # accept_time. Guard rather than assume ordering.
+                accept_time = motion_state['accept_time']
+                since_accept = (f'+{now - accept_time:.3f}s since accept' if accept_time
+                                is not None else 'accept ack not yet processed client-side')
                 if prev_xy is None:
                     self.get_logger().info(
-                        f'[timing] first feedback at {now:.3f} '
-                        f'(+{now - motion_state["accept_time"]:.3f}s since accept), '
+                        f'[timing] first feedback at {now:.3f} ({since_accept}), '
                         f'pose=({xy[0]:.3f}, {xy[1]:.3f})')
                     return
                 if motion_state['logged']:
@@ -166,8 +175,7 @@ class NavRunner(Node):
                 if velocity > MOTION_VELOCITY_THRESHOLD_MPS:
                     motion_state['logged'] = True
                     self.get_logger().info(
-                        f'[timing] first real motion at {now:.3f} '
-                        f'(+{now - motion_state["accept_time"]:.3f}s since accept), '
+                        f'[timing] first real motion at {now:.3f} ({since_accept}), '
                         f'velocity={velocity:.3f} m/s')
 
             goal_handle = None
