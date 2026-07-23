@@ -28,6 +28,14 @@ reports/traceability_latest.json
 # Agentic loop output (regenerated each run)
 reports/mission_plan.json
 
+# Mission photos — live at ~/fleet-ci-data/photos (PHOTO_DIR, sibling of the
+# telemetry DB) since the Piece 4 absolute-path fix; never repo-relative again
+reports/photos/
+
+# Failure-bag evidence (rosbag2 dirs) — BAG_DIR is deliberately checkout-relative
+# (failure_bag.py), unlike photos/DB, but still shouldn't be committed
+reports/failure_bags/
+
 # Generated maps (from SLAM)
 maps/*.pgm
 maps/*.yaml
