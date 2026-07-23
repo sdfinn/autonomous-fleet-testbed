@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Dashboard: streamlit run dashboard/app.py (from repo root; fleet-env venv auto-activates via .bashrc)'"
+          }
+        ]
+      }
+    ]
+  }
+}
