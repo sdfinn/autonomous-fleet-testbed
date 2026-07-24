@@ -295,11 +295,13 @@ class JetsonExecutor(MissionExecutor):
         return ExecResult(events, photos, _parse_checklist(log_text), ok=(mrc == 0), nav=None)
 
     def _ssh_mission2(self, label):
-        # HIL_CONTAINER=1 runs the mission inside the stage-3 arm64 GHCR image (consuming the
-        # arm64->HIL pipeline edge), mirroring scripts/hil_stage.sh. Bare-metal (HIL_CONTAINER
-        # unset) is the default — used for local proofs.
+        # HIL_CONTAINER=1 execs into the long-lived container started by
+        # _start_container() (S17 Piece 8) — the stage-3 arm64 GHCR image, mirroring
+        # scripts/hil_stage.sh. Bare-metal (HIL_CONTAINER unset) is the default — used
+        # for local proofs.
         #
-        # Two bind mounts, two different writers:
+        # Two bind mounts, two different writers (applied once, at _start_container()
+        # time, not per exec):
         #  - reports/ (relative, unchanged): failure_bag.py's BAG_DIR is still a
         #    checkout-relative path ('reports/failure_bags'), which resolves inside the
         #    container's WORKDIR (/ros2_ws) — this mount is what makes that land on the
@@ -311,17 +313,12 @@ class JetsonExecutor(MissionExecutor):
         #    without this mount. Mounted at the same absolute path root's HOME already
         #    resolves to, onto JETSON_USER's real fleet-ci-data dir on the host, so a photo
         #    written by the containerized mission_runner actually reaches the Jetson
-        #    filesystem instead of vanishing when `--rm` tears the container down. See
+        #    filesystem instead of vanishing when the container is torn down. See
         #    _remote_photo_path() below for the matching scp-side path translation.
         if os.environ.get('HIL_CONTAINER') == '1':
-            image = self.image
             cmd = (
-                "docker run --rm --name hil_mission2 --network host --ipc host "
-                "-v $HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports "
-                "-v $HOME/fleet-ci-data:/root/fleet-ci-data "
-                f"-e RUNNER_TYPE=hil_jetson -e POWER_MODE={POWER_MODE_LABEL} "
-                "-e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp -e ROS_DOMAIN_ID=0 "
-                f"{image} bash -c 'source /opt/ros/jazzy/setup.bash && "
+                f"docker exec {HIL_CONTAINER_NAME} bash -c "
+                "'source /opt/ros/jazzy/setup.bash && "
                 "source /ros2_ws/install/setup.bash && "
                 "python3 -m nav_fleet.mission_runner mission2'")
         else:
@@ -753,6 +750,7 @@ def main():
     proc = None
     runner = None
     rclpy = None
+    executor = None
     ok = False
     try:
         if not no_launch:
@@ -774,6 +772,8 @@ def main():
                 runner.destroy_node()
             if rclpy is not None:
                 rclpy.try_shutdown()
+            if executor is not None:
+                executor.close()
     finally:
         if not no_launch:
             shutdown_stack(proc)
