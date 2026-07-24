@@ -92,6 +92,87 @@ def test_jetson_executor_container_mode_fails_loud_when_image_missing(monkeypatc
         JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
 
 
+def test_jetson_executor_container_mode_starts_long_lived_container(monkeypatch):
+    """Piece 8 fix: container mode must start ONE long-lived container for the whole
+    day instead of a fresh `docker run --rm` per scenario (was costing ~15.6-16.1s of
+    container start/teardown per transition, measured live 2026-07-23)."""
+    monkeypatch.setenv('HIL_CONTAINER', '1')
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+    mission2_day_module.JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+
+    ssh_cmds = [c for c in calls if c[:1] == ['ssh']]
+    start_cmd = next(c for c in ssh_cmds if 'docker run -d' in c[-1])
+    assert '--name hil_mission2' in start_cmd[-1]
+    assert 'sleep infinity' in start_cmd[-1]
+    assert 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef' in start_cmd[-1]
+    assert '--rm' not in start_cmd[-1]
+    rm_index = next(i for i, c in enumerate(ssh_cmds) if 'docker rm -f hil_mission2' in c[-1])
+    assert rm_index < ssh_cmds.index(start_cmd)   # stale-container cleanup runs first
+
+
+def test_close_container_mode_removes_the_container(monkeypatch):
+    monkeypatch.setenv('HIL_CONTAINER', '1')
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    monkeypatch.setattr(
+        subprocess, 'run',
+        lambda *a, **k: subprocess.CompletedProcess(a, returncode=0, stdout='', stderr=''))
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+    ex.close()
+
+    assert any('docker rm -f hil_mission2' in c[-1] for c in calls if c[:1] == ['ssh'])
+
+
+def test_close_bare_metal_is_a_noop(monkeypatch):
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+
+    def _boom(*a, **k):
+        raise AssertionError('close() must not touch docker/SSH in bare-metal mode')
+    monkeypatch.setattr(subprocess, 'run', _boom)
+    ex.close()   # must not raise
+
+
+def test_ssh_mission2_container_mode_uses_docker_exec(monkeypatch, tmp_path):
+    """The per-scenario call must exec into the long-lived container, not `docker run`
+    a new one — that's the actual Piece 8 fix (container lifecycle alone isn't enough;
+    this is what stops using a fresh container per scenario)."""
+    monkeypatch.setenv('HIL_CONTAINER', '1')
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    monkeypatch.setattr(
+        subprocess, 'run',
+        lambda *a, **k: subprocess.CompletedProcess(a, returncode=0, stdout='', stderr=''))
+    ex = JetsonExecutor('10.42.0.217', str(tmp_path))
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='ok', stderr='')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+    ex._ssh_mission2('no_ball')
+
+    ssh_cmd = next(c for c in calls if 'ssh' in c)
+    assert 'docker exec hil_mission2' in ssh_cmd[-1]
+    assert 'docker run' not in ssh_cmd[-1]
+    assert 'python3 -m nav_fleet.mission_runner mission2' in ssh_cmd[-1]
+
+
 def test_pull_photos_bare_metal_uses_absolute_path_verbatim(monkeypatch, tmp_path):
     """2026-07-22 regression: PHOTO_DIR became absolute (Piece 4 final-review fix), but
     _pull_photos still prepended 'autonomous-fleet-testbed/' assuming a relative path —

@@ -86,6 +86,9 @@ JENV = ('source /opt/ros/jazzy/setup.bash && '
         'source ~/autonomous-fleet-testbed/install/setup.bash && '
         'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 '
         'MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1')
+HIL_CONTAINER_NAME = 'hil_mission2'   # long-lived container reused for the whole HIL
+# day (S17 Piece 8 fix) — a fresh `docker run --rm` per scenario was measured costing
+# ~15.6-16.1s of pure container start/teardown per transition, none of it robot motion.
 STATE_DIR = os.environ.get('STATE_DIR', '/tmp/hil_stage')
 POWER_MODE_LABEL = os.environ.get('POWER_MODE', '15W')
 
@@ -170,6 +173,10 @@ class MissionExecutor:
     def reset(self):
         """Clear any per-run bookkeeping before the next execution."""
 
+    def close(self):
+        """Tear down any day-level resources (e.g. a long-lived container). No-op by
+        default — only JetsonExecutor's container mode currently needs this."""
+
 
 class InProcessExecutor(MissionExecutor):
     """Sim day: run the mission in-process on the workstation via a live MissionRunner. The
@@ -206,6 +213,7 @@ class JetsonExecutor(MissionExecutor):
         if os.environ.get('HIL_CONTAINER') == '1':
             self.image = os.environ['HIL_IMAGE']   # KeyError is a real misconfiguration — surface
             self._require_image_local()
+            self._start_container()
 
     def _require_image_local(self):
         # Pre-flight (S17 Piece 2 carry-in, from the sign-off false start): a wrong tag ->
@@ -229,6 +237,43 @@ class JetsonExecutor(MissionExecutor):
                 f'docker pull {self.image}), or read the real tag from `docker images` '
                 f'on the Jetson / the CI run env instead of constructing one from '
                 f'git rev-parse.')
+
+    def _start_container(self):
+        """Start ONE long-lived container for the whole HIL day (S17 Piece 8 fix): the
+        old `docker run --rm` per scenario paid ~15.6-16.1s of container start/teardown
+        per transition (measured live 2026-07-23, manual HIL day) — a fresh overlay
+        filesystem + network namespace + `--rm` cleanup, three times a day, none of it
+        robot motion. `_ssh_mission2` now `docker exec`s into THIS container per
+        scenario instead. RUNNER_TYPE/POWER_MODE are baked in here since they don't
+        vary within a day (docker exec inherits a container's `docker run -e`
+        environment by default — no need to repeat them per exec)."""
+        self._stop_container()   # best-effort: clear a stale container from a crashed prior day
+        cmd = (
+            f'docker run -d --name {HIL_CONTAINER_NAME} --network host --ipc host '
+            "-v $HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports "
+            "-v $HOME/fleet-ci-data:/root/fleet-ci-data "
+            f"-e RUNNER_TYPE=hil_jetson -e POWER_MODE={POWER_MODE_LABEL} "
+            "-e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp -e ROS_DOMAIN_ID=0 "
+            f"{self.image} sleep infinity")
+        proc = subprocess.run(
+            ['ssh', '-o', 'BatchMode=yes', f'{JETSON_USER}@{self.ip}', cmd],
+            capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError(f'failed to start long-lived HIL container: {proc.stderr}')
+        log.info(f'started long-lived HIL container {HIL_CONTAINER_NAME} ({self.image})')
+
+    def _stop_container(self):
+        subprocess.run(
+            ['ssh', '-o', 'BatchMode=yes', f'{JETSON_USER}@{self.ip}',
+             f'docker rm -f {HIL_CONTAINER_NAME}'],
+            capture_output=True, text=True)
+
+    def close(self):
+        """Tear down the long-lived container at the end of the day (container mode
+        only — bare-metal never had a container to close)."""
+        if self.image is not None:
+            log.info(f'stopping long-lived HIL container {HIL_CONTAINER_NAME}')
+            self._stop_container()
 
     def run(self, ball_xy=None, color=None):
         label = color or 'no_ball'
@@ -283,11 +328,15 @@ class JetsonExecutor(MissionExecutor):
             cmd = (f'{JENV} && cd {JETSON_REPO} && RUNNER_TYPE=hil_jetson '
                    f'POWER_MODE={POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner mission2')
         out_path = os.path.join(self.state_dir, f'day_{label}.out')
+        dispatch_time = time.time()
+        log.info(f'[timing] ssh dispatch for {label} at {dispatch_time:.3f}')
         log.info(f'ssh Jetson mission2 ({label}) ...')
         proc = subprocess.run(
             ['timeout', '300', 'ssh', '-o', 'BatchMode=yes',
              f'{JETSON_USER}@{self.ip}', cmd],
             capture_output=True, text=True)
+        log.info(f'[timing] ssh returned for {label} at {time.time():.3f} '
+                 f'(+{time.time() - dispatch_time:.3f}s total)')
         log_text = proc.stdout + proc.stderr
         pathlib.Path(out_path).write_text(log_text)
         log.debug(log_text.rstrip())   # raw ssh output — verbose; checklist below is the summary
