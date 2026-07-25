@@ -244,6 +244,32 @@ class MissionRunner(Node):
                 return False
         return True
 
+    def run_mission2_day(self, legs=3):
+        """S17 Piece 9 (Mike, 2026-07-24): run mission2 `legs` times in one process —
+        replaces 3 externally-invoked processes/SSH calls with one continuous
+        execution. Each repetition's own checklist/new-photos/reaction-events are
+        collected separately (same reset-between-calls pattern InProcessExecutor
+        already used) so the day's 3 separately-judged/logged rows are unaffected —
+        only the execution boundary moves, not the judging granularity. Deliberately
+        NOT a generic 'legs' concept in the mission model (missions.py is untouched);
+        this is Mission-2-specific day orchestration living where it always has."""
+        results = []
+        for _ in range(legs):
+            self.reaction_events.clear()
+            photos_before = len(self.photo_paths)
+            t_start = time.time()
+            ok = self.run_mission('mission2')
+            t_end = time.time()
+            events = [{'color': e['color'], 'reaction': e['reaction'], 't': t_end,
+                       'truth_xy': None} for e in self.reaction_events]
+            results.append({
+                't_start': t_start, 't_end': t_end, 'ok': ok,
+                'checklist': [[label, verdict] for label, verdict in self.checklist],
+                'photos': self.photo_paths[photos_before:],
+                'reaction_events': events,
+            })
+        return results
+
 
 def _mean(values):
     return sum(values) / len(values) if values else None
@@ -281,8 +307,57 @@ def _log_mission(name, ok, runner, crashed=False):
 
 def main():
     parser = argparse.ArgumentParser(description='Run a named mission against Nav2.')
-    parser.add_argument('mission', choices=sorted(MISSIONS))
+    parser.add_argument('mission', nargs='?', default=None, choices=sorted(MISSIONS))
+    parser.add_argument('--day', action='store_true',
+                        help='S17 Piece 9: run mission2 3x in one process, print one '
+                             'combined JSON result instead of exiting after one '
+                             'mission — replaces mission2_day.py calling this 3x over '
+                             'SSH.')
     args = parser.parse_args()
+
+    if args.day:
+        import json
+        # Started before rclpy.init() — same reasoning as the one-shot path below:
+        # an independent OS process, not an rclpy node; snapshot-mode writes NOTHING
+        # to disk until snapshot() is called, so this costs nothing on an all-PASS day.
+        # Pre-fix (S17 review, 2026-07-25): this branch exited via `raise SystemExit(0)`
+        # before ever reaching the one-shot path's failure-bag code below — since HIL
+        # only runs via --day now, no HIL run could ever produce a failure bag.
+        bag_proc, bag_path = failure_bag.start('mission2')
+        rclpy.init()
+        runner = None
+        try:
+            runner = MissionRunner()
+            runner.get_logger().info(build_env_manifest(
+                git_sha=git_sha(), power_mode=os.environ.get('POWER_MODE')))
+            results = runner.run_mission2_day()
+            print('MISSION2_DAY_RESULT:' + json.dumps(results))
+            bag_kept = any(not leg['ok'] for leg in results) and failure_bag.snapshot()
+            if bag_kept:
+                print(f'failure bag kept: {bag_path}')
+            failure_bag.stop(bag_proc, bag_path, keep=bag_kept)
+        except Exception:
+            # A crash mid-day (construction, or anywhere inside run_mission2_day) is
+            # exactly the "can't reproduce it, need evidence" case this bag exists for
+            # (failure_bag.py's docstring) — snapshot before the exception propagates.
+            # Re-raised (not swallowed): mrc != 0 with no 'Mission mission2:' line in
+            # the output is what JetsonExecutor._log_startup_crash_if_needed reads as
+            # a startup crash — this branch never prints that line at all, so that
+            # check is exactly right for a mid-day crash too, not just an import-time one.
+            bag_kept = failure_bag.snapshot()
+            if bag_kept:
+                print(f'failure bag kept: {bag_path}')
+            failure_bag.stop(bag_proc, bag_path, keep=bag_kept)
+            raise
+        finally:
+            rclpy.try_shutdown()
+        raise SystemExit(0)
+        # ^ exit code is informational only here — mission2_day.py judges PASS/FAIL
+        # itself from ground truth, same as today; a leg's own self-report 'ok' is
+        # not the verdict (see judge_* functions) — always exit 0 if the process
+        # itself didn't crash, so the workstation always gets to parse the JSON.
+    if args.mission is None:
+        parser.error('mission is required unless --day is given')
 
     # Started before rclpy.init() — an independent OS process, not an rclpy node; a
     # snapshot-mode recorder writes NOTHING to disk until snapshot() below is called,

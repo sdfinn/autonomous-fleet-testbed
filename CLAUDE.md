@@ -442,6 +442,75 @@ docker buildx build --platform linux/arm64 \
      grows after the first goal.
   Piece 7 (Release1Todo.md) tracks this as confirmed-but-unroot-caused — do not mark it
   done until an actual fix (not just a diagnosis) lands.
+  **UPDATE 2026-07-24 (Piece 9, Release1Todo.md): likely explained, under a different
+  framing, not the one this entry originally used.** A much deeper live investigation
+  (jetson_clocks, DEBUG-level Nav2 logging, live cmd_vel watching, x86-vs-Jetson A/B)
+  found TWO separate real things, neither of which is "motion won't start": (1) an
+  inter-scenario gap (~17.6s on Jetson, ~0.4s on x86) caused by `mission_runner`
+  restarting as a fresh SSH-spawned process every scenario on Jetson vs. staying
+  resident in-process on x86 — fix designed, not yet implemented (see the
+  `mission2_day.py` entry above); (2) a ~18-29s intra-goal
+  "pegged rotation" stall, reproducible identically on x86 AND Jetson, bare-metal AND
+  container — platform-independent, likely a `yaw_goal_tolerance`/RPP tuning issue,
+  still not root-caused. Neither is "no log activity, no abort/reject/retry" in the
+  way originally described — DEBUG-level logging (not available at the time this entry
+  was written) shows real, continuous, explainable activity in both cases. Leave this
+  entry as historical context; treat Piece 9 as the current source of truth.
+- **Docker/JetPack "docker exec is slow" write-ups are a plausible-sounding dead end for
+  ANY delay that occurs mid-mission on the Jetson, not just this one — verify against
+  bare-metal before spending time here.** Found 2026-07-24 (Piece 9): a detailed,
+  specific-sounding explanation (PAM/`systemd-logind` D-Bus timeout, cgroups-v2 driver
+  mismatch, NSS/mDNS hostname lookup, `nvidia-container-runtime` hook overhead — all
+  real, documented JetPack 7.2 + Ubuntu 24.04 phenomena in general) was offered for the
+  Piece 9 inter-scenario/intra-goal delays. All of it is about `docker exec -it ...
+  bash` SESSION-STARTUP latency specifically. Two things rule it out for any delay that
+  happens ONCE a mission is already running: (1) `controller_server`/`bt_navigator` are
+  NEVER containerized in EITHER HIL mode — `scripts/hil_stage.sh run` always launches
+  them as bare host processes via `nohup ros2 launch`, regardless of `HIL_CONTAINER`;
+  (2) the fastest way to check is simply reproducing the SAME delay in bare-metal mode
+  (`HIL_CONTAINER` unset) — if it's still there with zero Docker involved anywhere in
+  the path, Docker was never the cause. Don't skip straight to Docker-daemon-config
+  changes for an in-mission delay without this check first.
+- **jetson_clocks is a legitimate, fast (~5s), reversible test for "is this CPU/GPU/
+  memory clock throttling" — but confirm it actually changed something before trusting
+  a null result.** `sudo jetson_clocks --show` before/after: if `CurrentFreq` already
+  equals `MaxFreq` on all cores before running it (i.e. the CPU governor already has
+  you at the current power mode's ceiling), running `jetson_clocks` again will lock
+  GPU/EMC higher but can't push CPU past a ceiling it was already at — a "no change"
+  result there rules out DVFS/idle-scaling specifically, not "not enough Jetson compute
+  at this power mode" in general (a genuinely higher `nvpmodel` mode, e.g. MAXN_SUPER,
+  is a separate, bigger test with real deployment-power tradeoffs — don't conflate the
+  two).
+- **A DEBUG-level dump of `ros2 launch`'s log is enormous (hundreds of thousands of
+  lines for one ~18s goal, mostly `[rcl]`/`[rcl_action]` subscription-taking noise) —
+  grep it, don't read it.** Found 2026-07-24 (Piece 9): useful signal (goal-received/
+  reached lines, `bt_navigator`'s "unknown goal" feedback-tracking messages,
+  `controller_server`'s "Control loop missed its desired rate" warnings) is present but
+  buried; filter explicitly for `[rcl]:`/`[rcl_action]:`/`[rmw` exclusion plus the
+  specific node-tagged messages you care about, and use Python (not shell `awk`, whose
+  default `mawk` on this box lacks 3-arg `match()`) for timestamp-windowed extraction
+  from a raw Jetson-side log file over SSH.
+- **A 1-second-bucketed "max value per bucket" summary of a live topic can look
+  identical to "continuously pegged at max" even when it isn't — always spot-check
+  against raw, unbucketed samples before drawing a conclusion from a bucketed one.**
+  Practice adopted 2026-07-24 (Piece 9) after this exact concern was raised mid-
+  investigation: a cmd_vel bucketing script reporting `max|ang_z|=0.5000` for 7
+  straight 1-second buckets was checked against the raw per-sample stream before being
+  trusted — in that specific case the raw data DID confirm genuinely continuous
+  pegged commands (smooth ramps, no gaps), but the check itself is now a standing
+  practice for any bucketed live-topic analysis in this project, since the failure
+  mode (a brief real blip inflating an otherwise-quiet bucket to look "pegged") is
+  real and easy to miss.
+- **When a live GUI-watched observation contradicts an already-computed timing number,
+  re-derive the number from the SAME event the observer is describing before arguing
+  with the observation.** The costliest mistake in Piece 9 (Release1Todo.md,
+  2026-07-24): an intra-goal delay (`goal accepted` → `goal result received`, ~18-29s,
+  confirmed identical on x86 and Jetson) was conflated with the inter-scenario gap Mike
+  was actually describing (`goal result received` → next scenario's dispatch) — which
+  turned out to be ~40x different between platforms (~0.4s x86 vs. ~17.6s Jetson) and
+  fully explained his repeated, correct, "watching the whole time" observation. Don't
+  minimize a repeated, specific live observation as "which moment you happened to be
+  watching" — re-measure the SPECIFIC boundary being described first.
 
 ## Nav2 Launch Gotchas (Session 10+)
 - `gz sim` WITHOUT `-s` launches a GUI that crashes on this machine (snap/glibc libpthread conflict)
@@ -560,6 +629,63 @@ docker buildx build --platform linux/arm64 \
   frame-edge-clipped bboxes (clipped width corrupts the range estimate). `-k red`-style
   pytest filters are substring matches — the ignore test was renamed after `-k red` matched
   `…is_ignoRED`.
+  **One continuous day, S17 Piece 9 (2026-07-25, branch `fix/hil-container-lifecycle`,
+  PR #5, not yet merged): the day is now ONE continuous execution, not 3 externally-invoked
+  scenario calls.** Supersedes both the old per-scenario architecture AND Piece 8's
+  persistent-container fix below (which became unnecessary once there's only one
+  invocation per day). `mission_runner.py` gained `MissionRunner.run_mission2_day()`
+  (loops `run_mission('mission2')` 3x in one process, collects each leg's
+  checklist/photos/reaction_events) and a `--day` CLI mode (prints one
+  `MISSION2_DAY_RESULT:<json>` line). `tools/mission2_day.py`'s `InProcessExecutor`/
+  `JetsonExecutor` both implement `run_day() -> list[dict]` — `JetsonExecutor.run_day()`
+  is now a SINGLE `docker run --rm`/bare-SSH call for the whole day (Piece 8's
+  `_start_container`/`close()`/`HIL_CONTAINER_NAME`/`docker exec`-into-a-persistent-
+  container machinery was REMOVED, not kept dormant, since one call/day has nothing
+  left to amortize). `run_no_ball`/`run_yellow`/`run_red` (the old scenario-named
+  functions) are DELETED. Ball choreography is now `GroundTruthLog` (continuous
+  timestamped ground-truth samples for the whole day, `record`/`nearest`/
+  `closest_approach_to`) + `run_ball_choreography()` (ONE thread for the whole day,
+  concurrent/gz mode only — `if ball_ops.concurrent:` guards it, so operator mode gets
+  no thread and no ball_ops calls at all: **no prompting of any kind** — Mike's explicit
+  call, "it's up to the human to place the balls at the correct time themselves,
+  watching the robot," `OperatorBallOps.place`/`.remove` (the old `input()`-prompting
+  methods) were removed as unreachable). `_judge_and_log_leg`/`run_day()` (top-level)
+  replace the old `run_no_ball`/`run_yellow`/`run_red`, feeding `judge_*`/
+  `log_variant_row`/`home_pair_similarity` (unchanged signatures — frozen by design)
+  from post-hoc `GroundTruthLog` lookups instead of live point-in-time polls.
+  **Measured result: 0.0000s leg-to-leg loop overhead**, confirmed 3x independently
+  (x86 in-process, Jetson bare-metal, Jetson container) — down from the ~17.6s Jetson
+  inter-scenario gap this piece targeted (see Release1Todo.md Piece 9 for the full
+  investigation, the scrapped persistent-service/DDS-RPC first direction, and the
+  design conversation).
+  **Two real bugs found live during GUI-watched verification, both fixed the same
+  session (neither anticipated by the plan) — see Release1Todo.md Piece 9 for full
+  detail:** (1) a premature yellow→red ball swap — the second retreat-wait armed a
+  fresh `RetreatDetector` immediately after placing yellow, while leg 1's OWN return
+  was still in progress, getting fooled by leftover leg-1 descent into firing almost
+  instantly; fixed with a new `OutboundDetector` (mirrors `RetreatDetector` — tracks
+  the lowest y seen, fires once climbed back up `climb_m` above it) that gates the
+  second wait behind a genuine "robot has left home again" signal. (2) an 8-second
+  ground-truth-polling stall, TWICE per leg (`get_ground_truth_xy()` in
+  `ground_truth.py` runs `gz topic -e` with `GZ_POSE_TIMEOUT_S`, which off-sim can
+  never succeed and always burned the full timeout) — pre-existing (Session 13-era),
+  not a Piece 9 regression, just newly VISIBLE once Piece 9 removed the bigger cost
+  that used to mask it; fixed by cutting `GZ_POSE_TIMEOUT_S` 8.0 -> 1.0 (evidence-based:
+  measured real local x86 response 0.09-0.11s, ~10x margin retained) rather than an
+  env-var-gated skip, since a timeout fix covers HIL now AND any future real-robot
+  runner-type automatically.
+  **Known, deliberately accepted/deferred gap:** `final_x`/`final_y` telemetry columns
+  are now always `0.0` for Mission 2 rows (both executors return plain dicts, not a
+  live object with `.nav.last_final_x` for `log_variant_row` to read — its signature
+  is frozen by this piece's own design). Confirmed the HIL path was ALREADY zeroed
+  before this change; only x86 loses real data; `mean_position_error` (the actual
+  drift-watched metric) was never sourced from Mission 2 rows either way — no
+  monitoring capability lost. A real fix exists (thread the robot's own final-position
+  estimate through the leg dict, same treatment photos already get) but Mike
+  deliberately deferred it: Mission 2 is scripted/hardcoded so the fix would be easy,
+  but Mission 3 will be autonomous enough that "final position" may not even be a
+  well-defined concept — that design work should decide the shape of this fix, not
+  a Mission-2-specific patch made now.
 - **nav_runner goal stamp:** Use `Time().to_msg()` (zero timestamp = "use latest TF") for the
   NavigateToPose goal header stamp. Wall-clock `get_clock().now()` will be rejected by Nav2
   which uses sim time (far-future wall timestamp has no TF data in Nav2's buffer).

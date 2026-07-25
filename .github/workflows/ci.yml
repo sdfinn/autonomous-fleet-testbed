@@ -298,8 +298,9 @@ jobs:
     #     + hold 0 = ~8 min.
     #   Teardown ~1.5 min. Total ~12-13 min. No whole-mission retry exists any more (Task 13a
     #     put the only retry in-process in nav_runner), so there is no retry multiplier.
-    # 20 leaves generous headroom without masking a genuine hang — the day's ssh mission keeps
-    # its own `timeout 300` cap per run, so a stuck run still fails fast on its own.
+    # 20 minutes leaves generous headroom without masking a genuine hang — the day's ssh
+    # mission keeps its own `timeout 1080` inner cap (18 min, 2 min under this job's outer
+    # limit) so a stuck day still fails fast at its own boundary.
     timeout-minutes: 20
     # phase 2: the mission runs inside the stage-3 arm64 GHCR image (private) — the Jetson
     # needs to pull it, so GITHUB_TOKEN needs read:packages.
@@ -389,9 +390,7 @@ jobs:
             /tmp/hil_stage/*.png
             /tmp/hil_stage/sim.log
             /tmp/hil_stage/mission2_day.log
-            /tmp/hil_stage/day_no_ball.out
-            /tmp/hil_stage/day_yellow.out
-            /tmp/hil_stage/day_red.out
+            /tmp/hil_stage/day.out
             /tmp/hil_stage/nav2_hil_*.log
             reports/photos/*.png
             reports/failure_bags/**
