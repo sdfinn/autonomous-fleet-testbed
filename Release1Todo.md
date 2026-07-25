@@ -4679,6 +4679,30 @@ This is Mission-2-specific glue in `mission2_day.py`/`mission_runner.py` only.
       the next leg, always emit 3 legs) is the known fix shape, deserving its own
       small piece with its own test rather than a rushed addition here. Revisit if
       this actually recurs in practice (a real mid-day crash losing evidence).
+- [x] **New intermittent found in CI (2026-07-25), same signature as the 2026-07-19
+      "yellow bug" — reboot resolved it, root cause is Jetson accumulated
+      state/load, NOT a Piece 9 regression.** First full CI run on this branch
+      (PR #5, run 30176708094) FAILED stage-4-hil: all 3 legs failed to even reach
+      the marker. Real evidence from the Jetson's Nav2 log (not judging noise):
+      `ekf_filter_node: Failed to meet update rate!` repeatedly, followed by
+      `transformPoseInTargetFrame: Extrapolation Error... Lookup would require
+      extrapolation into the past`, then `Robot pose is not available` ->
+      `Failed to obtain robot pose` -> `[follow_path] Aborting handle` ->
+      `Goal failed` — the EKF fell behind at 15W (deployment power, the ONLY power
+      mode CI actually tests — all of this session's earlier manual GUI-watched
+      verification accidentally ran at the faster 25W default the whole day,
+      repeating the exact masking mistake CLAUDE.md already documents from the
+      2026-07-19 forensics). Leg 1's very first goal, on a completely fresh
+      process, already failed this way — ruling out "accumulates across the day's
+      3 legs" as the cause. Mike rebooted the Jetson; re-tested BOTH power modes
+      live, GUI-watched, on the same commit, same branch: **25W all 3 PASS, 15W all
+      3 PASS** — the failure did not reproduce post-reboot at either power level.
+      Documented, not further root-caused (matches this project's own precedent for
+      this exact class of intermittent — see the 2026-07-18/19 "yellow bug" entry
+      in CLAUDE.md's Mission 2 gotchas). If this recurs, reboot first before
+      assuming a code regression; the CI evidence artifact + failure bag from the
+      failing run (`hil-mission-evidence-117`, run 30176708094) are preserved on
+      GitHub for later comparison if needed.
 - [ ] Root-cause the intra-goal pegged-rotation stall (ground-truth-yaw comparison) —
       separate, platform-independent, still open regardless of the above.
 - [ ] Decide whether to fix `bt_navigator`'s "unknown goal" feedback-tracking bug, or
