@@ -2,7 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for tools/mission2_day.py's pure logic (S17 review CR-22): the day
 orchestrator is THE stage-4 gate, and its output parsing + retreat detection were
-previously untested."""
+previously untested.
+
+Rewritten for S17 Piece 9 (2026-07-24/25): the old per-scenario `run(ball_xy, color)`
+executor interface (and its ExecResult/`_parse_checklist` log-scraping) is gone,
+replaced by `run_day() -> list[dict]` — one call returns all 3 legs'
+t_start/t_end/ok/checklist/photos/reaction_events at once (the shape
+MissionRunner.run_mission2_day() produces). JetsonExecutor's persistent-container
+machinery (Piece 8) is also gone: with one `run_day()` call there is only ONE docker
+invocation/day either way now, so container-mode HIL goes back to a plain
+`docker run --rm` for the single call, not `docker exec` into a long-lived container."""
+import json
 import subprocess
 
 import pytest
@@ -10,29 +20,21 @@ import pytest
 import re
 
 import tools.mission2_day as mission2_day_module
-from tools.mission2_day import (ExecResult, JetsonExecutor, RetreatDetector, _parse_checklist,
-                                 hil_variant_names, sweep_orphans)
+from tools.mission2_day import (GroundTruthLog, InProcessExecutor, JetsonExecutor,
+                                 MissionExecutor, RetreatDetector, hil_variant_names,
+                                 run_day, sweep_orphans)
 
 
-def test_parse_checklist_recovers_rows():
-    log = """
-[INFO] [123] [mission_runner]: [mission2] step 1/5: reference photo
-    [  PASS  ] reference photo at home (return-fidelity anchor)
-    [REACTION] drive toward the floor marker, watching for balls -> reaction yellow
-    [  FAIL  ] reaction yellow completed
-noise line that must be ignored
-"""
-    rows = _parse_checklist(log)
-    assert rows == [
-        ('reference photo at home (return-fidelity anchor)', 'PASS'),
-        ('drive toward the floor marker, watching for balls -> reaction yellow',
-         'REACTION'),
-        ('reaction yellow completed', 'FAIL'),
-    ]
-
-
-def test_parse_checklist_empty_log():
-    assert _parse_checklist('no checklist here\n') == []
+def _leg(t_start=0.0, t_end=1.0, ok=True, checklist=None, photos=None, reaction_events=None):
+    """One MissionRunner.run_mission2_day()-shaped leg dict — matches the real field
+    names/types exactly (checklist rows are JSON lists, not tuples, since they cross a
+    json.dumps/json.loads boundary on the Jetson path)."""
+    return {
+        't_start': t_start, 't_end': t_end, 'ok': ok,
+        'checklist': checklist if checklist is not None else [['step', 'PASS']],
+        'photos': photos if photos is not None else [],
+        'reaction_events': reaction_events if reaction_events is not None else [],
+    }
 
 
 def test_retreat_detector_fires_only_after_drop_from_peak():
@@ -73,17 +75,26 @@ def test_ground_truth_log_closest_approach_between_finds_local_minimum():
     assert log.closest_approach_to((0.0, 4.0), t_start=0.0, t_end=2.0) == (0.0, 3.0)
 
 
-def test_exec_result_tagged_filters_by_substring():
-    r = ExecResult(
-        reaction_events=[], checklist=[], ok=True,
-        photos=['reports/photos/mission2_home_ref_1.png',
-                'reports/photos/mission2_marker_1.png',
-                'reports/photos/mission2_home_arrival_1.png'])
-    assert r.tagged('mission2_marker') == ['reports/photos/mission2_marker_1.png']
-    assert len(r.tagged('mission2_home')) == 2
-    assert r.tagged('nope') == []
+# ── MissionExecutor / InProcessExecutor ─────────────────────────────────────────────────────
+def test_mission_executor_close_is_a_noop_by_default():
+    MissionExecutor().close()   # must not raise
 
 
+def test_in_process_executor_run_day_delegates_to_runner():
+    calls = []
+
+    class FakeRunner:
+        def run_mission2_day(self):
+            calls.append('called')
+            return [_leg(), _leg(), _leg()]
+
+    ex = InProcessExecutor(FakeRunner())
+    legs = ex.run_day()
+    assert calls == ['called']
+    assert len(legs) == 3
+
+
+# ── JetsonExecutor construction (image preflight — unaffected by the Piece 9 rewrite) ───────
 def test_jetson_executor_bare_metal_skips_image_preflight(monkeypatch):
     """HIL_CONTAINER unset (bare-metal, the default) must never touch docker/SSH."""
     monkeypatch.delenv('HIL_CONTAINER', raising=False)
@@ -119,10 +130,10 @@ def test_jetson_executor_container_mode_fails_loud_when_image_missing(monkeypatc
         JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
 
 
-def test_jetson_executor_container_mode_starts_long_lived_container(monkeypatch):
-    """Piece 8 fix: container mode must start ONE long-lived container for the whole
-    day instead of a fresh `docker run --rm` per scenario (was costing ~15.6-16.1s of
-    container start/teardown per transition, measured live 2026-07-23)."""
+def test_jetson_executor_construction_never_starts_a_container(monkeypatch):
+    """Decision 1 (S17 Piece 9 rewrite): the persistent-container machinery (Piece 8's
+    `_start_container`/`HIL_CONTAINER_NAME`) is gone — construction in container mode
+    must do ONLY the image preflight check, never a `docker run`."""
     monkeypatch.setenv('HIL_CONTAINER', '1')
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     calls = []
@@ -134,77 +145,150 @@ def test_jetson_executor_container_mode_starts_long_lived_container(monkeypatch)
     monkeypatch.setattr(subprocess, 'run', fake_run)
     mission2_day_module.JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
 
-    ssh_cmds = [c for c in calls if c[:1] == ['ssh']]
-    start_cmd = next(c for c in ssh_cmds if 'docker run -d' in c[-1])
-    assert '--name hil_mission2' in start_cmd[-1]
-    assert 'sleep infinity' in start_cmd[-1]
-    assert 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef' in start_cmd[-1]
-    assert '--rm' not in start_cmd[-1]
-    rm_index = next(i for i, c in enumerate(ssh_cmds) if 'docker rm -f hil_mission2' in c[-1])
-    assert rm_index < ssh_cmds.index(start_cmd)   # stale-container cleanup runs first
+    assert not any('docker run' in c[-1] for c in calls if c and c[0] == 'ssh')
+    assert not hasattr(mission2_day_module, 'HIL_CONTAINER_NAME')
 
 
-def test_close_container_mode_removes_the_container(monkeypatch):
+def test_close_is_a_noop_in_both_modes(monkeypatch):
+    """close() is the base MissionExecutor no-op in every mode now — JetsonExecutor no
+    longer overrides it (there is no long-lived container left to tear down)."""
     monkeypatch.setenv('HIL_CONTAINER', '1')
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     monkeypatch.setattr(
         subprocess, 'run',
         lambda *a, **k: subprocess.CompletedProcess(a, returncode=0, stdout='', stderr=''))
-    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
-
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
-
-    monkeypatch.setattr(subprocess, 'run', fake_run)
-    ex.close()
-
-    assert any('docker rm -f hil_mission2' in c[-1] for c in calls if c[:1] == ['ssh'])
-
-
-def test_close_bare_metal_is_a_noop(monkeypatch):
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
     ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
 
     def _boom(*a, **k):
-        raise AssertionError('close() must not touch docker/SSH in bare-metal mode')
+        raise AssertionError('close() must not touch docker/SSH — it is a pure no-op now')
     monkeypatch.setattr(subprocess, 'run', _boom)
     ex.close()   # must not raise
+    assert 'close' not in JetsonExecutor.__dict__   # confirms no override was reintroduced
 
 
-def test_ssh_mission2_container_mode_uses_docker_exec(monkeypatch, tmp_path):
-    """The per-scenario call must exec into the long-lived container, not `docker run`
-    a new one — that's the actual Piece 8 fix (container lifecycle alone isn't enough;
-    this is what stops using a fresh container per scenario)."""
-    monkeypatch.setenv('HIL_CONTAINER', '1')
-    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(
-        subprocess, 'run',
-        lambda *a, **k: subprocess.CompletedProcess(a, returncode=0, stdout='', stderr=''))
-    ex = JetsonExecutor('10.42.0.217', str(tmp_path))
+# ── JetsonExecutor.run_day() ─────────────────────────────────────────────────────────────────
+def _day_result_stdout(legs):
+    return 'MISSION2_DAY_RESULT:' + json.dumps(legs) + '\n'
 
+
+def test_run_day_bare_metal_dispatches_ssh_with_day_flag(monkeypatch, tmp_path):
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    legs = [_leg(), _leg(), _leg()]
     calls = []
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, returncode=0, stdout='ok', stderr='')
+        if cmd[0] == 'timeout':
+            return subprocess.CompletedProcess(cmd, returncode=0,
+                                                stdout=_day_result_stdout(legs), stderr='')
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
 
     monkeypatch.setattr(subprocess, 'run', fake_run)
-    ex._ssh_mission2('no_ball')
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_pull_photos_from_paths',
+                        lambda self, paths: list(paths))
+    ex = JetsonExecutor('10.42.0.217', str(tmp_path))
+
+    result = ex.run_day()
 
     ssh_cmd = next(c for c in calls if 'ssh' in c)
-    assert 'docker exec hil_mission2' in ssh_cmd[-1]
-    assert 'docker run' not in ssh_cmd[-1]
-    assert 'python3 -m nav_fleet.mission_runner mission2' in ssh_cmd[-1]
+    assert 'python3 -m nav_fleet.mission_runner --day' in ssh_cmd[-1]
+    assert 'docker' not in ssh_cmd[-1]
+    assert result == legs
 
 
+def test_run_day_container_mode_uses_plain_docker_run_rm(monkeypatch, tmp_path):
+    """Decision 1: with ONE `run_day()` call for the whole day, container mode goes
+    back to a plain one-shot `docker run --rm` — no persistent container/`docker exec`
+    left to amortize a per-scenario cost against."""
+    monkeypatch.setenv('HIL_CONTAINER', '1')
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    legs = [_leg(), _leg(), _leg()]
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == 'timeout':
+            return subprocess.CompletedProcess(cmd, returncode=0,
+                                                stdout=_day_result_stdout(legs), stderr='')
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_pull_photos_from_paths',
+                        lambda self, paths: list(paths))
+    ex = JetsonExecutor('10.42.0.217', str(tmp_path))
+
+    ex.run_day()
+
+    ssh_cmd = next(c for c in calls if 'ssh' in c and 'timeout' in c)
+    assert 'docker run --rm' in ssh_cmd[-1]
+    assert '--name hil_mission2' in ssh_cmd[-1]
+    assert 'docker exec' not in ssh_cmd[-1]
+    assert 'python3 -m nav_fleet.mission_runner --day' in ssh_cmd[-1]
+    assert 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef' in ssh_cmd[-1]
+
+
+def test_run_day_pulls_photos_per_leg_and_failure_bags(monkeypatch, tmp_path):
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    legs = [_leg(photos=['/home/mike/fleet-ci-data/photos/a.png']),
+            _leg(photos=['/home/mike/fleet-ci-data/photos/b.png']),
+            _leg(photos=[])]
+    pulled = []
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == 'timeout':
+            return subprocess.CompletedProcess(cmd, returncode=0,
+                                                stdout=_day_result_stdout(legs), stderr='')
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
+
+    def fake_pull(self, paths):
+        pulled.append(list(paths))
+        return [f'local/{p.rsplit("/", 1)[-1]}' for p in paths]
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_pull_photos_from_paths', fake_pull)
+    ex = JetsonExecutor('10.42.0.217', str(tmp_path))
+
+    result = ex.run_day()
+
+    assert pulled == [['/home/mike/fleet-ci-data/photos/a.png'],
+                       ['/home/mike/fleet-ci-data/photos/b.png'], []]
+    assert result[0]['photos'] == ['local/a.png']
+    assert result[1]['photos'] == ['local/b.png']
+    assert result[2]['photos'] == []
+
+
+def test_run_day_raises_when_no_result_line_found(monkeypatch, tmp_path):
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, returncode=1,
+            stdout='', stderr='Traceback ...\nModuleNotFoundError\n')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+    ex = JetsonExecutor('10.42.0.217', str(tmp_path))
+
+    with pytest.raises(RuntimeError, match='no MISSION2_DAY_RESULT'):
+        ex.run_day()
+
+
+def test_parse_day_result_recovers_the_json_line():
+    legs = [_leg(), _leg(), _leg()]
+    ex = JetsonExecutor.__new__(JetsonExecutor)   # bypass __init__ — pure parsing test
+    log_text = 'some noise\n' + _day_result_stdout(legs) + 'trailer\n'
+    assert ex._parse_day_result(log_text) == legs
+
+
+def test_parse_day_result_raises_when_missing():
+    ex = JetsonExecutor.__new__(JetsonExecutor)
+    with pytest.raises(RuntimeError, match='no MISSION2_DAY_RESULT'):
+        ex._parse_day_result('no result line here\n')
+
+
+# ── Photo path translation (2026-07-22 regression + container fix, now list-driven) ─────────
 def test_pull_photos_bare_metal_uses_absolute_path_verbatim(monkeypatch, tmp_path):
-    """2026-07-22 regression: PHOTO_DIR became absolute (Piece 4 final-review fix), but
-    _pull_photos still prepended 'autonomous-fleet-testbed/' assuming a relative path —
-    mangling the remote path and failing every scp, 3/3 CI runs. Bare-metal mission_runner
-    runs directly as JETSON_USER, so the logged path already IS the real host path."""
+    """Bare-metal mission_runner runs directly as JETSON_USER, so the logged absolute
+    path already IS the real host path — no translation needed."""
     monkeypatch.delenv('HIL_CONTAINER', raising=False)
     monkeypatch.setattr(mission2_day_module, 'PHOTO_DIR', tmp_path)
     calls = []
@@ -215,8 +299,7 @@ def test_pull_photos_bare_metal_uses_absolute_path_verbatim(monkeypatch, tmp_pat
 
     monkeypatch.setattr(subprocess, 'run', fake_run)
     ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
-    log_text = 'photo saved: /home/mike/fleet-ci-data/photos/mission2_home_ref_1.png\n'
-    ex._pull_photos(log_text)
+    ex._pull_photos_from_paths(['/home/mike/fleet-ci-data/photos/mission2_home_ref_1.png'])
     scp_cmd = next(c for c in calls if c[0] == 'scp')
     assert scp_cmd[-2] == (
         'mike@10.42.0.217:/home/mike/fleet-ci-data/photos/mission2_home_ref_1.png')
@@ -237,13 +320,25 @@ def test_pull_photos_container_mode_translates_root_prefix_to_tilde(monkeypatch,
 
     monkeypatch.setattr(subprocess, 'run', fake_run)
     ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
-    log_text = 'photo saved: /root/fleet-ci-data/photos/mission2_home_ref_1.png\n'
-    ex._pull_photos(log_text)
+    ex._pull_photos_from_paths(['/root/fleet-ci-data/photos/mission2_home_ref_1.png'])
     scp_cmd = next(c for c in calls if c[0] == 'scp')
     assert scp_cmd[-2] == (
         'mike@10.42.0.217:~/fleet-ci-data/photos/mission2_home_ref_1.png')
 
 
+def test_pull_photos_from_paths_empty_list_makes_no_scp_call(monkeypatch, tmp_path):
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    monkeypatch.setattr(mission2_day_module, 'PHOTO_DIR', tmp_path)
+
+    def _boom(*a, **k):
+        raise AssertionError('scp must not be called with no photo paths')
+    monkeypatch.setattr(subprocess, 'run', _boom)
+
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    assert ex._pull_photos_from_paths([]) == []
+
+
+# ── Failure-bag scp (unaffected by the Piece 9 rewrite — still a log-text regex scrape) ─────
 def test_pull_failure_bags_scps_the_directory_recursively(monkeypatch, tmp_path):
     """S17 Piece 3: a 'failure bag kept: <path>' log line must scp -r the whole bag
     directory back — a single-file scp (the photo pattern) would silently miss the
@@ -279,6 +374,7 @@ def test_pull_failure_bags_no_bag_line_makes_no_scp_call(monkeypatch, tmp_path):
     ex._pull_failure_bags('mission2: PASS, no failure bag here\n')
 
 
+# ── Startup-crash synthesis (unaffected — same method, same signature) ──────────────────────
 def test_no_startup_crash_row_on_clean_exit(monkeypatch):
     """mrc == 0 (script completed normally, whatever the mission result) — never
     synthesize a row; mission_runner.py's own _log_mission already handled it."""
@@ -346,3 +442,145 @@ def test_sweep_orphans_never_matches_the_gui_viewer_only_process(monkeypatch):
     server_cmdline = 'gz sim -s -r /home/mike/autonomous-fleet-testbed/worlds/bedroom_simple.sdf'
     assert not any(re.search(p, viewer_cmdline) for p in patterns)
     assert any(re.search(p, server_cmdline) for p in patterns)
+
+
+# ── _judge_and_log_leg (S17 Piece 9: the new per-leg judge, replacing run_no_ball/
+#    run_yellow/run_red's inline judging) ────────────────────────────────────────────────────
+def test_judge_and_log_leg_fills_truth_xy_only_when_missing(monkeypatch):
+    gt_log = GroundTruthLog()
+    gt_log.record(0.0, (0.0, 0.0))
+    gt_log.record(5.0, (1.2, 3.9))   # closest approach to the ball inside [0, 10]
+    gt_log.record(10.0, (0.0, 0.5))
+
+    leg = _leg(t_start=0.0, t_end=10.0,
+               reaction_events=[{'color': 'yellow', 'reaction': 'photo_then_home',
+                                 't': 10.0, 'truth_xy': None},
+                                {'color': 'red', 'reaction': 'photo_then_stop',
+                                 't': 10.0, 'truth_xy': (9.0, 9.0)}])   # already filled
+
+    captured = {}
+    monkeypatch.setattr(
+        mission2_day_module, 'judge_yellow',
+        lambda ball_xy, events, photos, truth_start, final, sim=None: captured.update(
+            events=events) or [])
+    monkeypatch.setattr(mission2_day_module, 'log_variant_row', lambda *a, **k: None)
+
+    mission2_day_module._judge_and_log_leg('yellow', leg, (1.2, 3.9), gt_log)
+
+    yellow_event = captured['events'][0]
+    red_event = captured['events'][1]
+    assert yellow_event['truth_xy'] == (1.2, 3.9)   # filled from the gt_log
+    assert red_event['truth_xy'] == (9.0, 9.0)      # left untouched — was already set
+
+
+@pytest.mark.parametrize('name,judge_name', [
+    ('no_ball', 'judge_no_ball'), ('yellow', 'judge_yellow'), ('red', 'judge_red')])
+def test_judge_and_log_leg_routes_to_the_right_judge(monkeypatch, name, judge_name):
+    gt_log = GroundTruthLog()
+    gt_log.record(0.0, (0.0, 0.0))
+    gt_log.record(1.0, (0.0, 1.0))
+    leg = _leg(t_start=0.0, t_end=1.0)
+
+    called = []
+    for fn_name in ('judge_no_ball', 'judge_yellow', 'judge_red'):
+        def _make(fn_name):
+            def _fn(*a, **k):
+                called.append(fn_name)
+                return []
+            return _fn
+        monkeypatch.setattr(mission2_day_module, fn_name, _make(fn_name))
+    logged = []
+    monkeypatch.setattr(mission2_day_module, 'log_variant_row',
+                        lambda variant, seed, ok, runner=None, home_photo_similarity=None:
+                        logged.append((variant, ok)))
+
+    ok = mission2_day_module._judge_and_log_leg(name, leg, (1.2, 3.9), gt_log)
+
+    assert called == [judge_name]
+    assert ok is True
+    assert logged == [(name, True)]
+
+
+def test_judge_and_log_leg_ok_false_when_judge_reports_fails(monkeypatch):
+    gt_log = GroundTruthLog()
+    leg = _leg()
+    monkeypatch.setattr(mission2_day_module, 'judge_no_ball',
+                        lambda *a, **k: ['some failure'])
+    logged = []
+    monkeypatch.setattr(mission2_day_module, 'log_variant_row',
+                        lambda variant, seed, ok, runner=None, home_photo_similarity=None:
+                        logged.append(ok))
+
+    ok = mission2_day_module._judge_and_log_leg('no_ball', leg, (1.2, 3.9), gt_log)
+
+    assert ok is False
+    assert logged == [False]
+
+
+# ── run_day() (top-level orchestration) ──────────────────────────────────────────────────────
+class _FakeBallOps:
+    def __init__(self, concurrent):
+        self.concurrent = concurrent
+
+
+def test_run_day_operator_mode_never_starts_the_choreography_thread(monkeypatch):
+    """Decision 2: OperatorBallOps.concurrent is False, so run_day()'s existing
+    `if ball_ops.concurrent:` guard must skip the choreography thread entirely — no
+    prompting, no delays, no ball_ops.place()/.remove() calls of any kind."""
+    def _boom(*a, **k):
+        raise AssertionError('run_ball_choreography must not run in operator mode')
+    monkeypatch.setattr(mission2_day_module, 'run_ball_choreography', _boom)
+    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg', lambda *a, **k: True)
+
+    class FakeExecutor:
+        def run_day(self):
+            return [_leg(), _leg(), _leg()]
+
+    ok = run_day(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
+    assert ok is True
+
+
+def test_run_day_gz_mode_starts_and_joins_the_choreography_thread(monkeypatch):
+    started = []
+
+    def fake_choreography(ball_ops, ball_xy, stop_evt, poll_s=0.3):
+        started.append(True)
+        stop_evt.wait(timeout=5)
+        return GroundTruthLog()
+
+    monkeypatch.setattr(mission2_day_module, 'run_ball_choreography', fake_choreography)
+    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg', lambda *a, **k: True)
+
+    class FakeExecutor:
+        def run_day(self):
+            return [_leg(), _leg(), _leg()]
+
+    ok = run_day(FakeExecutor(), _FakeBallOps(concurrent=True), (1.2, 3.9), hold_s=0)
+    assert started == [True]
+    assert ok is True
+
+
+def test_run_day_judges_all_three_legs_in_declared_order(monkeypatch):
+    judged_names = []
+    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg',
+                        lambda name, leg, ball_xy, gt_log: judged_names.append(name) or True)
+
+    class FakeExecutor:
+        def run_day(self):
+            return [_leg(), _leg(), _leg()]
+
+    run_day(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
+    assert judged_names == ['no_ball', 'yellow', 'red']
+
+
+def test_run_day_returns_false_if_any_leg_fails(monkeypatch):
+    results = iter([True, False, True])
+    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg',
+                        lambda *a, **k: next(results))
+
+    class FakeExecutor:
+        def run_day(self):
+            return [_leg(), _leg(), _leg()]
+
+    ok = run_day(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
+    assert ok is False
