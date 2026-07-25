@@ -232,8 +232,12 @@ class JetsonExecutor(MissionExecutor):
         out_path = os.path.join(self.state_dir, 'day.out')
         dispatch_time = time.time()
         log.info(f'[timing] ssh dispatch for the day at {dispatch_time:.3f}')
+        # 1800s (was 300s/scenario * 3 = ~900s aggregate pre-Piece-9; a flat 600 for the
+        # WHOLE day was tighter than the old per-scenario budget, not looser) — comfortable
+        # headroom over worst-case real leg work + cold-start retry backoff, while still
+        # bounding a truly-hung day (S17 review fix, 2026-07-25).
         proc = subprocess.run(
-            ['timeout', '600', 'ssh', '-o', 'BatchMode=yes',
+            ['timeout', '1800', 'ssh', '-o', 'BatchMode=yes',
              f'{JETSON_USER}@{self.ip}', cmd],
             capture_output=True, text=True)
         log.info(f'[timing] ssh returned for the day at {time.time():.3f} '
@@ -506,15 +510,37 @@ class OutboundDetector:
         return (y - self._trough_y) >= self._climb_m
 
 
+def run_ground_truth_log_only(stop_evt, poll_s=0.3):
+    """S17 review fix (2026-07-25): ground-truth LOGGING must run regardless of
+    `ball_ops.concurrent` — only the actual ball placement/swap ACTIONS are gated on
+    that flag. Pre-fix, run_day() only ever started a background thread `if
+    ball_ops.concurrent:` (run_ball_choreography), which is the ONLY thing that
+    populated a GroundTruthLog — so operator mode (the real-robot day, non-concurrent
+    ball ops) never logged any ground truth at all, and every judge_* function reads
+    "no ground truth" as an unconditional FAIL. This is the operator-mode counterpart
+    to run_ball_choreography's own polling loop, minus every ball_ops call — used by
+    run_day() whenever `ball_ops.concurrent` is False so a GroundTruthLog is ALWAYS
+    populated, in every mode."""
+    truth_log = GroundTruthLog()
+    while not stop_evt.is_set():
+        xy = get_ground_truth_xy()
+        if xy is not None:
+            truth_log.record(time.time(), xy)
+        time.sleep(poll_s)
+    return truth_log
+
+
 def run_ball_choreography(ball_ops, ball_xy, stop_evt, poll_s=0.3):
     """S17 Piece 9: ONE thread for the whole day (was 2 separate per-call threads).
     Sequences the SAME 2 actions today's design already does — place yellow behind
     the robot during leg 1's retreat, swap yellow->red during leg 2's retreat — but
     now driven by ONE continuous ground-truth poll loop spanning the single blocking
     run_day() call, since there's no longer a per-leg call boundary to scope a
-    separate thread to. Concurrent-only (gz mode) — operator mode is skipped entirely
-    (the `if ball_ops.concurrent:` guard prevents any thread start or ball_ops calls),
-    leaving human ball placement/swap timing fully unprompted.
+    separate thread to. Concurrent-only (gz mode) — run_day() only calls this function
+    `if ball_ops.concurrent:`; operator mode instead runs run_ground_truth_log_only()
+    (S17 review fix, 2026-07-25), which shares this function's polling/logging loop but
+    makes no ball_ops calls at all, leaving human ball placement/swap timing fully
+    unprompted while still keeping ground-truth logging on in every mode.
 
     Three waits, not two (2026-07-25 gap fix): a RetreatDetector for leg 1's return
     (places yellow), an OutboundDetector confirming leg 2's own outbound drive has
@@ -612,28 +638,44 @@ def _judge_and_log_leg(name, leg, ball_xy, gt_log, ref_photos_from_prev=None):
 def run_day(executor, ball_ops, ball_xy, hold_s):
     """S17 Piece 9: ONE continuous mission execution, 3 separately-judged/logged
     legs (Mike's explicit design, 2026-07-24) — no scenario-named functions, no
-    per-call SSH/process boundary. Ball choreography runs on its own thread for the
-    WHOLE call; judging happens in a loop after the single call returns.
+    per-call SSH/process boundary. A background thread runs for the WHOLE call and
+    ALWAYS ends up populating a GroundTruthLog — judging happens in a loop after the
+    single call returns.
 
-    `ball_ops.concurrent == False` (OperatorBallOps, robot-day dry run): the
-    choreography thread simply never starts (the `if ball_ops.concurrent:` guard
-    below) — no prompting, no delays. Mike's explicit call (2026-07-24): it is up to
-    the human to place/swap the ball at the correct time while the day runs."""
+    `ball_ops.concurrent == False` (OperatorBallOps, robot-day dry run): only the
+    ball ACTIONS are skipped — run_ground_truth_log_only() still runs so judging has
+    real ground truth (S17 review fix, 2026-07-25: pre-fix, operator mode started NO
+    thread at all, so every leg FAILed unconditionally on "no ground truth", even on
+    a mission that ran correctly). `ball_ops.concurrent == True` (GzBallOps) keeps
+    running the full run_ball_choreography() (places/swaps the ball too). Mike's
+    explicit call (2026-07-24) still holds for operator mode: no prompting, no
+    delays — it is up to the human to place/swap the ball at the correct time.
+
+    The `finally` block waits a real ~2.5s AFTER the executor call returns before
+    signalling the thread to stop (S17 review fix, 2026-07-25): without this, the
+    logging thread on the in-process (x86) executor stops within milliseconds of the
+    day finishing, so judge_red's two "is the robot still stationary" samples
+    (t_end and t_end + 2.0) both clamp to the same last sample and the check can
+    never fail — a vacuous check, not a real one. This wait is real time, once per
+    run_day() call (not per leg)."""
     log.info('\n=== Mission 2 day: one continuous run, 3 legs ===')
     stop_evt = threading.Event()
     gt_log_holder = {}
-    choreography_thread = None
-    if ball_ops.concurrent:
-        def _run():
+
+    def _run():
+        if ball_ops.concurrent:
             gt_log_holder['log'] = run_ball_choreography(ball_ops, ball_xy, stop_evt)
-        choreography_thread = threading.Thread(target=_run, daemon=True)
-        choreography_thread.start()
+        else:
+            gt_log_holder['log'] = run_ground_truth_log_only(stop_evt)
+
+    gt_thread = threading.Thread(target=_run, daemon=True)
+    gt_thread.start()
     try:
         legs = executor.run_day()
     finally:
+        time.sleep(2.5)   # let the gt thread keep sampling past the day's nominal end
         stop_evt.set()
-        if choreography_thread is not None:
-            choreography_thread.join(timeout=30)
+        gt_thread.join(timeout=30)
     gt_log = gt_log_holder.get('log', GroundTruthLog())
 
     names = hil_variant_names()   # ['no_ball', 'yellow', 'red'] — declared order, unchanged

@@ -606,14 +606,26 @@ class _FakeBallOps:
         self.concurrent = concurrent
 
 
+def _fake_log_only(stop_evt, poll_s=0.3):
+    """Fast stand-in for run_ground_truth_log_only, used by every run_day() test below
+    that isn't specifically exercising Fix 1's operator-mode wiring — avoids each of
+    these tests picking up a real ~2.5s wait (Fix 5) plus real subprocess/gz polling."""
+    stop_evt.wait(timeout=5)
+    return GroundTruthLog()
+
+
 def test_run_day_operator_mode_never_starts_the_choreography_thread(monkeypatch):
-    """Decision 2: OperatorBallOps.concurrent is False, so run_day()'s existing
-    `if ball_ops.concurrent:` guard must skip the choreography thread entirely — no
-    prompting, no delays, no ball_ops.place()/.remove() calls of any kind."""
+    """Decision 2: OperatorBallOps.concurrent is False, so run_day() must never call
+    run_ball_choreography (and therefore never call any ball_ops.place()/.remove()) —
+    only the BALL ACTIONS are gated on concurrent. Ground-truth LOGGING is a separate,
+    always-on concern (Fix 1, see test_run_day_operator_mode_populates_ground_truth_log
+    below) — this test stubs run_ground_truth_log_only to keep it fast/deterministic."""
     def _boom(*a, **k):
         raise AssertionError('run_ball_choreography must not run in operator mode')
     monkeypatch.setattr(mission2_day_module, 'run_ball_choreography', _boom)
+    monkeypatch.setattr(mission2_day_module, 'run_ground_truth_log_only', _fake_log_only)
     monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg', lambda *a, **k: True)
+    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
         def run_day(self):
@@ -621,6 +633,66 @@ def test_run_day_operator_mode_never_starts_the_choreography_thread(monkeypatch)
 
     ok = run_day(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
     assert ok is True
+
+
+def test_run_day_operator_mode_populates_ground_truth_log(monkeypatch):
+    """Fix 1 (S17 review, 2026-07-25): operator mode (ball_ops.concurrent == False,
+    the real-robot day) must still end up with a NON-EMPTY GroundTruthLog fed to
+    judging — pre-fix, run_day() started NO background thread at all in this mode
+    (the only thing that ever populated a GroundTruthLog was the ball-choreography
+    thread, which is concurrent-only), so every judge_* call saw "no ground truth"
+    and FAILed unconditionally, even on a mission that ran fine."""
+    gt_log = GroundTruthLog()
+    gt_log.record(1.0, (2.0, 3.0))
+
+    def fake_log_only(stop_evt, poll_s=0.3):
+        stop_evt.wait(timeout=5)
+        return gt_log
+
+    def _boom(*a, **k):
+        raise AssertionError('run_ball_choreography (and its ball_ops actions) must '
+                              'not run in operator mode')
+
+    monkeypatch.setattr(mission2_day_module, 'run_ground_truth_log_only', fake_log_only)
+    monkeypatch.setattr(mission2_day_module, 'run_ball_choreography', _boom)
+    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+
+    captured = {}
+
+    def fake_judge(name, leg, ball_xy, gtl):
+        captured[name] = gtl
+        return True
+    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg', fake_judge)
+
+    class FakeExecutor:
+        def run_day(self):
+            return [_leg(), _leg(), _leg()]
+
+    ok = run_day(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
+
+    assert ok is True
+    assert captured['no_ball'] is gt_log
+    assert len(gt_log._samples) == 1   # non-empty — the actual regression this fixes
+
+
+def test_run_ground_truth_log_only_records_until_stop_evt_set(monkeypatch):
+    """Unit test for the new function itself, called directly (no thread) — records
+    every non-None sample and stops as soon as stop_evt is set."""
+    stop_evt = threading.Event()
+    calls = {'i': 0}
+
+    def fake_get_xy():
+        calls['i'] += 1
+        if calls['i'] >= 3:
+            stop_evt.set()
+        return (float(calls['i']), float(calls['i']))
+
+    monkeypatch.setattr(mission2_day_module, 'get_ground_truth_xy', fake_get_xy)
+    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+
+    log = mission2_day_module.run_ground_truth_log_only(stop_evt, poll_s=0.0)
+
+    assert len(log._samples) == 3
 
 
 def test_run_day_gz_mode_starts_and_joins_the_choreography_thread(monkeypatch):
@@ -633,6 +705,7 @@ def test_run_day_gz_mode_starts_and_joins_the_choreography_thread(monkeypatch):
 
     monkeypatch.setattr(mission2_day_module, 'run_ball_choreography', fake_choreography)
     monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg', lambda *a, **k: True)
+    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
         def run_day(self):
@@ -647,6 +720,8 @@ def test_run_day_judges_all_three_legs_in_declared_order(monkeypatch):
     judged_names = []
     monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg',
                         lambda name, leg, ball_xy, gt_log: judged_names.append(name) or True)
+    monkeypatch.setattr(mission2_day_module, 'run_ground_truth_log_only', _fake_log_only)
+    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
         def run_day(self):
@@ -660,6 +735,8 @@ def test_run_day_returns_false_if_any_leg_fails(monkeypatch):
     results = iter([True, False, True])
     monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg',
                         lambda *a, **k: next(results))
+    monkeypatch.setattr(mission2_day_module, 'run_ground_truth_log_only', _fake_log_only)
+    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
         def run_day(self):
@@ -667,3 +744,26 @@ def test_run_day_returns_false_if_any_leg_fails(monkeypatch):
 
     ok = run_day(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
     assert ok is False
+
+
+def test_run_day_waits_before_stopping_the_gt_thread(monkeypatch):
+    """Fix 5 (S17 review, 2026-07-25): the finally block must give the ground-truth
+    thread ~2.5 real seconds to keep sampling past the day's nominal end BEFORE
+    signalling stop — otherwise (as found live on the x86 in-process executor) the
+    stationary check's t_end and t_end+2.0 samples clamp to the identical last sample
+    and can never fail, a vacuous check rather than a real one. Verified here by
+    checked via source inspection rather than by racing two real threads around a
+    monkeypatched threading.Event — Python's own Thread machinery uses an Event
+    internally too (`Thread._started`), so subclassing/patching threading.Event
+    globally spuriously records ITS .set() call as well, which is exactly what a
+    first attempt at this test hit (Thread._bootstrap_inner()'s `self._started.set()`
+    firing before run_day()'s own real time.sleep(2.5)/stop_evt.set() pair ever
+    runs — a false failure, not a real one). Source inspection sidesteps that
+    entirely: it directly verifies the actual code shape, not a racy proxy for it."""
+    import inspect
+    src = inspect.getsource(mission2_day_module.run_day)
+    finally_src = src[src.index('finally:'):]
+    assert finally_src.count('time.sleep(2.5)') == 1        # once per run_day() call
+    sleep_idx = finally_src.index('time.sleep(2.5)')
+    stop_idx = finally_src.index('stop_evt.set()')
+    assert sleep_idx < stop_idx                              # sleep happens BEFORE stop_evt.set()
