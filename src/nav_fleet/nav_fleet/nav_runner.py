@@ -243,6 +243,10 @@ class NavRunner(Node):
                 self.get_logger().warning('Goal wait timed out')
                 return ('send_fail',)
 
+            result_time = time.time()
+            self.get_logger().info(
+                f'[timing] goal result received at {result_time:.3f} '
+                f'(+{result_time - accept_time:.3f}s since accept)')
             succeeded = result_future.result().status == GoalStatus.STATUS_SUCCEEDED
             elapsed = time.time() - accept_time
             end_xy = self._pose_xy()
