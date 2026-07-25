@@ -29,7 +29,14 @@ ARE map coordinates for this project (sim_only_launch.py spawn == AMCL initial p
 import re
 import subprocess
 
-GZ_POSE_TIMEOUT_S = 8.0
+# Off-sim (HIL Jetson, future real robot) this call can never succeed — every query
+# blocks for the full timeout before returning None (confirmed live on the Jetson,
+# 2026-07-25: two 8.0s stalls per mission leg, up to 48s/day wasted). Measured on this
+# workstation with real Gazebo running locally (the case where the call DOES succeed):
+# 5 consecutive calls completed in 0.09-0.11s each. 1.0s keeps ~10x margin over that
+# real response time while cutting the off-sim/HIL/real-robot wasted stall 8x (8s -> 1s
+# per call).
+GZ_POSE_TIMEOUT_S = 1.0
 
 
 def parse_model_position(pose_text, model):
