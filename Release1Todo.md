@@ -4534,28 +4534,59 @@ because the investigation was still focused on the wrong (intra-goal) delay at t
 point. With the inter-scenario gap correctly isolated, that instinct was the right
 fix direction all along.
 
-**Fix in progress (started 2026-07-24, same session):** hold a single long-lived
-`mission_runner` process on the Jetson for the whole HIL day and feed it scenario
-targets over DDS (a ROS2 service/action call from the workstation directly into the
-persistent Jetson-side node, since Nav2's own topics/services are ALREADY proven
-visible cross-machine over DDS with zero SSH involved — confirmed directly this
-session by echoing Jetson-published `cmd_vel` topics from the workstation) rather than
-SSH-spawning a fresh Python process per scenario. Expected to bring the Jetson
-inter-scenario transition time down from ~17.6s to under 1s, matching x86. Ball-ops
-synchronization currently relies on the SSH call boundary as an implicit "scenario
-done" signal (see `_place_during_return`/`_swap_during_return` in `mission2_day.py`)
-and will need a new signaling mechanism once that boundary goes away — this is the
-main design risk, not the IPC mechanism itself.
+**Fix design SUPERSEDED same day, twice, before implementation started — final
+direction below.** First direction (proposed, never built): hold a single long-lived
+`mission_runner` process on the Jetson for the whole HIL day, fed scenario targets
+over a DDS service call instead of SSH-spawning a fresh process per scenario. Mike
+pushed back hard on this framing (2026-07-24, live in this same session): Mission 2's
+3 "scenarios" (no_ball/yellow/red) are not 3 different things — they're one mission
+that happens to drive into the room 3 times, reacting to whatever ball (if any) is
+there each time. That framing (`run_no_ball`/`run_yellow`/`run_red` as separate
+external invocations) is itself the actual problem, not something to bridge with IPC.
+**Confirmed for the record: "scenario" as a concept did NOT originate in this
+session** — it dates to Task 13 (2026-07-18, `.superpowers/sdd/task-13-*.md`), a
+proper design/review cycle six days earlier — but the EXTERNAL-INVOCATION structure
+built on top of it (mission2_day.py re-invoking the mission 3 separate times, once
+per scenario) is what's being removed here, not the underlying test design (3
+ball-conditions judged separately is being kept — see below).
+
+**Final agreed design (2026-07-24, plan written, NOT YET IMPLEMENTED — start next
+session):** `docs/superpowers/plans/2026-07-24-mission2-single-continuous-run.md`.
+One continuous `run_mission('mission2')`-driven execution — `mission_runner.py`
+gains `run_mission2_day()` / `--day`, looping mission2 3x **within one process**
+(one SSH call on Jetson, one in-process loop on x86 — no persistent-service, no DDS
+RPC, that first direction is scrapped entirely). Keeps the 3 separately-judged/logged
+telemetry rows (`log_variant_row('no_ball'/'yellow'/'red', ...)` — Mike explicitly
+confirmed this stays, only the execution boundary moves) via a `GroundTruthLog`
+(continuous timestamped ground-truth samples, replacing the old per-call
+`_ReactionPoller`/`_place_during_return`/`_swap_during_return`) and post-hoc
+nearest-timestamp lookups against leg boundaries the Jetson embeds in its JSON
+result. **Deliberately does NOT add a "legs" concept to `missions.py`'s shared
+mission model** — Mike's explicit steer: future missions (more autonomy, random
+objects, one or more fleet members) may not fit a fixed "N legs" shape at all, and
+building that out now would repeat the same overreach he flagged in "scenario."
+This is Mission-2-specific glue in `mission2_day.py`/`mission_runner.py` only.
 
 **Open items after Piece 9:**
-- [ ] Implement the persistent-process/DDS-IPC architecture fix described above.
-- [ ] Root-cause the intra-goal pegged-rotation stall (ground-truth-yaw comparison).
+- [ ] Implement the plan above (Task 1 starts next session) — expected to bring the
+      Jetson inter-scenario gap from ~17.6s to near-zero, since there's no longer an
+      external re-invocation boundary to pay a process-restart cost at.
+- [ ] Root-cause the intra-goal pegged-rotation stall (ground-truth-yaw comparison) —
+      separate, platform-independent, still open regardless of the above.
 - [ ] Decide whether to fix `bt_navigator`'s "unknown goal" feedback-tracking bug, or
       file it separately — not blocking, but a real, reproducible, unexplained bug.
 - [ ] Update/cross-reference the CLAUDE.md "real motion-start stall on HIL" gotcha
       (2026-07-22) — today's findings likely explain what was being observed there,
       under a different framing (inter-scenario process restart + intra-goal
       convergence, not specifically "motion won't START").
+- [ ] (Mike, 2026-07-24, captured for later — not scoped into this piece) A future
+      mission-planning checklist/skill: before any mission gets coded, walk through
+      high-level questions — what should the robot do, under what conditions does it
+      take pictures, is there looping, anything to avoid, any communication with
+      other robots/base station/remote input devices. Lines up with the R3
+      "LLM-assisted building of missions/worlds/robots" leverage-ramp item (Standing
+      Discipline #3, above) — a concrete shape for that future work, not something to
+      build now.
 
 ### Session Complete When
 - [ ] The gate question — **"have we done everything we can so the robot is good to go

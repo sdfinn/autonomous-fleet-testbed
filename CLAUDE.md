@@ -448,7 +448,8 @@ docker buildx build --platform linux/arm64 \
   found TWO separate real things, neither of which is "motion won't start": (1) an
   inter-scenario gap (~17.6s on Jetson, ~0.4s on x86) caused by `mission_runner`
   restarting as a fresh SSH-spawned process every scenario on Jetson vs. staying
-  resident in-process on x86 — architecture fix in progress; (2) a ~18-29s intra-goal
+  resident in-process on x86 — fix designed, not yet implemented (see the
+  `mission2_day.py` entry above); (2) a ~18-29s intra-goal
   "pegged rotation" stall, reproducible identically on x86 AND Jetson, bare-metal AND
   container — platform-independent, likely a `yaw_goal_tolerance`/RPP tuning issue,
   still not root-caused. Neither is "no log activity, no abort/reject/retry" in the
@@ -633,14 +634,21 @@ docker buildx build --platform linux/arm64 \
   long-lived container per day (`docker run -d ... sleep infinity`) and each
   scenario's `_ssh_mission2()` `docker exec`s into it, instead of the old fresh
   `docker run --rm` per scenario — fixed a real ~14s/transition container-lifecycle
-  cost (see Release1Todo.md Piece 8). **In progress (same branch): a bigger
-  architecture change** to hold ONE long-lived `mission_runner` process on the Jetson
-  for the whole day (both bare-metal and container mode currently restart a fresh
-  `python3 -m nav_fleet.mission_runner` process per scenario over SSH — a separate,
-  larger cost than the container fix above, ~17.6s/transition on Jetson vs. ~0.4s on
-  x86's persistent in-process executor) and feed it scenario targets over DDS instead
-  of SSH-spawning a fresh process each time — see Release1Todo.md Piece 9 for the full
-  investigation and root cause.
+  cost (see Release1Todo.md Piece 8). **A separate, larger cost remains — plan
+  written 2026-07-24, NOT YET IMPLEMENTED, starts next session:** both bare-metal and
+  container mode currently restart a fresh `python3 -m nav_fleet.mission_runner`
+  process per scenario over SSH (~17.6s/transition on Jetson vs. ~0.4s on x86's
+  persistent in-process executor). The fix is NOT a persistent-service/DDS-RPC
+  architecture (that direction was proposed then scrapped the same session, after
+  Mike pushed back on the underlying `run_no_ball`/`run_yellow`/`run_red`
+  external-invocation framing itself) — it's collapsing Mission 2's day into ONE
+  continuous `run_mission('mission2')`-driven execution (`mission_runner.py` gains
+  `run_mission2_day()`/`--day`, looping 3x within one process; `missions.py`'s shared
+  mission model is deliberately left untouched, no "legs" concept added — Mike's
+  steer against over-building this the way "scenario" was). Plan:
+  `docs/superpowers/plans/2026-07-24-mission2-single-continuous-run.md`. See
+  Release1Todo.md Piece 9 for the full investigation, the scrapped first direction,
+  and the design conversation.
 - **nav_runner goal stamp:** Use `Time().to_msg()` (zero timestamp = "use latest TF") for the
   NavigateToPose goal header stamp. Wall-clock `get_clock().now()` will be rejected by Nav2
   which uses sim time (far-future wall timestamp has no TF data in Nav2's buffer).
