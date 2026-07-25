@@ -629,26 +629,63 @@ docker buildx build --platform linux/arm64 \
   frame-edge-clipped bboxes (clipped width corrupts the range estimate). `-k red`-style
   pytest filters are substring matches — the ignore test was renamed after `-k red` matched
   `…is_ignoRED`.
-  **Container lifecycle (2026-07-24, branch `fix/hil-container-lifecycle`, not yet
-  merged):** `JetsonExecutor` in container mode (`HIL_CONTAINER=1`) now starts ONE
-  long-lived container per day (`docker run -d ... sleep infinity`) and each
-  scenario's `_ssh_mission2()` `docker exec`s into it, instead of the old fresh
-  `docker run --rm` per scenario — fixed a real ~14s/transition container-lifecycle
-  cost (see Release1Todo.md Piece 8). **A separate, larger cost remains — plan
-  written 2026-07-24, NOT YET IMPLEMENTED, starts next session:** both bare-metal and
-  container mode currently restart a fresh `python3 -m nav_fleet.mission_runner`
-  process per scenario over SSH (~17.6s/transition on Jetson vs. ~0.4s on x86's
-  persistent in-process executor). The fix is NOT a persistent-service/DDS-RPC
-  architecture (that direction was proposed then scrapped the same session, after
-  Mike pushed back on the underlying `run_no_ball`/`run_yellow`/`run_red`
-  external-invocation framing itself) — it's collapsing Mission 2's day into ONE
-  continuous `run_mission('mission2')`-driven execution (`mission_runner.py` gains
-  `run_mission2_day()`/`--day`, looping 3x within one process; `missions.py`'s shared
-  mission model is deliberately left untouched, no "legs" concept added — Mike's
-  steer against over-building this the way "scenario" was). Plan:
-  `docs/superpowers/plans/2026-07-24-mission2-single-continuous-run.md`. See
-  Release1Todo.md Piece 9 for the full investigation, the scrapped first direction,
-  and the design conversation.
+  **One continuous day, S17 Piece 9 (2026-07-25, branch `fix/hil-container-lifecycle`,
+  PR #5, not yet merged): the day is now ONE continuous execution, not 3 externally-invoked
+  scenario calls.** Supersedes both the old per-scenario architecture AND Piece 8's
+  persistent-container fix below (which became unnecessary once there's only one
+  invocation per day). `mission_runner.py` gained `MissionRunner.run_mission2_day()`
+  (loops `run_mission('mission2')` 3x in one process, collects each leg's
+  checklist/photos/reaction_events) and a `--day` CLI mode (prints one
+  `MISSION2_DAY_RESULT:<json>` line). `tools/mission2_day.py`'s `InProcessExecutor`/
+  `JetsonExecutor` both implement `run_day() -> list[dict]` — `JetsonExecutor.run_day()`
+  is now a SINGLE `docker run --rm`/bare-SSH call for the whole day (Piece 8's
+  `_start_container`/`close()`/`HIL_CONTAINER_NAME`/`docker exec`-into-a-persistent-
+  container machinery was REMOVED, not kept dormant, since one call/day has nothing
+  left to amortize). `run_no_ball`/`run_yellow`/`run_red` (the old scenario-named
+  functions) are DELETED. Ball choreography is now `GroundTruthLog` (continuous
+  timestamped ground-truth samples for the whole day, `record`/`nearest`/
+  `closest_approach_to`) + `run_ball_choreography()` (ONE thread for the whole day,
+  concurrent/gz mode only — `if ball_ops.concurrent:` guards it, so operator mode gets
+  no thread and no ball_ops calls at all: **no prompting of any kind** — Mike's explicit
+  call, "it's up to the human to place the balls at the correct time themselves,
+  watching the robot," `OperatorBallOps.place`/`.remove` (the old `input()`-prompting
+  methods) were removed as unreachable). `_judge_and_log_leg`/`run_day()` (top-level)
+  replace the old `run_no_ball`/`run_yellow`/`run_red`, feeding `judge_*`/
+  `log_variant_row`/`home_pair_similarity` (unchanged signatures — frozen by design)
+  from post-hoc `GroundTruthLog` lookups instead of live point-in-time polls.
+  **Measured result: 0.0000s leg-to-leg loop overhead**, confirmed 3x independently
+  (x86 in-process, Jetson bare-metal, Jetson container) — down from the ~17.6s Jetson
+  inter-scenario gap this piece targeted (see Release1Todo.md Piece 9 for the full
+  investigation, the scrapped persistent-service/DDS-RPC first direction, and the
+  design conversation).
+  **Two real bugs found live during GUI-watched verification, both fixed the same
+  session (neither anticipated by the plan) — see Release1Todo.md Piece 9 for full
+  detail:** (1) a premature yellow→red ball swap — the second retreat-wait armed a
+  fresh `RetreatDetector` immediately after placing yellow, while leg 1's OWN return
+  was still in progress, getting fooled by leftover leg-1 descent into firing almost
+  instantly; fixed with a new `OutboundDetector` (mirrors `RetreatDetector` — tracks
+  the lowest y seen, fires once climbed back up `climb_m` above it) that gates the
+  second wait behind a genuine "robot has left home again" signal. (2) an 8-second
+  ground-truth-polling stall, TWICE per leg (`get_ground_truth_xy()` in
+  `ground_truth.py` runs `gz topic -e` with `GZ_POSE_TIMEOUT_S`, which off-sim can
+  never succeed and always burned the full timeout) — pre-existing (Session 13-era),
+  not a Piece 9 regression, just newly VISIBLE once Piece 9 removed the bigger cost
+  that used to mask it; fixed by cutting `GZ_POSE_TIMEOUT_S` 8.0 -> 1.0 (evidence-based:
+  measured real local x86 response 0.09-0.11s, ~10x margin retained) rather than an
+  env-var-gated skip, since a timeout fix covers HIL now AND any future real-robot
+  runner-type automatically.
+  **Known, deliberately accepted/deferred gap:** `final_x`/`final_y` telemetry columns
+  are now always `0.0` for Mission 2 rows (both executors return plain dicts, not a
+  live object with `.nav.last_final_x` for `log_variant_row` to read — its signature
+  is frozen by this piece's own design). Confirmed the HIL path was ALREADY zeroed
+  before this change; only x86 loses real data; `mean_position_error` (the actual
+  drift-watched metric) was never sourced from Mission 2 rows either way — no
+  monitoring capability lost. A real fix exists (thread the robot's own final-position
+  estimate through the leg dict, same treatment photos already get) but Mike
+  deliberately deferred it: Mission 2 is scripted/hardcoded so the fix would be easy,
+  but Mission 3 will be autonomous enough that "final position" may not even be a
+  well-defined concept — that design work should decide the shape of this fix, not
+  a Mission-2-specific patch made now.
 - **nav_runner goal stamp:** Use `Time().to_msg()` (zero timestamp = "use latest TF") for the
   NavigateToPose goal header stamp. Wall-clock `get_clock().now()` will be rejected by Nav2
   which uses sim time (far-future wall timestamp has no TF data in Nav2's buffer).

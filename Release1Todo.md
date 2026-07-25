@@ -32,7 +32,14 @@ holds strategy background and the decisions log; nothing here requires reading i
 | 14 | Jetson Orin Nano: Flash + ROS2 + CI Runner | ✅ (2026-07-14 — NVMe fresh install executed 2026-07-13, runner re-registered, full 8-job CI cycle green (run 29301726080), manual HIL run on the NVMe install PASS first-attempt 2026-07-14; see `docs/runbooks/JetsonInstallSession14.md`) |
 | 15 | Gazebo + Real Jetson Hardware-in-the-Loop (Mission 1) | ✅ (2026-07-11 — Mission 1 PASS on x86 sim AND real-Jetson HIL, merged to main; CI stage designed but not yet implemented — see `docs/runbooks/Mission1HILSession15.md` + `docs/session15-hil-ci-stage-design.md`) |
 | 16 | HIL CI Stage with Gazebo + Mission 2 | ✅ (SIGNED OFF 2026-07-19 — `stage-4-hil` live (container mission, 25W-build/15W-mission), Mission 2 Option B verified round trip shipped + merged (PR #4, 7a86150); sign-off bar met: Mike-watched GUI container day GREEN + clean full-pipeline CI run 29697469463 + cold rebuild proven (659s, run 29667247639); real-USB-camera tier re-deferred → Session 19 tier #1; the 2026-07-18 "yellow bug" did NOT reproduce (12/12 local + 1/1 CI green) — instrumented, see Session 16 sign-off block) |
-| 17 | Harden, Stabilize & Review (pre-robot gate) | 🔄 (Pieces 3/4/5 SHIPPED 2026-07-21, Piece 6 SHIPPED 2026-07-22 — logging, per-CI-run reporting, interactive drift dashboard + AI-loop fix, repo hygiene + GHCR/disk retention + declared mission matrix; all merged to main, pushed to origin; Pieces 1/2 partially done — see their own sections; Piece 7 timing investigation + Piece 8 close-out steps in progress 2026-07-22/23 — see their own sections; gate question still open) |
+| 17 | Harden, Stabilize & Review (pre-robot gate) | 🔄 (Pieces 3/4/5 SHIPPED 2026-07-21, Piece 6 SHIPPED 2026-07-22 — logging, per-CI-run reporting, interactive drift dashboard + AI-loop fix, repo hygiene + GHCR/disk retention + declared mission matrix; all merged to main, pushed to origin; Pieces 1/2 partially done — see their own sections; Piece 7 timing investigation
+      complete via Piece 9; Piece 8 (container-lifecycle) + Piece 9 (one-continuous-run
+      architecture) SHIPPED 2026-07-25 on branch `fix/hil-container-lifecycle`
+      (PR #5, not yet merged) — 0.0000s Jetson inter-scenario loop overhead measured
+      live 3x (x86/Jetson bare-metal/Jetson container), two real bugs found+fixed
+      during live GUI-watched verification (premature ball swap, 8s ground-truth
+      timeout stall) — see Piece 9's own section for full detail; gate question
+      still open) |
 | 18 | Real Robot: Deploy + Sim-to-Real Comparison | ⬜ (was 16 until 2026-07-12, then 17 until the same evening) |
 | 19 | Real-Robot Expansion & Deferred Capability (pick-list) | ⬜ (rewritten 2026-07-17 as a menu ordered by robot-day de-risking; was "Agentic Loop on Real Hardware + Advanced Missions") |
 | 20 | Future Releases: Working Plan (R2–R5, living) | 🔄 (executed 2026-07-17/18 — ladder relabeled, all candidates placed; LIVING section, updated as decisions change) |
@@ -4568,9 +4575,96 @@ building that out now would repeat the same overreach he flagged in "scenario."
 This is Mission-2-specific glue in `mission2_day.py`/`mission_runner.py` only.
 
 **Open items after Piece 9:**
-- [ ] Implement the plan above (Task 1 starts next session) — expected to bring the
-      Jetson inter-scenario gap from ~17.6s to near-zero, since there's no longer an
-      external re-invocation boundary to pay a process-restart cost at.
+- [x] **Implemented and live-verified, 2026-07-25 — the fix works exactly as designed.**
+      `docs/superpowers/plans/2026-07-24-mission2-single-continuous-run.md` executed
+      via subagent-driven-development (5 tasks + 2 live-found bugfixes, all reviewed).
+      `MissionRunner.run_mission2_day()` + `--day` CLI mode (mission_runner.py) loop
+      mission2 3x in one process; `tools/mission2_day.py`'s `InProcessExecutor`/
+      `JetsonExecutor` both implement `run_day()`; `run_no_ball`/`run_yellow`/
+      `run_red` deleted; `GroundTruthLog`/`run_ball_choreography` replace the old
+      per-call `_ReactionPoller`/`_place_during_return`/`_swap_during_return`.
+      Piece 8's persistent-container machinery (`_start_container`/`close()`/
+      `HIL_CONTAINER_NAME`) was REMOVED as a direct consequence — with only one
+      `docker run` per day now (not 3), it had nothing left to amortize; plain
+      `docker run --rm` for the single day call replaces it.
+      **Measured, not estimated:** leg-to-leg loop overhead (the actual thing Piece 9
+      targeted) is **0.0000s**, confirmed 3x independently — x86 in-process, Jetson
+      bare-metal, and Jetson container mode all measured identically from the
+      `--day` JSON result's own `t_end`/`t_start` timestamps. The original ~17.6s
+      Jetson inter-scenario gap is gone at the source (no external re-invocation
+      boundary left to pay a process-restart cost at).
+      GUI-watched and Mike-confirmed on all three configurations (x86 in-process,
+      Jetson bare-metal, Jetson container) — see the two bugfixes below, both found
+      DURING this live verification, neither anticipated by the plan.
+- [x] **Live-verification bugfix 1 — premature yellow→red ball swap (found +
+      fixed 2026-07-25, NOT anticipated by the plan).** The first real x86 day run
+      with actual ball reactions (not the mechanics-only smoke test) FAILED yellow
+      and red: both `run_ball_choreography`'s ball actions (place yellow, swap to
+      red) fired within leg 1's OWN ~27s return-home drive, only 4 seconds apart —
+      before leg 2 had even started, so leg 2 found a red ball instead of yellow
+      (never tested the yellow-reaction path) and leg 3 found the ball already
+      sitting there from the very start. Root cause: the second `_wait_for_retreat()`
+      call armed a brand-new `RetreatDetector()` immediately after placing yellow,
+      while leg 1's return was still in progress — the fresh detector had no memory
+      of anything before it started, so a little more of the SAME ongoing descent
+      (not a new leg's retreat) was enough to re-trigger it almost instantly. The
+      OLD 3-separate-process design never hit this because the second wait
+      structurally couldn't start until leg 2's own drive had already begun (a
+      separate function call). Fix: a new `OutboundDetector` (mirrors
+      `RetreatDetector` — tracks the lowest y seen, fires once climbed `climb_m`
+      above it) gates the second retreat wait, requiring a genuine "robot has left
+      home and started climbing back out" signal before the swap-detection can even
+      arm. TDD: a synthetic phase-labeled position-sequence test reproduces the bug
+      (asserts the swap fires during `'leg1_return'` pre-fix) and proves the fix
+      (fires during `'leg2_return'` post-fix). Verified live 3x (x86, Jetson
+      bare-metal, Jetson container) — all 3 legs correctly PASS with correct
+      yellow-then-red sequencing.
+- [x] **Live-verification bugfix 2 — 8s-per-navigate-step ground-truth timeout
+      stall (found + fixed 2026-07-25, NOT a Piece 9 regression — pre-existing,
+      Session-13-era code, newly VISIBLE because Piece 9 removed the bigger cost
+      that used to sit next to it).** Mike observed a real 7-8s pause between legs
+      on the Jetson HIL GUI-watched run even after bugfix 1 landed — smaller than
+      the original ~21s, but not near-zero like x86. Root cause, confirmed live via
+      direct SSH testing with the exact mission-process environment sourced:
+      `get_ground_truth_xy()` (`ground_truth.py`) runs `gz topic -e -t
+      /model/robot_001/pose -n 1` with `GZ_POSE_TIMEOUT_S=8.0` — off-sim (the
+      Jetson, and confirmed by reasoning that this would equally apply to a future
+      real deployed robot, since no Gazebo instance would exist anywhere in either
+      case), the call can never succeed and blocks the FULL 8 seconds before giving
+      up. Called via `_print_leg_truth()` TWICE per leg (after both the outbound
+      AND the return-home navigate steps) — up to 6 stalls, up to 48s of dead time
+      across a 3-leg day. Fix: `GZ_POSE_TIMEOUT_S` reduced 8.0 -> 1.0, evidence-based
+      (5 consecutive real local calls on x86 with Gazebo running measured
+      0.09-0.11s each, so 1.0s retains a comfortable ~10x margin). Deliberately NOT
+      gated on `RUNNER_TYPE=='hil_jetson'` — a timeout-based fix covers HIL now AND
+      any future real-robot `RUNNER_TYPE` value automatically, without needing to
+      enumerate every off-sim context. Verified live: the per-step stall dropped
+      from ~8.01s to ~1.01s at every single measured point, 3x independently
+      (x86 — negligible since Gazebo is local there; Jetson bare-metal; Jetson
+      container) — Mike-confirmed shorter pauses on both Jetson GUI-watched runs.
+- [x] **`final_x`/`final_y` telemetry richness reduction — decided, deliberately
+      deferred, not fixed (2026-07-25).** Unifying both executors around
+      `run_day()` means `_judge_and_log_leg` calls `log_variant_row(..., runner=None,
+      ...)` for every leg (both executors now hand back plain dicts, not a live
+      Python object with a `.nav.last_final_x` attribute for `log_variant_row` to
+      read) — so `final_x`/`final_y` are now always `0.0` for Mission 2 telemetry
+      rows. Investigated and confirmed narrow: the Jetson/HIL path was ALREADY
+      zeroed before this change (its old result object never had a real `.nav`
+      either); only the x86 in-process path loses real data. Confirmed
+      `mean_position_error` (the actual drift-watched BR-01 metric) was never
+      sourced from Mission 2 rows at all, before or after — no drift-detection
+      capability lost, purely a less-informative dashboard column.
+      A real fix exists (have `run_mission2_day()` include the robot's own final
+      position estimate per leg, same treatment as photos already get, then extend
+      `log_variant_row` with a new optional param) but Mike deliberately deferred
+      it rather than scheduling it as a near-term follow-up: Mission 2 is a
+      hardcoded, scripted sequence where this fix would be straightforward, but
+      Mission 3 will be far more autonomous — the robot may not know its own
+      destination until after live inference, and "final position" may not even be
+      a well-defined concept the same way. Patching Mission 2's telemetry contract
+      now risks building the wrong shape of fix; Mission 3's own design work should
+      decide how position/telemetry gets captured for a mission without a fixed
+      endpoint, not the other way around. Revisit only when Mission 3 design starts.
 - [ ] Root-cause the intra-goal pegged-rotation stall (ground-truth-yaw comparison) —
       separate, platform-independent, still open regardless of the above.
 - [ ] Decide whether to fix `bt_navigator`'s "unknown goal" feedback-tracking bug, or
