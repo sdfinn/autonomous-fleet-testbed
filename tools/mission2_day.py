@@ -479,6 +479,33 @@ class RetreatDetector:
         return (self._peak_y - y) >= self._drop_m
 
 
+class OutboundDetector:
+    """Mirror image of RetreatDetector (S17 Piece 9 gap fix, 2026-07-25): the robot is
+    'heading back out' once its ground-truth y has risen `climb_m` above the trough y
+    observed so far. Closes a live bug found in run_ball_choreography(): two back-to-back
+    RetreatDetector waits used to share no memory of each other, so a FRESH detector
+    started for the second wait could be fooled by more of the SAME still-in-progress
+    descent from leg 1's own return (not a new leg 2 return) into firing immediately —
+    confirmed live: place-yellow and swap-to-red happened only 4s apart, both still
+    within leg 1's own ~27s return-home drive. Requiring a genuine climb back out FIRST
+    (this detector) before arming the second RetreatDetector closes the gap: the second
+    wait can no longer start listening until leg 2's own outbound drive has actually
+    begun."""
+
+    def __init__(self, climb_m=RETREAT_DROP_M):
+        self._climb_m = climb_m
+        self._trough_y = None
+
+    def update(self, xy):
+        """Feed one ground-truth sample (or None); True once a genuine climb back out
+        is detected."""
+        if xy is None:
+            return False
+        y = xy[1]
+        self._trough_y = y if self._trough_y is None else min(self._trough_y, y)
+        return (y - self._trough_y) >= self._climb_m
+
+
 def run_ball_choreography(ball_ops, ball_xy, stop_evt, poll_s=0.3):
     """S17 Piece 9: ONE thread for the whole day (was 2 separate per-call threads).
     Sequences the SAME 2 actions today's design already does — place yellow behind
@@ -488,12 +515,19 @@ def run_ball_choreography(ball_ops, ball_xy, stop_evt, poll_s=0.3):
     separate thread to. Concurrent-only (gz mode) — operator mode is skipped entirely
     (the `if ball_ops.concurrent:` guard prevents any thread start or ball_ops calls),
     leaving human ball placement/swap timing fully unprompted.
+
+    Three waits, not two (2026-07-25 gap fix): a RetreatDetector for leg 1's return
+    (places yellow), an OutboundDetector confirming leg 2's own outbound drive has
+    genuinely started (see OutboundDetector docstring for why this gate is needed),
+    THEN a fresh RetreatDetector for leg 2's return (swaps yellow -> red). Without the
+    middle wait, the second RetreatDetector could fire on leftover descent from leg
+    1's own still-in-progress return instead of a real leg 2 return.
+
     Returns the GroundTruthLog recorded along the way (reused for judging - Task 3)."""
     truth_log = GroundTruthLog()
     holder = {'placed_name': None, 'red_name': None}
 
-    def _wait_for_retreat():
-        detector = RetreatDetector()
+    def _wait_for(detector):
         while not stop_evt.is_set():
             xy = get_ground_truth_xy()
             t = time.time()
@@ -504,11 +538,14 @@ def run_ball_choreography(ball_ops, ball_xy, stop_evt, poll_s=0.3):
             time.sleep(poll_s)
         return False
 
-    if _wait_for_retreat():
+    if _wait_for(RetreatDetector()):
         log.info('retreat detected — placing yellow behind the returning robot')
     holder['placed_name'] = ball_ops.place('yellow', *ball_xy)
 
-    if _wait_for_retreat():
+    if _wait_for(OutboundDetector()):
+        log.info('robot heading back out — arming swap detection')
+
+    if _wait_for(RetreatDetector()):
         log.info('retreat detected — swapping yellow -> red behind the robot')
     ball_ops.remove(holder['placed_name'])
     ball_ops.settle()

@@ -14,6 +14,7 @@ invocation/day either way now, so container-mode HIL goes back to a plain
 `docker run --rm` for the single call, not `docker exec` into a long-lived container."""
 import json
 import subprocess
+import threading
 
 import pytest
 
@@ -21,8 +22,8 @@ import re
 
 import tools.mission2_day as mission2_day_module
 from tools.mission2_day import (GroundTruthLog, InProcessExecutor, JetsonExecutor,
-                                 MissionExecutor, RetreatDetector, hil_variant_names,
-                                 run_day, sweep_orphans)
+                                 MissionExecutor, OutboundDetector, RetreatDetector,
+                                 hil_variant_names, run_day, sweep_orphans)
 
 
 def _leg(t_start=0.0, t_end=1.0, ok=True, checklist=None, photos=None, reaction_events=None):
@@ -46,6 +47,88 @@ def test_retreat_detector_fires_only_after_drop_from_peak():
     assert det.update((0.0, 3.5)) is False        # new peak
     assert det.update((0.0, 3.2)) is False        # 0.3 below new peak — not yet
     assert det.update((0.0, 3.05)) is True        # 0.45 below peak — retreating
+
+
+def test_outbound_detector_fires_only_after_climb_from_trough():
+    """Mirror of test_retreat_detector_fires_only_after_drop_from_peak (same style,
+    inverted): does NOT fire while still falling/flat, DOES fire once risen enough
+    above the trough seen so far."""
+    det = OutboundDetector(climb_m=0.4)
+    assert det.update(None) is False              # no sample yet
+    assert det.update((0.0, 4.0)) is False        # first sample, trough=4.0
+    assert det.update((0.0, 2.0)) is False        # falling, new trough=2.0
+    assert det.update((0.0, 2.2)) is False        # risen 0.2 — below threshold
+    assert det.update((0.0, 1.5)) is False        # new trough
+    assert det.update((0.0, 1.8)) is False        # 0.3 above new trough — not yet
+    assert det.update((0.0, 1.95)) is True        # 0.45 above trough — heading out
+
+
+def test_run_ball_choreography_second_wait_requires_a_real_outbound_climb_first(monkeypatch):
+    """Reproduces the live 2026-07-24 bug: run_ball_choreography()'s two back-to-back
+    RetreatDetector waits share no memory of each other. A synthetic ground-truth
+    sequence covers leg 1's own outbound+return (should trigger the FIRST retreat,
+    placing yellow), a pause at home, then leg 2's own SEPARATE outbound+return
+    (should trigger the SECOND retreat, swapping to red) — but pre-fix, the second
+    wait's fresh detector gets fooled by the tail of leg 1's own still-in-progress
+    return (still falling right after the first retreat fires) and swaps to red
+    while 'leg1_return' is still the active label, well before leg 2 even starts."""
+    sequence = []
+
+    def add(label, ys):
+        for y in ys:
+            sequence.append((label, (0.0, y)))
+
+    add('leg1_outbound', [0.0, 1.0, 2.0, 3.0, 4.0])
+    add('leg1_return', [3.5, 3.0, 2.5, 2.0])
+    add('home_pause', [2.0, 2.0])
+    add('leg2_outbound', [2.2, 2.6, 3.0, 3.5, 4.0])
+    add('leg2_return', [3.5, 3.0, 2.5, 2.0])
+
+    state = {'i': 0, 'last_label': None}
+    stop_evt = threading.Event()
+
+    def fake_get_xy():
+        i = state['i']
+        if i >= len(sequence):
+            stop_evt.set()
+            return None
+        label, xy = sequence[i]
+        state['i'] += 1
+        state['last_label'] = label
+        return xy
+
+    class FakeBallOps:
+        concurrent = True
+
+        def __init__(self):
+            self.place_labels = []
+            self.remove_labels = []
+
+        def place(self, color, x, y):
+            self.place_labels.append((color, state['last_label']))
+            return f'{color}_ball'
+
+        def remove(self, name):
+            self.remove_labels.append(state['last_label'])
+
+        def settle(self):
+            pass
+
+    monkeypatch.setattr(mission2_day_module, 'get_ground_truth_xy', fake_get_xy)
+    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+
+    ball_ops = FakeBallOps()
+    truth_log = mission2_day_module.run_ball_choreography(
+        ball_ops, (1.2, 3.9), stop_evt, poll_s=0.0)
+
+    assert ball_ops.place_labels[0] == ('yellow', 'leg1_return')     # first retreat: unaffected
+    assert ball_ops.remove_labels[0] == 'leg2_return'                # THE bug: pre-fix this is
+                                                                      # 'leg1_return' — the swap
+                                                                      # fires during leg 1's own
+                                                                      # still-in-progress return.
+    assert ball_ops.place_labels[1] == ('red', 'leg2_return')
+    # continuous logging through every phase, including the new outbound-wait gap
+    assert len(truth_log._samples) == len(sequence)
 
 
 def test_ground_truth_log_nearest_returns_closest_sample():
