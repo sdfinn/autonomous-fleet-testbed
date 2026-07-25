@@ -4665,6 +4665,20 @@ This is Mission-2-specific glue in `mission2_day.py`/`mission_runner.py` only.
       now risks building the wrong shape of fix; Mission 3's own design work should
       decide how position/telemetry gets captured for a mission without a fixed
       endpoint, not the other way around. Revisit only when Mission 3 design starts.
+- [ ] **Known, deliberately deferred architectural gap (final whole-branch review,
+      2026-07-25): `run_mission2_day()` has no per-leg exception isolation.** If any
+      single leg raises (a DDS hiccup, a `take_picture`/`send_goal` exception), the
+      whole day's results are lost — no `MISSION2_DAY_RESULT` line is printed, the
+      workstation logs a single synthesized `startup_crash` row instead of the
+      already-completed legs' real judged verdicts. The OLD 3-separate-process
+      design isolated this for free (a structural side effect of each scenario being
+      its own process); collapsing to one continuous process removes that isolation
+      as a genuine architectural cost, not a bug introduced carelessly. Decision:
+      document rather than fix under time pressure — wrap each leg in its own
+      try/except (record `ok=False` + the traceback in that leg's dict, continue to
+      the next leg, always emit 3 legs) is the known fix shape, deserving its own
+      small piece with its own test rather than a rushed addition here. Revisit if
+      this actually recurs in practice (a real mid-day crash losing evidence).
 - [ ] Root-cause the intra-goal pegged-rotation stall (ground-truth-yaw comparison) —
       separate, platform-independent, still open regardless of the above.
 - [ ] Decide whether to fix `bt_navigator`'s "unknown goal" feedback-tracking bug, or
@@ -4681,6 +4695,32 @@ This is Mission-2-specific glue in `mission2_day.py`/`mission_runner.py` only.
       "LLM-assisted building of missions/worlds/robots" leverage-ramp item (Standing
       Discipline #3, above) — a concrete shape for that future work, not something to
       build now.
+- [ ] **Mission architecture: "legs" is still the wrong shape, even after this piece's
+      fix — a real, separate conversation needed before Mission 3 (Mike, 2026-07-25,
+      deliberately deferred, NOT scoped into this piece).** Piece 9 eliminated the
+      process-RESTART between Mission 2's 3 repetitions, but the underlying model is
+      still "run the same 5-step template 3 times, judge each repetition separately"
+      — 3 tests wearing one continuous process's clothing, not truly one mission.
+      This matches Mike's own original framing from 2026-07-24 ("Mission 2's 3
+      'scenarios' are not 3 different things — they're one mission that happens to
+      drive into the room 3 times") more closely than the shipped implementation
+      actually does. Mike's proposed alternative: ONE ordered waypoint sequence for
+      the whole mission (start → marker → home+enable_yellow → marker again →
+      home+enable_red → marker again → stay), where ball-enable actions are plain
+      steps tied to a specific, deterministic waypoint position — not inferred from
+      live sensor data. **Concrete evidence this is a better architecture, not just
+      preference:** the premature yellow→red ball-swap bug (this piece, above)
+      happened BECAUSE "has leg 2 started" had to be *inferred* from a live
+      retreat-detector watching noisy position data — a waypoint-indexed design has
+      no such inference step at all, since the waypoint position is fixed by
+      construction. Decided 2026-07-25: fix what's already in the pipeline for THIS
+      hardcoded Mission 2 (good enough as-is, not being redesigned) and open the
+      architecture question as its own dedicated conversation later — it will become
+      necessary anyway once autonomy/inference-driven missions (Mission 3+, where the
+      robot may not know its destination or "final position" ahead of time) force a
+      real redesign of `missions.py`'s model and the `judge_*`/`log_variant_row`
+      functions (both currently frozen by this piece's own Global Constraints).
+      Folds naturally into the mission-planning checklist/skill item directly above.
 
 ### Session Complete When
 - [ ] The gate question — **"have we done everything we can so the robot is good to go
