@@ -27,7 +27,8 @@ THIS file, in THIS order:
 
 Two axes of pluggability keep the SAME sequence usable across sim, CI/HIL, and the robot:
 
-* BallOps — WHO places the ball: Gazebo spawn/remove (sim) or operator prompts (robot day).
+* BallOps — WHO places the ball: Gazebo spawn/remove (sim) or operator places/swaps manually
+  (robot day, unprompted).
 * MissionExecutor (Task 13d) — WHERE the mission runs: in-process on the workstation (sim),
   or on the Jetson over SSH (HIL). Ball ops + ground-truth judging ALWAYS stay workstation-
   side (Gazebo lives on the workstation in both modes); only the mission executor moves.
@@ -36,7 +37,7 @@ Run from the repo root against a freshly-built workspace:
 
     python -m tools.mission2_day                  # sim, headless judged self-test (CI-style)
     python -m tools.mission2_day --hold-s 10       # sim GUI-watch rehearsal (separate gz -g)
-    python -m tools.mission2_day --ball-ops operator   # robot-day dry run (prompts, no gz)
+    python -m tools.mission2_day --ball-ops operator   # robot-day dry run (no gz, human handles ball timing)
     python -m tools.mission2_day --executor jetson --no-launch   # HIL: mission on the Jetson
                                                    # (stack brought up by scripts/hil_stage.sh)
 
@@ -484,8 +485,9 @@ def run_ball_choreography(ball_ops, ball_xy, stop_evt, poll_s=0.3):
     the robot during leg 1's retreat, swap yellow->red during leg 2's retreat — but
     now driven by ONE continuous ground-truth poll loop spanning the single blocking
     run_day() call, since there's no longer a per-leg call boundary to scope a
-    separate thread to. Concurrent-only (gz mode) — operator mode still does its
-    explicit post-run prompts, unchanged, in the caller.
+    separate thread to. Concurrent-only (gz mode) — operator mode is skipped entirely
+    (the `if ball_ops.concurrent:` guard prevents any thread start or ball_ops calls),
+    leaving human ball placement/swap timing fully unprompted.
     Returns the GroundTruthLog recorded along the way (reused for judging - Task 3)."""
     truth_log = GroundTruthLog()
     holder = {'placed_name': None, 'red_name': None}
@@ -617,8 +619,8 @@ def main():
                              'jetson = run it on the Jetson over SSH (HIL). Ball ops + judging '
                              'stay workstation-side either way.')
     parser.add_argument('--ball-ops', choices=['gz', 'operator'], default='gz',
-                        help='gz = Gazebo spawn/remove (sim/HIL); operator = human prompts '
-                             '(robot-day dry run)')
+                        help='gz = Gazebo spawn/remove (sim/HIL); operator = human places/swaps '
+                             'unprompted (robot-day dry run)')
     parser.add_argument('--hold-s', type=float, default=0.0,
                         help='seconds to hold after the red run so an observer sees "done" '
                              '(default 0 = headless self-test; use ~10 for a watched run)')
