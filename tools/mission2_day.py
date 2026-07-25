@@ -232,12 +232,12 @@ class JetsonExecutor(MissionExecutor):
         out_path = os.path.join(self.state_dir, 'day.out')
         dispatch_time = time.time()
         log.info(f'[timing] ssh dispatch for the day at {dispatch_time:.3f}')
-        # 1800s (was 300s/scenario * 3 = ~900s aggregate pre-Piece-9; a flat 600 for the
-        # WHOLE day was tighter than the old per-scenario budget, not looser) — comfortable
-        # headroom over worst-case real leg work + cold-start retry backoff, while still
-        # bounding a truly-hung day (S17 review fix, 2026-07-25).
+        # 1080s (18 min: comfortable headroom over worst-case real leg work + cold-start
+        # retry backoff, while leaving a 2-min safety margin under CI's 1200s outer
+        # timeout — S17 review fix, 2026-07-25) — the inner timeout must fire FIRST so
+        # the normal teardown/evidence-upload steps can still run via `if: always()`.
         proc = subprocess.run(
-            ['timeout', '1800', 'ssh', '-o', 'BatchMode=yes',
+            ['timeout', '1080', 'ssh', '-o', 'BatchMode=yes',
              f'{JETSON_USER}@{self.ip}', cmd],
             capture_output=True, text=True)
         log.info(f'[timing] ssh returned for the day at {time.time():.3f} '
@@ -247,10 +247,10 @@ class JetsonExecutor(MissionExecutor):
         # raw ssh output — verbose; the MISSION2_DAY_RESULT line below is the summary.
         log.debug(log_text.rstrip())
         self._log_startup_crash_if_needed(log_text, proc.returncode)
+        self._pull_failure_bags(log_text)  # before result parsing — succeeds even on crash
         results = self._parse_day_result(log_text)
         for leg in results:
             leg['photos'] = self._pull_photos_from_paths(leg['photos'])
-        self._pull_failure_bags(log_text)
         return results
 
     def _parse_day_result(self, log_text):
