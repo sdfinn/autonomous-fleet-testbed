@@ -46,6 +46,33 @@ def test_retreat_detector_fires_only_after_drop_from_peak():
     assert det.update((0.0, 3.05)) is True        # 0.45 below peak — retreating
 
 
+def test_ground_truth_log_nearest_returns_closest_sample():
+    log = mission2_day_module.GroundTruthLog()
+    log.record(10.0, (1.0, 2.0))
+    log.record(10.5, (1.5, 2.5))
+    log.record(11.0, (2.0, 3.0))
+    assert log.nearest(10.4) == (1.5, 2.5)
+    assert log.nearest(10.0) == (1.0, 2.0)
+    assert log.nearest(100.0) == (2.0, 3.0)   # clamps to the last sample, doesn't crash
+
+
+def test_ground_truth_log_nearest_empty_returns_none():
+    log = mission2_day_module.GroundTruthLog()
+    assert log.nearest(10.0) is None
+
+
+def test_ground_truth_log_closest_approach_between_finds_local_minimum():
+    """For reaction-point recovery: the closest approach to a KNOWN target xy,
+    restricted to a time window (one leg's own approach, not a different leg's)."""
+    log = mission2_day_module.GroundTruthLog()
+    log.record(0.0, (0.0, 0.0))
+    log.record(1.0, (0.0, 3.0))    # closest to (0, 4) in this window
+    log.record(2.0, (0.0, 1.0))
+    log.record(10.0, (0.0, 3.9))   # a LATER, closer sample outside the window — must
+                                    # not be picked for a query scoped to t in [0, 2]
+    assert log.closest_approach_to((0.0, 4.0), t_start=0.0, t_end=2.0) == (0.0, 3.0)
+
+
 def test_exec_result_tagged_filters_by_substring():
     r = ExecResult(
         reaction_events=[], checklist=[], ok=True,

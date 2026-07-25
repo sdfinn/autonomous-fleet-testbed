@@ -44,6 +44,7 @@ The GUI-watched run (Mike observing) is intentionally NOT executed by CI/self-te
 tool just makes it a single command away.
 """
 import argparse
+import math
 import os
 import pathlib
 import re
@@ -423,36 +424,6 @@ class JetsonExecutor(MissionExecutor):
         )
 
 
-class _ReactionPoller(threading.Thread):
-    """Workstation ground-truth poller (HIL only): records the CLOSEST approach to the ball as
-    the reaction point (the robot reacts, then stops/retreats, so it never gets closer). The
-    Jetson can't measure ground truth; this is the yellow rung's only way to recover its
-    reaction point (yellow drives home after reacting). Same equivalence caveat as the retired
-    harness `watch`: valid only because the path never loops back past the ball."""
-
-    def __init__(self, ball_xy, poll_s=0.5):
-        super().__init__(daemon=True)
-        self._ball = ball_xy
-        self._poll_s = poll_s
-        self._halt = threading.Event()
-        self.reaction_xy = None
-        self._best = None
-
-    def run(self):
-        while not self._halt.is_set():
-            xy = get_ground_truth_xy()
-            if xy is not None:
-                d = (xy[0] - self._ball[0]) ** 2 + (xy[1] - self._ball[1]) ** 2
-                if self._best is None or d < self._best:
-                    self._best = d
-                    self.reaction_xy = list(xy)
-            time.sleep(self._poll_s)
-
-    def stop(self):
-        self._halt.set()
-        self.join(timeout=5)
-
-
 def _parse_checklist(log_text):
     """Recover the per-waypoint checklist rows the Jetson's mission_runner printed."""
     return [(m.group(2), m.group(1)) for m in
@@ -577,6 +548,40 @@ def run_no_ball(executor, ball_ops=None, ball_xy=None):
     return ok, holder['placed_name']
 
 
+class GroundTruthLog:
+    """Continuous timestamped ground-truth samples for the WHOLE day's single
+    blocking executor call (S17 Piece 9) — replaces the old per-call point-in-time
+    get_ground_truth_xy() polls (truth_start/truth_a/truth_b/_ReactionPoller), all of
+    which assumed a call boundary to poll AROUND. One thread now logs continuously;
+    judging looks up 'ground truth near timestamp T' post-hoc against this log,
+    using the leg-boundary/reaction timestamps mission_runner.py's --day mode already
+    embeds in its JSON result."""
+
+    def __init__(self):
+        self._samples = []   # list of (t, (x, y)), append-only, time-ordered
+
+    def record(self, t, xy):
+        self._samples.append((t, xy))
+
+    def nearest(self, t):
+        if not self._samples:
+            return None
+        best = min(self._samples, key=lambda s: abs(s[0] - t))
+        return best[1]
+
+    def closest_approach_to(self, target_xy, t_start, t_end):
+        """Minimum-distance sample to target_xy, restricted to [t_start, t_end] —
+        the reaction-point recovery a HIL _ReactionPoller used to do live, now done
+        post-hoc against one leg's own time window so a later leg's approach to the
+        same fixed marker position can't be mistaken for this leg's."""
+        window = [(t, xy) for t, xy in self._samples if t_start <= t <= t_end]
+        if not window:
+            return None
+        best = min(window, key=lambda s: math.hypot(
+            s[1][0] - target_xy[0], s[1][1] - target_xy[1]))
+        return best[1]
+
+
 class RetreatDetector:
     """Pure retreat detection (extracted in S17 review CR-17 so both background threads
     share one implementation and it is unit-testable): the robot is 'retreating' once its
@@ -597,39 +602,48 @@ class RetreatDetector:
         return (self._peak_y - y) >= self._drop_m
 
 
-def _wait_for_retreat(stop_evt, poll_s=0.3):
-    """Poll workstation ground truth until retreat is detected or stop_evt fires.
-    Returns True on detected retreat, False when stopped first (mission ended — the
-    caller then performs its action anyway as the fallback). Mode-agnostic: ground
-    truth is workstation-side in BOTH sim and HIL."""
-    detector = RetreatDetector()
-    while not stop_evt.is_set():
-        if detector.update(get_ground_truth_xy()):
-            return True
-        time.sleep(poll_s)
-    return False
+def run_ball_choreography(ball_ops, ball_xy, stop_evt, poll_s=0.3):
+    """S17 Piece 9: ONE thread for the whole day (was 2 separate per-call threads).
+    Sequences the SAME 2 actions today's design already does — place yellow behind
+    the robot during leg 1's retreat, swap yellow->red during leg 2's retreat — but
+    now driven by ONE continuous ground-truth poll loop spanning the single blocking
+    run_day() call, since there's no longer a per-leg call boundary to scope a
+    separate thread to. Concurrent-only (gz mode) — operator mode still does its
+    explicit post-run prompts, unchanged, in the caller.
+    Returns the GroundTruthLog recorded along the way (reused for judging - Task 3)."""
+    truth_log = GroundTruthLog()
+    holder = {'placed_name': None, 'red_name': None}
 
+    def _wait_for_retreat():
+        detector = RetreatDetector()
+        while not stop_evt.is_set():
+            xy = get_ground_truth_xy()
+            t = time.time()
+            if xy is not None:
+                truth_log.record(t, xy)
+            if detector.update(xy):
+                return True
+            time.sleep(poll_s)
+        return False
 
-def _place_during_return(ball_ops, color, ball_xy, holder, stop_evt):
-    """Background placement for run 1's return leg: wait until the robot has begun
-    retreating, then place `color` behind it. If the mission finishes first, stop_evt
-    fires the same placement as a fallback — the ball is always in place before the next
-    run. NOTE: placement happens on the return leg, where reactions are NOT armed
-    (outbound-only) — verified in missions.py."""
-    if _wait_for_retreat(stop_evt):
-        log.info(f'retreat detected — placing {color} behind the returning robot')
-    holder['placed_name'] = ball_ops.place(color, *ball_xy)
+    if _wait_for_retreat():
+        log.info('retreat detected — placing yellow behind the returning robot')
+    holder['placed_name'] = ball_ops.place('yellow', *ball_xy)
 
-
-def _swap_during_return(ball_ops, yellow_name, ball_xy, holder, stop_evt):
-    """Background swap: on retreat (or mission-end fallback), remove yellow, settle past
-    the ghost-model lag, and spawn red at the same spot. gz calls are subprocess-based,
-    so this shares no ROS state with the mission."""
-    if _wait_for_retreat(stop_evt):
+    if _wait_for_retreat():
         log.info('retreat detected — swapping yellow -> red behind the robot')
-    ball_ops.remove(yellow_name)
+    ball_ops.remove(holder['placed_name'])
     ball_ops.settle()
     holder['red_name'] = ball_ops.place('red', *ball_xy)
+
+    # Keep logging (no more ball actions left) until the caller signals the day is
+    # done, so leg 3's own closest-approach/truth samples are still captured.
+    while not stop_evt.is_set():
+        xy = get_ground_truth_xy()
+        if xy is not None:
+            truth_log.record(time.time(), xy)
+        time.sleep(poll_s)
+    return truth_log
 
 
 def run_yellow(executor, ball_ops, ball_xy, yellow_name=None):
