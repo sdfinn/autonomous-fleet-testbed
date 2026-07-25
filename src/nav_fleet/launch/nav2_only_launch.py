@@ -40,6 +40,11 @@ def generate_launch_description():
         'start_delay', default_value='0.0',
         description='Seconds to wait before Nav2 bringup (sim_launch.py uses 13.0)',
     )
+    log_level_arg = DeclareLaunchArgument(
+        'log_level', default_value='info',
+        description='Passed through to nav2_bringup (e.g. debug, to see per-cycle '
+                    'controller_server/goal_checker reasoning during a stall diagnosis)',
+    )
 
     # robot_localization EKF — fuses IMU yaw-rate + wheel-odom translation and owns the
     # odom→base_footprint transform (Session 16 Task 9e; see config/ekf.yaml for the
