@@ -23,6 +23,7 @@ import pathlib
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 
 LAUNCH_DIR = pathlib.Path(__file__).parent
 
@@ -32,17 +33,22 @@ def generate_launch_description():
         'headless', default_value='false',
         description='Run Gazebo headless (no GUI) — set true for CI',
     )
+    log_level_arg = DeclareLaunchArgument(
+        'log_level', default_value='info',
+        description='Forwarded to nav2_only_launch.py (e.g. debug, for stall diagnosis)',
+    )
 
     sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(LAUNCH_DIR / 'sim_only_launch.py')),
     )
     nav2 = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(LAUNCH_DIR / 'nav2_only_launch.py')),
-        launch_arguments={'start_delay': '13.0'}.items(),
+        launch_arguments={'start_delay': '13.0', 'log_level': LaunchConfiguration('log_level')}.items(),
     )
 
     return LaunchDescription([
         headless_arg,
+        log_level_arg,
         sim,
         nav2,
     ])
