@@ -602,6 +602,23 @@ docker buildx build --platform linux/arm64 \
   runs nothing. To exercise CI from a branch, open a (draft) PR; that's what draft PR #4
   is for on `mission2-camera-reactive` (2026-07-17: full 8-job green first try, incl.
   stage-4 HIL on the Jetson, run 29626889652).
+- **Don't trust a run's Actions "Summary" page for report/drift content — it's a
+  confirmed GitHub platform bug, recurred twice (2026-07-23, 2026-07-25).** GitHub's
+  Summary page has repeatedly shown `stage-1-quality` displaying `Report — hil_jetson`/
+  `DRIFT DETECTED` content that job structurally cannot produce (zero
+  `$GITHUB_STEP_SUMMARY` writes anywhere in its job spec — only the two
+  `stage-5-reports-*` jobs write that content). Confirmed not just misattribution but
+  genuinely STALE data: on 2026-07-25 the displayed content didn't match that exact
+  run's own real console log OR its own downloadable PDF artifact. No code fix exists
+  — GitHub Actions' job-summary feature has no public API at all (`gh api
+  .../check-runs/<id>` returns `output.summary: null` always; the Summary tab is a
+  JS-rendered SPA with nothing in the raw HTML). **Verify report/drift content against
+  the telemetry DB or the downloaded PDF artifact instead of the Summary page.** Full
+  investigation: Release1Todo.md Session 17 Piece 8. Both `stage-5-reports-*` jobs now
+  print a direct one-click link to their own PDF artifact in their summary (2026-07-25)
+  — still downloads as a zip (a GitHub Actions platform constraint, no way around it
+  short of moving off the standard artifacts system entirely, e.g. GitHub Pages/
+  Releases — not done, real trade-offs, not attempted).
 - **Mission 2 state (post-2026-07-18, Task 13 Option B):** Mission 2 is now ONE
   self-returning mission — a verified round trip, not a one-way drive. Five steps: (1) home
   reference photo BEFORE any movement, (2) navigate to the floor marker with reactions armed
