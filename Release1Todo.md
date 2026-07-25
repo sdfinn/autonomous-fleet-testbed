@@ -4306,8 +4306,12 @@ id) was found and fixed same-day.
       ball were present; not investigated further here). Fix (commit `40663b5`): guard
       `feedback_cb` against `accept_time` still being `None` instead of assuming
       ordering. 239/239 local tests green after the fix.
-- [ ] **HIL inter-scenario delay — ROOT CAUSE FOUND (2026-07-23, live timestamped HIL
-      day), FIX NOT YET IMPLEMENTED.** Mike's observed "~30s stationary, twice per day"
+- [x] **HIL inter-scenario delay — Docker portion ROOT CAUSED (2026-07-23) AND FIXED
+      (2026-07-24, commits `ed2bf76`/`53a1376` on branch `fix/hil-container-lifecycle`).
+      This explained ~14s of the ~15.6–16.1s originally measured — see Piece 9 below
+      for the REST of the gap, found the same day during live GUI verification of this
+      fix, which turned out to be a separate, larger issue this bullet's original
+      diagnosis did not cover.** Mike's observed "~30s stationary, twice per day"
       is real and now fully accounted for with hard numbers, not a Nav2/motion issue —
       the goal-accept→first-motion path (Piece 7 item 3's original suspect) is
       confirmed sub-second in every case (0.03–1.0s across two separate live runs,
@@ -4330,21 +4334,25 @@ id) was found and fixed same-day.
       and `/tmp/hil_stage_manual_day.log` from the live run (not committed anywhere —
       local scratch only, re-derivable by rerunning `scripts/hil_stage.sh day` with the
       same two temp log lines).
-      **Fix to implement (not started):** launch ONE `docker run` for the whole HIL day
-      (kept alive, e.g. detached `-d` with a keep-alive command or a long-running shell),
-      and invoke each scenario's `mission_runner` via `docker exec` inside that same
-      container instead of a fresh `docker run --rm` per scenario. This still validates
-      the exact shipped arm64 image (the container's actual purpose — bare-metal mode
-      already gets free per-scenario process isolation from a fresh SSH'd `python3`
-      call, so containerization was never doing double duty as isolation) and should
-      cut ~14s of the ~15.6–16.1s per-transition cost to near zero. Needs: (1) change
-      `_ssh_mission2` to `docker exec` an already-running container instead of `docker
-      run --rm`; (2) start that container once per day (probably in `JetsonExecutor.
-      __init__` or a new `day()`-level setup step) and stop it once at teardown; (3)
-      re-verify the two bind mounts (`reports/`, `fleet-ci-data`) and `--network host
-      --ipc host` flags still apply correctly to a long-lived container; (4) rerun a
-      live timestamped HIL day afterward to confirm the ~14s/transition actually
-      disappears, using the same measurement method above.
+      **Fix implemented and verified (2026-07-24):** `JetsonExecutor` now starts ONE
+      long-lived container per day (`_start_container()`, `docker run -d ... sleep
+      infinity`, called once from `__init__`) and each scenario's `_ssh_mission2()`
+      `docker exec`s into that same container instead of a fresh `docker run --rm`.
+      Torn down once at day-end via a new `MissionExecutor.close()`, wired into
+      `mission2_day.main()`'s cleanup. New `HIL_CONTAINER_NAME` constant. Verified live
+      (container-mode HIL day, all 3 scenarios PASS): the workstation-side
+      `ssh returned` → next `ssh dispatch` bracket — the part this Docker fix
+      controls — dropped from the ~15.6–16.1s baseline to **~1.5s**, confirming the
+      container-lifecycle cost is gone. Bind mounts and `--network host --ipc host`
+      moved from `_ssh_mission2`'s old per-call `docker run` to `_start_container`'s
+      one-time `docker run -d`; `docker ps -a` after the day confirms the container is
+      created exactly once and cleanly removed at the end. 4 new unit tests
+      (`tests/test_mission2_day.py`), full local suite green (243 tests). Branch
+      `fix/hil-container-lifecycle`, not yet merged to main.
+      **However — this only explains PART of what Mike originally observed.** The
+      SAME live GUI verification that confirmed this fix ALSO surfaced a second,
+      larger, separate delay this diagnosis never accounted for — see **Piece 9**
+      below for the full investigation and root cause.
       **Open design question (Mike, logged not decided, separate from the fix above):**
       does Mission 2 need three separate scenario runs (no_ball/yellow/red) at all, or
       could one mission encode all the branches in a single run? Revisit as its own
@@ -4428,6 +4436,126 @@ id) was found and fixed same-day.
       `streamlit run dashboard/app.py`. Deliberately minimal per Mike's "for now" —
       no other startup behavior attached. Takes effect on the next new session (or
       after `/hooks` reloads config), not retroactively in a session already running.
+
+### Piece 9 — Two separate delays untangled: Docker lifecycle (fixed) vs. process-restart
+      architecture (root cause found, fix in progress) (Mike + Claude, 2026-07-24)
+
+Live GUI verification of Piece 8's Docker container-lifecycle fix (above) surfaced a
+second, unrelated delay Mike could still see: robot arrives home, turns to face
+forward, then a real, repeatable stationary gap before the next scenario starts. This
+piece is the full investigation of that gap — a genuinely long one, including a wrong
+turn that Mike correctly caught and pushed back on. Recorded here in full because the
+methodology (and the mistake) are as instructive as the finding.
+
+**What we ruled out, with live evidence, not guesses:**
+- **Docker/container startup latency**, including a detailed, plausible-sounding
+  write-up specifically about JetPack 7.2 + Ubuntu 24.04's PAM/`systemd-logind`/
+  cgroups-v2/NSS overhead for `docker exec`. Ruled out: the identical delay reproduced
+  in bare-metal mode (`HIL_CONTAINER` unset, zero Docker involved anywhere in the
+  mission path), and the component that actually shows the delay (`controller_server`)
+  is never containerized in EITHER mode — `scripts/hil_stage.sh run` always launches
+  it as a bare host process via `nohup ros2 launch`, container or not.
+- **CPU/GPU/memory clock throttling.** `sudo jetson_clocks` was run live to lock every
+  rail (CPU/GPU/EMC) to its ceiling for the pinned 25W power mode — no measurable
+  change (28.6s → 28.97s, within noise). Confirmed via `nvpmodel -q` that 25W was
+  genuinely active (not the 15W a stray telemetry label implied) throughout.
+- **Duplicate/"zombie" goal dispatch** (the same class of bug the Task 13
+  `default_server_timeout` fix addressed at a different layer). Ruled out via the Nav2
+  stack's own DEBUG-level log: exactly one `Receiving a new goal`/`Reached the goal!`
+  pair per navigate step, no duplicate dispatch, no abort, no preemption.
+- **`bt_navigator`'s FollowPath action-client feedback tracking** — a REAL, separately
+  reproducible bug was found here (`"Received feedback for unknown goal. Ignoring..."`
+  logged continuously, ~100/sec, for a goal's ENTIRE lifetime, never resolving,
+  reproducible from the very first goal of a freshly-restarted stack) — but it's a
+  dead end for THIS investigation: the actual goal RESULT still reaches `bt_navigator`
+  in ~30ms once `controller_server` decides it's done, so this bug gates nothing here.
+  Worth fixing on its own merits later; not filed as its own item yet.
+
+**A live cmd_vel finding, correctly interpreted only on the second pass.** Live-
+watching `/robot_001/cmd_vel` (a small throwaway rclpy watcher script, not committed)
+during the delay showed a real, sustained, oscillating in-place-rotation command —
+angular velocity ramping to the configured max (`rotate_to_heading_angular_vel: 0.5`
+rad/s), holding, easing, re-ramping, repeated — for several seconds before the goal is
+finally marked complete. Confirmed via RAW (non-bucketed) samples, not just summary
+stats, so it isn't a max-per-second bucketing artifact. This pattern is **byte-for-byte
+identical between x86 and Jetson, bare-metal and container mode** — a real, separate,
+platform-INDEPENDENT Nav2 behavior, most likely connected to the `yaw_goal_tolerance`
+tightening (0.5 → 0.15 rad, Task 13f) interacting with RPP's final rotate-to-heading
+approach. **Still open, not root-caused** — unknown whether the robot's TRUE physical
+heading is still genuinely converging that whole time, or already correctly oriented
+with the goal-checker just failing to recognize it. Next diagnostic (not yet run):
+compare commanded rotation against Gazebo's ground-truth yaw over the same window.
+
+**The wrong turn, and the correction.** Because the cmd_vel pattern above is identical
+cross-platform, it was wrongly concluded that Mike's reported x86-vs-Jetson difference
+("immediate" vs "~21 seconds, repeatable over and over, while watching the whole
+time") must be attention/perception rather than a real behavioral difference. **Mike
+pushed back directly and was right to.** The error: only the delay INSIDE one goal's
+execution (`goal accepted` → `goal result received`) had been measured — which IS
+present on both platforms — not the delay Mike was actually describing, the gap
+BETWEEN one scenario ending and the next one's motion starting. Measured directly,
+using the same session's own logs:
+
+| platform | transition | goal result → next scenario's dispatch |
+|---|---|---|
+| x86 (in-process) | no_ball → yellow | **0.40s** |
+| x86 (in-process) | yellow → red | **0.38s** |
+| Jetson bare-metal | no_ball → yellow | **≈17.6s** |
+
+A ~40x real difference, fully explaining Mike's repeated, correct observation. Broken
+down (all of it AFTER the robot has already physically finished and stopped):
+
+```
+goal result received (robot done):                  T+0.0s
+arrival photo actually saved:                        T+8.06s   (take_picture()'s
+                                                                  camera-frame wait)
+mission_runner process fully exits, SSH returns:      T+16.37s  (rclpy/DDS participant
+                                                                  shutdown)
+next scenario's SSH call dispatched:                  T+17.6s   (workstation
+                                                                  bookkeeping ~1.25s)
+```
+
+**Root cause: structural, not tunable.** `mission2_day.py`'s two executors differ in
+exactly the way that explains this:
+- `InProcessExecutor` (x86): `mission_runner`/its `rclpy` node is constructed ONCE, at
+  day start, reused for all 3 scenarios — camera subscriptions and DDS discovery are
+  already warm from the first scenario onward; no process exit, no DDS participant
+  teardown, between scenarios.
+- `JetsonExecutor` (bare-metal OR container — identical either way): every scenario is
+  a BRAND NEW SSH-dispatched `python3 -m nav_fleet.mission_runner` process — fresh
+  Python startup, fresh `rclpy.init()`, a fresh camera-topic subscription that has to
+  rediscover its publisher over DDS (the likely source of the ~8s photo wait), and at
+  the end a fresh DDS participant shutdown (CycloneDDS teardown is known to take
+  multiple seconds) before the OS process — and the wrapping SSH call — can return.
+
+This is exactly the mechanism behind Mike's own early suggestion this same session
+("why not just one mission command that runs all 3 scenarios") — initially dismissed
+because the investigation was still focused on the wrong (intra-goal) delay at that
+point. With the inter-scenario gap correctly isolated, that instinct was the right
+fix direction all along.
+
+**Fix in progress (started 2026-07-24, same session):** hold a single long-lived
+`mission_runner` process on the Jetson for the whole HIL day and feed it scenario
+targets over DDS (a ROS2 service/action call from the workstation directly into the
+persistent Jetson-side node, since Nav2's own topics/services are ALREADY proven
+visible cross-machine over DDS with zero SSH involved — confirmed directly this
+session by echoing Jetson-published `cmd_vel` topics from the workstation) rather than
+SSH-spawning a fresh Python process per scenario. Expected to bring the Jetson
+inter-scenario transition time down from ~17.6s to under 1s, matching x86. Ball-ops
+synchronization currently relies on the SSH call boundary as an implicit "scenario
+done" signal (see `_place_during_return`/`_swap_during_return` in `mission2_day.py`)
+and will need a new signaling mechanism once that boundary goes away — this is the
+main design risk, not the IPC mechanism itself.
+
+**Open items after Piece 9:**
+- [ ] Implement the persistent-process/DDS-IPC architecture fix described above.
+- [ ] Root-cause the intra-goal pegged-rotation stall (ground-truth-yaw comparison).
+- [ ] Decide whether to fix `bt_navigator`'s "unknown goal" feedback-tracking bug, or
+      file it separately — not blocking, but a real, reproducible, unexplained bug.
+- [ ] Update/cross-reference the CLAUDE.md "real motion-start stall on HIL" gotcha
+      (2026-07-22) — today's findings likely explain what was being observed there,
+      under a different framing (inter-scenario process restart + intra-goal
+      convergence, not specifically "motion won't START").
 
 ### Session Complete When
 - [ ] The gate question — **"have we done everything we can so the robot is good to go
