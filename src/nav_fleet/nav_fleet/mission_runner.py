@@ -253,7 +253,6 @@ class MissionRunner(Node):
         only the execution boundary moves, not the judging granularity. Deliberately
         NOT a generic 'legs' concept in the mission model (missions.py is untouched);
         this is Mission-2-specific day orchestration living where it always has."""
-        import time
         results = []
         for _ in range(legs):
             self.reaction_events.clear()
@@ -319,17 +318,20 @@ def main():
     if args.day:
         import json
         rclpy.init()
-        runner = MissionRunner()
-        runner.get_logger().info(build_env_manifest(
-            git_sha=git_sha(), power_mode=os.environ.get('POWER_MODE')))
-        results = runner.run_mission2_day()
-        rclpy.try_shutdown()
-        print('MISSION2_DAY_RESULT:' + json.dumps(results))
-        raise SystemExit(0 if all(r['ok'] or True for r in results) else 1)
-        # ^ exit code is informational only here — mission2_day.py judges PASS/FAIL
-        # itself from ground truth, same as today; a leg's own self-report 'ok' is
-        # not the verdict (see judge_* functions) — always exit 0 if the process
-        # itself didn't crash, so the workstation always gets to parse the JSON.
+        runner = None
+        try:
+            runner = MissionRunner()
+            runner.get_logger().info(build_env_manifest(
+                git_sha=git_sha(), power_mode=os.environ.get('POWER_MODE')))
+            results = runner.run_mission2_day()
+            print('MISSION2_DAY_RESULT:' + json.dumps(results))
+            raise SystemExit(0)
+            # ^ exit code is informational only here — mission2_day.py judges PASS/FAIL
+            # itself from ground truth, same as today; a leg's own self-report 'ok' is
+            # not the verdict (see judge_* functions) — always exit 0 if the process
+            # itself didn't crash, so the workstation always gets to parse the JSON.
+        finally:
+            rclpy.try_shutdown()
     if args.mission is None:
         parser.error('mission is required unless --day is given')
 
