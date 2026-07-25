@@ -317,6 +317,13 @@ def main():
 
     if args.day:
         import json
+        # Started before rclpy.init() — same reasoning as the one-shot path below:
+        # an independent OS process, not an rclpy node; snapshot-mode writes NOTHING
+        # to disk until snapshot() is called, so this costs nothing on an all-PASS day.
+        # Pre-fix (S17 review, 2026-07-25): this branch exited via `raise SystemExit(0)`
+        # before ever reaching the one-shot path's failure-bag code below — since HIL
+        # only runs via --day now, no HIL run could ever produce a failure bag.
+        bag_proc, bag_path = failure_bag.start('mission2')
         rclpy.init()
         runner = None
         try:
@@ -325,13 +332,30 @@ def main():
                 git_sha=git_sha(), power_mode=os.environ.get('POWER_MODE')))
             results = runner.run_mission2_day()
             print('MISSION2_DAY_RESULT:' + json.dumps(results))
-            raise SystemExit(0)
-            # ^ exit code is informational only here — mission2_day.py judges PASS/FAIL
-            # itself from ground truth, same as today; a leg's own self-report 'ok' is
-            # not the verdict (see judge_* functions) — always exit 0 if the process
-            # itself didn't crash, so the workstation always gets to parse the JSON.
+            bag_kept = any(not leg['ok'] for leg in results) and failure_bag.snapshot()
+            if bag_kept:
+                print(f'failure bag kept: {bag_path}')
+            failure_bag.stop(bag_proc, bag_path, keep=bag_kept)
+        except Exception:
+            # A crash mid-day (construction, or anywhere inside run_mission2_day) is
+            # exactly the "can't reproduce it, need evidence" case this bag exists for
+            # (failure_bag.py's docstring) — snapshot before the exception propagates.
+            # Re-raised (not swallowed): mrc != 0 with no 'Mission mission2:' line in
+            # the output is what JetsonExecutor._log_startup_crash_if_needed reads as
+            # a startup crash — this branch never prints that line at all, so that
+            # check is exactly right for a mid-day crash too, not just an import-time one.
+            bag_kept = failure_bag.snapshot()
+            if bag_kept:
+                print(f'failure bag kept: {bag_path}')
+            failure_bag.stop(bag_proc, bag_path, keep=bag_kept)
+            raise
         finally:
             rclpy.try_shutdown()
+        raise SystemExit(0)
+        # ^ exit code is informational only here — mission2_day.py judges PASS/FAIL
+        # itself from ground truth, same as today; a leg's own self-report 'ok' is
+        # not the verdict (see judge_* functions) — always exit 0 if the process
+        # itself didn't crash, so the workstation always gets to parse the JSON.
     if args.mission is None:
         parser.error('mission is required unless --day is given')
 

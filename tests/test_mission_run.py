@@ -16,6 +16,7 @@
 imports rclpy at module level, and that runner has no ROS2 (see CLAUDE.md Gotchas)."""
 import math
 import pathlib
+import sys
 
 import pytest
 pytest.importorskip('rclpy', reason='live-ROS tier: needs a ROS2 environment (S17 review CR-23 safety net - a forgotten stage-1 ignore now skips instead of breaking the stage)')
@@ -292,3 +293,124 @@ def test_mission2_no_trigger_completes_normally(runner, monkeypatch):
     runner.reaction_events.clear()
     assert runner.run_mission('mission2') is True
     assert runner.reaction_events == []
+
+
+# ── main() --day branch: failure-bag capture (S17 review fix, 2026-07-25) ──────────────────
+# Pre-fix, main()'s --day block exited via `raise SystemExit(0)` before ever reaching the
+# one-shot path's failure-bag start/snapshot/stop code below it — since HIL only runs via
+# --day now, no HIL run could ever produce a failure bag. rclpy.init/try_shutdown and
+# MissionRunner are fully stubbed here (no live node needed) so these tests are fast and
+# deterministic, independent of the module's session-scoped ros_context fixture.
+class _FakeDayLogger:
+    def info(self, *a, **k):
+        pass
+
+
+def _fake_leg(ok):
+    return {'ok': ok, 't_start': 0, 't_end': 1, 'checklist': [], 'photos': [],
+            'reaction_events': []}
+
+
+def test_day_mode_captures_failure_bag_on_failing_leg(monkeypatch, capsys):
+    class _FakeRunner:
+        def get_logger(self):
+            return _FakeDayLogger()
+
+        def run_mission2_day(self):
+            return [_fake_leg(True), _fake_leg(False), _fake_leg(True)]
+
+    monkeypatch.setattr(mission_runner_module, 'MissionRunner', _FakeRunner)
+    monkeypatch.setattr(mission_runner_module.rclpy, 'init', lambda *a, **k: None)
+    monkeypatch.setattr(mission_runner_module.rclpy, 'try_shutdown', lambda *a, **k: None)
+
+    bag_calls = {'start_scenario': None, 'snapshotted': False, 'stop_keep': None}
+
+    def fake_start(scenario):
+        bag_calls['start_scenario'] = scenario
+        return ('proc', pathlib.Path('/tmp/fake_bag'))
+
+    def fake_snapshot():
+        bag_calls['snapshotted'] = True
+        return True
+
+    monkeypatch.setattr(mission_runner_module.failure_bag, 'start', fake_start)
+    monkeypatch.setattr(mission_runner_module.failure_bag, 'snapshot', fake_snapshot)
+    monkeypatch.setattr(mission_runner_module.failure_bag, 'stop',
+                        lambda proc, bag_path, keep: bag_calls.update(stop_keep=keep))
+    monkeypatch.setattr(sys, 'argv', ['mission_runner', '--day'])
+
+    with pytest.raises(SystemExit) as exc_info:
+        mission_runner_module.main()
+
+    assert exc_info.value.code == 0
+    assert bag_calls['start_scenario'] == 'mission2'
+    assert bag_calls['snapshotted'] is True
+    assert bag_calls['stop_keep'] is True
+    assert 'failure bag kept: /tmp/fake_bag' in capsys.readouterr().out
+
+
+def test_day_mode_skips_failure_bag_when_all_legs_pass(monkeypatch, capsys):
+    """A fully-passing day must NOT snapshot — zero disk cost on the common case."""
+    class _FakeRunner:
+        def get_logger(self):
+            return _FakeDayLogger()
+
+        def run_mission2_day(self):
+            return [_fake_leg(True), _fake_leg(True), _fake_leg(True)]
+
+    monkeypatch.setattr(mission_runner_module, 'MissionRunner', _FakeRunner)
+    monkeypatch.setattr(mission_runner_module.rclpy, 'init', lambda *a, **k: None)
+    monkeypatch.setattr(mission_runner_module.rclpy, 'try_shutdown', lambda *a, **k: None)
+
+    bag_calls = {'stop_keep': None}
+
+    def _boom_snapshot():
+        raise AssertionError('snapshot must not be called on an all-PASS day')
+
+    monkeypatch.setattr(mission_runner_module.failure_bag, 'start',
+                        lambda scenario: ('proc', pathlib.Path('/tmp/fake_bag')))
+    monkeypatch.setattr(mission_runner_module.failure_bag, 'snapshot', _boom_snapshot)
+    monkeypatch.setattr(mission_runner_module.failure_bag, 'stop',
+                        lambda proc, bag_path, keep: bag_calls.update(stop_keep=keep))
+    monkeypatch.setattr(sys, 'argv', ['mission_runner', '--day'])
+
+    with pytest.raises(SystemExit) as exc_info:
+        mission_runner_module.main()
+
+    assert exc_info.value.code == 0
+    assert bag_calls['stop_keep'] is False
+    assert 'failure bag kept' not in capsys.readouterr().out
+
+
+def test_day_mode_captures_failure_bag_and_reraises_on_crash(monkeypatch, capsys):
+    """A crash mid-day (run_mission2_day() itself raising) must still snapshot before
+    the exception propagates — re-raised, not swallowed, so the process's own
+    non-zero exit (--day mode never prints 'Mission mission2:') is exactly what
+    JetsonExecutor._log_startup_crash_if_needed reads as a crash."""
+    class _FakeRunner:
+        def get_logger(self):
+            return _FakeDayLogger()
+
+        def run_mission2_day(self):
+            raise RuntimeError('boom')
+
+    monkeypatch.setattr(mission_runner_module, 'MissionRunner', _FakeRunner)
+    monkeypatch.setattr(mission_runner_module.rclpy, 'init', lambda *a, **k: None)
+    monkeypatch.setattr(mission_runner_module.rclpy, 'try_shutdown', lambda *a, **k: None)
+
+    bag_calls = {'snapshotted': False, 'stop_keep': None}
+
+    monkeypatch.setattr(mission_runner_module.failure_bag, 'start',
+                        lambda scenario: ('proc', pathlib.Path('/tmp/fake_bag')))
+    monkeypatch.setattr(mission_runner_module.failure_bag, 'snapshot',
+                        lambda: bag_calls.update(snapshotted=True) or True)
+    monkeypatch.setattr(mission_runner_module.failure_bag, 'stop',
+                        lambda proc, bag_path, keep: bag_calls.update(stop_keep=keep))
+    monkeypatch.setattr(sys, 'argv', ['mission_runner', '--day'])
+
+    with pytest.raises(RuntimeError, match='boom'):
+        mission_runner_module.main()
+
+    assert bag_calls['snapshotted'] is True
+    assert bag_calls['stop_keep'] is True
+    assert 'failure bag kept: /tmp/fake_bag' in capsys.readouterr().out
