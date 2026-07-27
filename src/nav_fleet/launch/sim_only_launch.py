@@ -25,7 +25,7 @@ not populated for workspace Python packages).
 import pathlib
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, TimerAction
+from launch.actions import ExecuteProcess, TimerAction
 from launch.substitutions import Command
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -36,11 +36,6 @@ PKG = pathlib.Path(__file__).parent.parent
 def generate_launch_description():
     urdf_path = str(PKG / 'urdf' / 'ugv_pt.urdf.xacro')
     world_path = str(PKG / 'worlds' / 'bedroom_simple.sdf')
-
-    headless_arg = DeclareLaunchArgument(
-        'headless', default_value='false',
-        description='Run Gazebo headless (no GUI) — set true for CI',
-    )
 
     robot_desc = ParameterValue(Command(['xacro ', urdf_path]), value_type=str)
 
@@ -150,7 +145,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        headless_arg,
         robot_state_publisher,
         gazebo,
         spawn_robot,

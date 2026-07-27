@@ -97,6 +97,14 @@ def generate_launch_description():
                 'map': str(PKG / 'maps' / 'living_room.yaml'),
                 'use_composition': 'True',
                 'autostart': 'true',
+                # Forwarded, not previously wired (found in second-round review,
+                # 2026-07-26): bringup_launch.py DOES declare its own 'log_level' arg
+                # and applies it via --ros-args --log-level to the composed container
+                # (see nav2_bringup's own bringup_launch.py) — this repo's log_level
+                # arg just never reached it, so `log_level:=debug` was silently a
+                # no-op even though Piece 9's stall investigation depended on real
+                # DEBUG-level Nav2 logging to do its diagnosis.
+                'log_level': LaunchConfiguration('log_level'),
             }.items(),
         )],
     )

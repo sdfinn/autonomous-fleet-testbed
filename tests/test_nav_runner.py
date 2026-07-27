@@ -153,6 +153,30 @@ def test_failure_reason_is_goal_rejected_when_action_server_unavailable(_ros):
         node.destroy_node()
 
 
+def test_wait_timeout_is_nav_timeout_not_goal_rejected_and_cancels_zombie_goal(_ros):
+    # Second-round review, 2026-07-26: an ACCEPTED goal whose result never arrives before
+    # `timeout` used to be mislabeled 'goal_rejected' (that taxonomy value means "couldn't
+    # send/accept the goal" — this goal WAS accepted) and skipped the zombie-guard cancel
+    # the other accepted-but-failed path already does, leaving a live goal unsupervised.
+    handle = _FakeGoalHandle(accepted=True, result_done=False)
+    handle.cancel_calls = 0
+    real_cancel = handle.cancel_goal_async
+
+    def counting_cancel():
+        handle.cancel_calls += 1
+        return real_cancel()
+
+    handle.cancel_goal_async = counting_cancel
+    node = _make_runner(_ros, handles=[handle], pose_seq=[(0.0, 0.0), (0.0, 0.0)])
+    try:
+        assert node.send_goal(1.0, 1.0, timeout=0.3) is False
+        assert node._action_client.send_calls == 1  # not retried — this isn't a cold_abort
+        assert node.last_failure_reason == 'nav_timeout'
+        assert handle.cancel_calls == 1
+    finally:
+        node.destroy_node()
+
+
 def test_interrupt_is_terminal_and_not_retried(_ros):
     # Result never completes; interrupt_cb fires -> cancel + terminal, no cold-abort retry.
     node = _make_runner(_ros,

@@ -94,7 +94,7 @@ POWER_MODE_LABEL = os.environ.get('POWER_MODE', '15W')
 # would poison the next run's DDS domain if it lingered. Kept in sync with ci.yml stage-2
 # and scripts/hil_stage.sh teardown.
 _SWEEP_PATTERNS = (
-    'parameter_bridge|component_container_isolated|ekf_node',
+    'parameter_bridge|component_container_isolated|ekf_node|ball_detector',
     'static_transform_publisher|robot_state_publisher',
 )
 
@@ -377,7 +377,7 @@ def launch_stack(log_path):
     log.info('launching Gazebo + Nav2 (headless) ...')
     logf = open(log_path, 'w')
     proc = subprocess.Popen(
-        ['ros2', 'launch', LAUNCH_FILE, 'headless:=true'],
+        ['ros2', 'launch', LAUNCH_FILE],
         cwd=str(REPO_DIR), stdout=logf, stderr=subprocess.STDOUT,
         start_new_session=True)   # own process group => killpg SIGINTs the whole tree
     deadline = time.time() + STACK_READY_TIMEOUT_S
@@ -412,7 +412,7 @@ def shutdown_stack(proc):
     time.sleep(2)
     leftovers = subprocess.run(
         ['pgrep', '-af', 'gz sim|component_container|robot_state_publisher|ros2 launch|'
-         'parameter_bridge|static_transform|ekf_node'],
+         'parameter_bridge|static_transform|ekf_node|ball_detector'],
         capture_output=True, text=True).stdout.strip()
     if leftovers:
         log.warning('orphans still present after sweep:\n' + leftovers)

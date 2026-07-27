@@ -55,6 +55,40 @@ require_ip() {
   [ -n "${JETSON_IP:-}" ] || { echo "FATAL: JETSON_IP not set (run discover first)" >&2; exit 1; }
 }
 
+# Query the Jetson's ACTUAL nvpmodel state rather than trusting POWER_MODE_ID's env-var
+# label. Found 2026-07-26 (Piece 2 perf pass): a manual `nvpmodel -m 0` run without also
+# exporting POWER_MODE_ID=0 silently mislabeled 3 telemetry rows as 25W while the hardware
+# was really at 15W the whole time — corrupted the drift baseline's 25W slice until caught
+# and fixed by hand. `day` now derives its telemetry label from this live query;
+# POWER_MODE_ID/POWER_MODE_LABEL above remain the REQUESTED mode for `power_mode()` (setting
+# it), never trusted as a label for what actually happened. `nvpmodel -q` needs no sudo.
+# Falls back to the requested label (with a loud WARNING) only if the live query itself
+# fails — a labeling nicety should never abort a mission day.
+real_power_mode_label() {
+  local q parsed
+  if q=$(jssh "nvpmodel -q 2>/dev/null" 2>/dev/null) && [ -n "$q" ]; then
+    parsed=$(echo "$q" | awk -F': ' '/NV Power Mode/ {print $2; exit}')
+  else
+    parsed=""
+  fi
+  # Validate against the same known-label set POWER_MODE_ID's case statement enforces on
+  # the requested side (found in second-round review, 2026-07-26): an `nvpmodel -q` output
+  # that doesn't match the expected "NV Power Mode: <label>" line — or any other unexpected
+  # format — made awk fall through with no match, silently returning an EMPTY string. That
+  # empty POWER_MODE then landed in a telemetry row and failed `validate_telemetry.py`'s
+  # schema check for every later stage-5-reports-* job until someone edited the bad row by
+  # hand — exactly what this function's own "never abort a mission day" comment promises
+  # NOT to do. Any parse failure or unrecognized value now falls back the same way an SSH
+  # failure already did.
+  case "$parsed" in
+    15W|25W|MAXN_SUPER) echo "$parsed" ;;
+    *)
+      echo "WARN: could not determine a valid live nvpmodel state on the Jetson (got '${parsed}') — falling back to POWER_MODE_ID=${POWER_MODE_ID} (${POWER_MODE_LABEL}); telemetry label may not reflect real hardware state" >&2
+      echo "$POWER_MODE_LABEL"
+      ;;
+  esac
+}
+
 discover() {
   local ip
   ip=$(getent hosts jetson.local | awk '{print $1; exit}' || true)
@@ -161,7 +195,9 @@ day() {
   # shipping, because the judge runs on the workstation where FLEET_DB lives.
   require_ip
   ws_source
-  RUNNER_TYPE=hil_jetson POWER_MODE="${POWER_MODE_LABEL}" JETSON_IP="${JETSON_IP}" \
+  local live_power_label
+  live_power_label="$(real_power_mode_label)"
+  RUNNER_TYPE=hil_jetson POWER_MODE="${live_power_label}" JETSON_IP="${JETSON_IP}" \
     JETSON_USER="${JETSON_USER}" STATE_DIR="${STATE_DIR}" \
     PYTHONUNBUFFERED=1 python3 -u -m tools.mission2_day --executor jetson --no-launch \
       --hold-s "${DAY_HOLD_S:-0}"
@@ -216,7 +252,19 @@ reset_home() {
 teardown() {
   echo '=== [teardown] both sides ==='
   if [ -n "${JETSON_IP:-}" ]; then
-    jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner' || true" || true
+    # ekf_node added 2026-07-26 (Session 17 Piece 2 perf pass): this pattern predates the
+    # CLAUDE.md gotcha's "COMPLETE teardown pattern" (2026-07-15) and never picked up
+    # ekf_node — found live, an orphaned ekf_node survived teardown and had to be killed by
+    # hand. That gotcha's fix only ever reached ci.yml's stage-2 sweep, not this function.
+    # ball_detector added 2026-07-26 (second-round code review, same day): confirmed LIVE
+    # orphans on the Jetson (2 stale processes, oldest ~2h) — its cmdline contains
+    # "nav_fleet", not "nav2", so it matched NONE of the four sweep sites in the repo
+    # (this one, ci.yml's stage-2 sweep, mission2_day.py's _SWEEP_PATTERNS, and the
+    # verification pgrep that prints "clean — no orphans remain"). Not cosmetic: extra
+    # publishers on /robot_001/detections raise the effective detection frame rate, which
+    # shortens REACTION_FRAMES's time-to-trigger — a silent confound on Mission 2's
+    # reaction-distance judging.
+    jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner|[e]kf_node|[b]all_detector' || true" || true
     # HIL_CONTAINER=1's mission() process runs inside the container's own PID namespace —
     # invisible to the host-side pkill above. A fixed --name (hil_mission) lets teardown
     # reach it directly. Best-effort: no-op when docker is absent or nothing is running,
@@ -247,6 +295,13 @@ teardown() {
   pkill -9 -f '[c]omponent_container' || true
   pkill -9 -f '[r]obot_state_publisher' || true
   pkill -9 -f '[s]im_only_launch' || true
+  # static_transform_publisher added 2026-07-26 (Session 17 Piece 2 perf pass) — same gap as
+  # the ekf_node one above, on the workstation side of the same pattern.
+  pkill -9 -f '[s]tatic_transform_publisher' || true
+  # ball_detector added 2026-07-26 (second-round code review) — same reasoning as the
+  # Jetson-side pattern above, for a local single-machine (non-HIL) sim_launch.py run
+  # where nav2_only_launch.py, and therefore ball_detector, runs on this same box.
+  pkill -9 -f '[b]all_detector' || true
   echo '=== [teardown] done ==='
   return 0
 }

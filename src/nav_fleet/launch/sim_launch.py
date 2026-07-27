@@ -29,10 +29,6 @@ LAUNCH_DIR = pathlib.Path(__file__).parent
 
 
 def generate_launch_description():
-    headless_arg = DeclareLaunchArgument(
-        'headless', default_value='false',
-        description='Run Gazebo headless (no GUI) — set true for CI',
-    )
     log_level_arg = DeclareLaunchArgument(
         'log_level', default_value='info',
         description='Forwarded to nav2_only_launch.py (e.g. debug, for stall diagnosis)',
@@ -47,7 +43,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        headless_arg,
         log_level_arg,
         sim,
         nav2,

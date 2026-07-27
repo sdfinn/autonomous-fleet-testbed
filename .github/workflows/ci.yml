@@ -230,7 +230,7 @@ jobs:
         # 2026-07-15 red run had 8,716 "jump back in time" warnings from exactly this,
         # presenting as "Goal rejected after all retries". Sweep before launch.
         run: |
-          pkill -9 -f "parameter_bridge|component_container_isolated|ekf_node" || true
+          pkill -9 -f "parameter_bridge|component_container_isolated|ekf_node|ball_detector" || true
           pkill -9 -f "static_transform_publisher|robot_state_publisher" || true
           pkill -f "gz sim" || true
           sleep 3
@@ -246,7 +246,7 @@ jobs:
           # lost once the step ends, so a failure window has zero Nav2 output to diagnose
           # (Session 16 — the first red run had no planner_server lines at all).
           : > /tmp/stage2_sim.log
-          ros2 launch src/nav_fleet/launch/sim_launch.py headless:=true \
+          ros2 launch src/nav_fleet/launch/sim_launch.py \
             > /tmp/stage2_sim.log 2>&1 &
           sleep 20
 
@@ -283,7 +283,7 @@ jobs:
       - name: Shutdown sim (full pattern — a bare "gz sim" pkill leaves bridge/TF orphans)
         if: always()
         run: |
-          pkill -9 -f "parameter_bridge|component_container_isolated|ekf_node" || true
+          pkill -9 -f "parameter_bridge|component_container_isolated|ekf_node|ball_detector" || true
           pkill -9 -f "static_transform_publisher|robot_state_publisher" || true
           pkill -f "gz sim" || true
 

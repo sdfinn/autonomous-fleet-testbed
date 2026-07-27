@@ -45,7 +45,7 @@ python -m pytest tests/ -v \
   --ignore=tests/test_nav_runner.py
 
 # Launch the sim (Gazebo headless + Nav2). Wait for "Managed nodes are active".
-ros2 launch src/nav_fleet/launch/sim_launch.py headless:=true
+ros2 launch src/nav_fleet/launch/sim_launch.py
 
 # In a second terminal: run Mission 1 (navigate → photograph → return)
 python -m nav_fleet.mission_runner mission1

@@ -526,6 +526,23 @@ docker buildx build --platform linux/arm64 \
     XAUTHORITY=${XAUTHORITY:-/run/user/1000/gdm/Xauthority} \
     bash -c 'source /opt/ros/jazzy/setup.bash && gz sim -g'
   ```
+- **A different failure — `gz sim -s -r` (headless SERVER, not just `-g`) can die with a GLX
+  `BadValue` X error if the NVIDIA driver's kernel module and userspace libraries have drifted
+  out of sync — don't assume it's the snap/glibc issue above just because the symptom looks
+  similar.** Found 2026-07-26 (Session 17 Piece 2 performance pass): `gz sim -s -r
+  bedroom_simple.sdf` died immediately with `X Error of failed request: BadValue ... GLX
+  ... process has died`, reproduced identically with AND without the scrubbed-env workaround
+  above — ruling out snap/GTK pollution as the cause this time. Root cause: Ubuntu's
+  unattended-upgrades had silently upgraded the NVIDIA userspace packages (`nvidia-utils-595`
+  et al., 595.71.05 → 595.84) without a reboot, so the loaded kernel module (confirmed via
+  `cat /proc/driver/nvidia/version` → still 595.71.05) no longer matched. `nvidia-smi` is the
+  fast diagnostic: `Failed to initialize NVML: Driver/library version mismatch` means every
+  GL-context-creating process on the box (including Ogre2's offscreen context for the camera
+  sensor) is broken until reboot — not just Gazebo. Fix: reboot (reloading the nvidia kernel
+  module live under an active desktop session is riskier than just rebooting). No code-side
+  workaround exists or should be attempted — this is host maintenance, not a project bug.
+  Worth periodically checking `nvidia-smi` after any unattended driver-package upgrade,
+  independent of this project.
 - **Jetson powered off ⇒ local sim breaks (silently) unless `ROS_LOCALHOST_ONLY=1`.** With the
   Jetson down, `enp6s0` goes `NO-CARRIER`/DOWN and CycloneDDS floods "Exception sending a
   multicast message: Network is unreachable" — DDS discovery fails, so Nav2 never reaches
@@ -578,8 +595,13 @@ docker buildx build --platform linux/arm64 \
   tf2 "Detected jump back in time" floods (8,716 in one CI run) → AMCL can't anchor TF →
   goals REJECTED, and the nav2 container can even SIGABRT on an uncaught
   `tf2::NoDataForExtrapolationException`. The COMPLETE teardown/verify pattern is:
-  `pgrep -af "gz sim|component_container|robot_state_publisher|ros2 launch|parameter_bridge|static_transform|ekf_node"`.
-  stage-2 in ci.yml now sweeps this pattern before launch and after the job. Also: unique
+  `pgrep -af "gz sim|component_container|robot_state_publisher|ros2 launch|parameter_bridge|static_transform|ekf_node|ball_detector"`
+  (`ball_detector` added 2026-07-26, second-round code review: its cmdline contains
+  `nav_fleet`, not `nav2`, so it matched none of the sweep sites and 2 live orphans were
+  found running on the Jetson — not cosmetic, since extra publishers on
+  `/robot_001/detections` raise the effective detection rate and shorten Mission 2's
+  `REACTION_FRAMES` time-to-trigger). stage-2 in ci.yml now sweeps this pattern before
+  launch and after the job. Also: unique
   `ROS_DOMAIN_ID` per local run only hides leftovers, it doesn't prevent them — and reusing a
   domain number (or running on 0, like CI) collides with them. From a Claude Code shell,
   subagent-spawned leftovers may not respond to sandboxed pkill — kill by explicit PID with

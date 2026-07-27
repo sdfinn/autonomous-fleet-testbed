@@ -4,8 +4,8 @@
 Drift detection against historical baselines.
 
 Compares a run's key metrics against a rolling window of past PASS runs from the SAME
-(runner_type, power_mode) slice and flags any metric that deviates in its configured
-WORSE direction beyond the configured sigma bands.
+(runner_type, power_mode, scenario) slice and flags any metric that deviates in its
+configured WORSE direction beyond the configured sigma bands.
 
 All thresholds, watched metrics, and directions live in config/drift_config.yaml —
 never here (CR-01/CR-02, Session 17 code review: this module previously hardcoded its

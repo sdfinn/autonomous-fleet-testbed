@@ -39,17 +39,33 @@ _TABLE_STYLE = TableStyle([
 ])
 
 
-def load_run_rows(runner_type: str, scenarios: list, db_path: str = DB_PATH) -> list:
-    """The latest row for each of `scenarios`, filtered to `runner_type` — 'this run's
-    own result(s)', not a rolling window. A scenario with no matching row is omitted."""
+# How stale a "latest row" is allowed to be before it's excluded rather than shown as
+# this run's own result — found in second-round review, 2026-07-26: with no bound at
+# all, a red/crashed CI run (stage-5-reports-hw deliberately runs on stage-4 FAILURE
+# too) could show an UNRELATED earlier PASS from a previous run for any scenario the
+# current run never reached, with nothing in the report distinguishing "fresh" from
+# "stale". Confirmed live against the real DB: rows over 30 minutes old were shown as
+# "this run's" data during a red HIL day. This session's own measured full-pipeline
+# wall time (4 real CI runs, 2026-07-26) is ~10-13 minutes end to end — 30 minutes is a
+# generous multiple of that, not a tight guess.
+MAX_ROW_AGE_MINUTES = 30
+
+
+def load_run_rows(runner_type: str, scenarios: list, db_path: str = DB_PATH,
+                   max_age_minutes: int = MAX_ROW_AGE_MINUTES) -> list:
+    """The latest row for each of `scenarios`, filtered to `runner_type` AND to rows no
+    older than `max_age_minutes` — 'this run's own result(s)', not a rolling window and
+    not a stale earlier run's leftovers. A scenario with no matching-and-fresh row is
+    omitted (better to show nothing than to show the wrong run's data)."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    cutoff = (datetime.now() - timedelta(minutes=max_age_minutes)).strftime("%Y-%m-%dT%H:%M:%S")
     rows = []
     for scenario in scenarios:
         row = conn.execute(
-            "SELECT * FROM runs WHERE runner_type = ? AND scenario = ? "
+            "SELECT * FROM runs WHERE runner_type = ? AND scenario = ? AND timestamp >= ? "
             "ORDER BY id DESC LIMIT 1",
-            (runner_type, scenario),
+            (runner_type, scenario, cutoff),
         ).fetchone()
         if row is not None:
             rows.append(dict(row))

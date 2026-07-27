@@ -67,6 +67,42 @@ def test_load_run_rows_respects_runner_type(tmp_path):
     assert rows == []
 
 
+def test_load_run_rows_excludes_stale_row_from_a_different_run(tmp_path):
+    # Second-round review, 2026-07-26: with no recency bound, a red/crashed CI run could
+    # show an unrelated earlier PASS for any scenario it never reached itself. Confirmed
+    # live against the real DB — rows over 30 minutes old were shown as "this run's" data.
+    import sqlite3
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    from tools.generate_test_report import load_run_rows
+    run_id = log_run(scenario="mission2_no_ball", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="hil_jetson")
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE runs SET timestamp = '2020-01-01T00:00:00' WHERE id = ?",
+                 (run_id,))
+    conn.commit()
+    conn.close()
+    rows = load_run_rows("hil_jetson", ["mission2_no_ball"], db_path=db)
+    assert rows == []
+
+
+def test_load_run_rows_keeps_row_within_max_age(tmp_path):
+    import sqlite3
+    from datetime import datetime, timedelta
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    from tools.generate_test_report import load_run_rows
+    run_id = log_run(scenario="mission2_no_ball", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="hil_jetson")
+    old_ts = (datetime.now() - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S")
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE runs SET timestamp = ? WHERE id = ?", (old_ts, run_id))
+    conn.commit()
+    conn.close()
+    rows = load_run_rows("hil_jetson", ["mission2_no_ball"], db_path=db, max_age_minutes=30)
+    assert len(rows) == 1
+
+
 def test_generate_report_produces_pdf(tmp_path):
     db = str(tmp_path / "t.db")
     init_db(db)

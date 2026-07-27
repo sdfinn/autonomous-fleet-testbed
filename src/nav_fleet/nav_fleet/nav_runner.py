@@ -241,7 +241,16 @@ class NavRunner(Node):
 
             if not result_future.done():
                 self.get_logger().warning('Goal wait timed out')
-                return ('send_fail',)
+                # Distinct from 'send_fail' (below): the goal was ACCEPTED (we're past
+                # goal_handle.accepted and _last_goal_handle is already set) — this is the
+                # 'nav_timeout' category per the taxonomy above (accepted but didn't
+                # succeed), not 'goal_rejected'. Found in second-round review, 2026-07-26:
+                # this branch used to collapse into 'send_fail' -> 'goal_rejected' and
+                # skipped the zombie-guard cancel the OTHER accepted-but-failed path
+                # (below) already does — mislabeling exactly the stall class this project
+                # has been chasing (Piece 7/9) and leaving a live, accepted goal running
+                # unsupervised on a wait-timeout.
+                return ('nav_timeout',)
 
             result_time = time.time()
             self.get_logger().info(
@@ -263,6 +272,15 @@ class NavRunner(Node):
             kind = outcome[0]
             if kind == 'send_fail':
                 self.last_failure_reason = 'goal_rejected'
+                return self._finish(False, x, y, start_time, steps)
+            if kind == 'nav_timeout':
+                self.last_failure_reason = 'nav_timeout'
+                # Zombie guard (same reasoning as the other accepted-but-failed path
+                # below): the goal was accepted and is still outstanding when the wait
+                # times out — cancel it so the robot never keeps driving an unsupervised
+                # goal just because OUR wait gave up on it.
+                if self._last_goal_handle is not None:
+                    self._cancel_goal(self._last_goal_handle)
                 return self._finish(False, x, y, start_time, steps)
             if kind == 'interrupt':
                 return self._finish(False, x, y, start_time, steps)
