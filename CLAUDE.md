@@ -511,6 +511,20 @@ docker buildx build --platform linux/arm64 \
   fully explained his repeated, correct, "watching the whole time" observation. Don't
   minimize a repeated, specific live observation as "which moment you happened to be
   watching" — re-measure the SPECIFIC boundary being described first.
+- **`.github/workflows/ci.yml` uses CRLF line endings — a raw Python `open(path).read()`/
+  `open(path, 'w').write()` round-trip silently strips them all to LF, producing a
+  1000+-line noise diff that buries the real 2-line change.** Found 2026-07-26 (Piece 2
+  second-round review fixes): patched two `pkill` lines via a small Python script for a
+  `str.replace()` across 2 occurrences — worked, but `git diff --stat` showed 1102 lines
+  changed for what was actually a 6-line diff, because text-mode Python I/O converts
+  CRLF→LF on read and never restores it on write. No other file in this repo has this
+  issue (checked: only `ci.yml` is CRLF). Fix used: `git checkout HEAD -- <file>` to
+  restore the original CRLF, then reapply the SAME edit via the Edit tool instead (which
+  does an exact string replacement without a full-file read/write round-trip and
+  correctly preserves CRLF) — verified after with `file ci.yml` still reporting "with
+  CRLF line terminators". Rule: never touch `ci.yml` with a raw Python/shell
+  read-modify-write script; always use Edit (or `sed -i` with GNU sed, which also
+  preserves line endings) for this specific file.
 
 ## Nav2 Launch Gotchas (Session 10+)
 - `gz sim` WITHOUT `-s` launches a GUI that crashes on this machine (snap/glibc libpthread conflict)
@@ -813,6 +827,24 @@ docker buildx build --platform linux/arm64 \
   `.superpowers/sdd/progress.md` ("FORENSICS DAY 2026-07-19"). The GraphicsMagick env
   knobs (`MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1`) are VERIFIED delivered to the Nav2
   processes (/proc/environ) — if the SIGSEGV recurs, the knob is insufficient, not missing.
+- **A `DeclareLaunchArgument` that isn't in the returned `LaunchDescription`'s action
+  list is never actually registered — but the failure only surfaces when that launch
+  file is invoked STANDALONE, not when a parent composes it.** Broke CI stage-4-hil the
+  same day it was introduced (2026-07-26, second-round review's `log_level` fix):
+  `nav2_only_launch.py` declared `log_level_arg = DeclareLaunchArgument('log_level', ...)`
+  as a local variable and used `LaunchConfiguration('log_level')` further down, but never
+  added `log_level_arg` to the `return LaunchDescription([...])` list — so the argument
+  was never declared in the launch context. Worked fine through `sim_launch.py` (which
+  declares its OWN top-level `log_level_arg` and forwards the resolved value down via
+  `launch_arguments`), so local testing through that composed path never caught it. The
+  ONE place that launches `nav2_only_launch.py` standalone — no `sim_launch.py` in
+  between — is `hil_stage.sh`'s `nav2_up()` (i.e., Stage 4 HIL), which is exactly where
+  it broke: `[ERROR] [launch]: Caught exception in launch: launch configuration
+  'log_level' does not exist`, Nav2 never came up. Lesson: when adding/fixing a
+  `DeclareLaunchArgument` in a launch file that's ALSO composed by another launch file,
+  test the file standalone too (`ros2 launch <file>.py` directly, no wrapper) — a
+  composing parent's own declaration of the same argument name can mask a broken
+  declaration in the child indefinitely.
 
 ## Isaac Sim Gotchas (Session 11+)
 - **Version:** `isaacsim==6.0.1.0` is the correct pip package (`isaacsim[all,extscache]==6.0.1.0`
