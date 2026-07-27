@@ -111,6 +111,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         start_delay_arg,
+        log_level_arg,
         ekf_node,
         ball_detector,
         nav2,
