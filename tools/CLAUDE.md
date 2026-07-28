@@ -57,9 +57,9 @@ Claude is working with files under this directory.
   `(runner_type, scenarios)` belong to which report stage — consumed by
   `generate_test_report.py --stage {sim,hil,real}` and `mission2_day.py`'s
   day-summary loop. **`real` stage added 2026-07-28** (`runner_type=real_robot`,
-  `scenarios=[bedroom_nav]`) for `RealRobotStartup.md`'s validation gate — only
-  covers the BR-01 nav-only check today, not a real run of `mission_runner`'s full
-  `mission1`; that's a separate, still-open scope question.
+  `scenarios=[bedroom_nav]`) for `RealRobotStartup.md`'s validation gate.
+  **Decided (2026-07-28, Mike):** BR-01 nav-only is the gate, deliberately — not a
+  real run of `mission_runner`'s full `mission1`. Settled, no plan to change it.
 - **`tests/test_navigation.py`'s `runner_type` bug, fixed 2026-07-28:** its
   `telemetry_run` fixture hardcoded `runner_type='local'` regardless of
   `sim_engine` — a real-robot run (`SIM_ENGINE=real`) would have logged

@@ -23,10 +23,9 @@ hil:
 # Real robot (RealRobotStartup.md). Added 2026-07-28 — before this, --stage real
 # didn't exist at all: tests/test_navigation.py's telemetry_run fixture always
 # logs scenario 'bedroom_nav' (the BR-01 nav-only check), matching this list.
-# Does NOT yet cover a real run of mission_runner's actual 'mission1' (navigate ->
-# photo -> navigate back) — that's a separate, still-open question about whether
-# RealRobotStartup.md's validation gate should also exercise the full mission, not
-# just BR-01 nav-only.
+# Decided 2026-07-28 (Mike): BR-01 nav-only IS the R1 validation gate, deliberately
+# — not a real run of mission_runner's 'mission1' (navigate -> photo -> navigate
+# back). Settled, no plan to change it.
 real:
   runner_type: real_robot
   scenarios: [bedroom_nav]

@@ -216,7 +216,8 @@ def generate_launch_description():
 - [ ] Commit everything.
 
 **Part A complete when:** `bedroom_real.pgm`/`.yaml` committed; `robot_launch.py` runs
-clean standalone AND in-container; the robot completes Mission 1 without collision;
+clean standalone AND in-container; the robot passes BR-01 (navigates to the bedroom
+goal without collision — the gate, deliberately nav-only, not a full `mission1` run);
 Mike's eyes-on check confirms the PASS row is real; correlation >= 70%; `r1-complete`
 tagged.
 
@@ -245,10 +246,9 @@ tagged.
   `runner_type=real_robot`, `scenarios=[bedroom_nav]`, matching what
   `test_navigation.py` actually logs; covered by
   `tests/test_pipeline_matrix.py::test_real_config_declares_real_stage_matching_test_navigation`).
-  **Still open:** this only covers the BR-01 nav-only check, not a real run of
-  `mission_runner`'s actual `mission1` (navigate → photo → navigate back) —
-  decide separately whether the validation gate should also exercise the full
-  mission, not just nav-only.
+  **Decided (2026-07-28, Mike):** the R1 validation gate is BR-01 nav-only —
+  it does not run `mission_runner`'s full `mission1` (navigate → photo →
+  navigate back). This is the gate as-is; no plan to change it.
 - [ ] Check drift: `python -m tools.baseline_monitor --run-id <id>` (or check the
   dashboard's Drift tab). Real-robot rows now correctly get their own
   `runner_type=real_robot` (fixed 2026-07-28 — `test_navigation.py` used to
