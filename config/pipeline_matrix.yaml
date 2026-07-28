@@ -19,3 +19,14 @@ sim:
 hil:
   runner_type: hil_jetson
   scenarios: [mission2_no_ball, mission2_yellow, mission2_red]
+
+# Real robot (RealRobotStartup.md). Added 2026-07-28 — before this, --stage real
+# didn't exist at all: tests/test_navigation.py's telemetry_run fixture always
+# logs scenario 'bedroom_nav' (the BR-01 nav-only check), matching this list.
+# Does NOT yet cover a real run of mission_runner's actual 'mission1' (navigate ->
+# photo -> navigate back) — that's a separate, still-open question about whether
+# RealRobotStartup.md's validation gate should also exercise the full mission, not
+# just BR-01 nav-only.
+real:
+  runner_type: real_robot
+  scenarios: [bedroom_nav]

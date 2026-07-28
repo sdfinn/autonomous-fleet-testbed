@@ -168,10 +168,16 @@ def generate_launch_description():
   from container concerns): `ros2 launch nav_fleet robot_launch.py` directly on the
   Jetson host.
 - [ ] Then run it for real inside the container (the run that actually counts, using
-  the SAME image `stage-3-arm64` builds):
+  the SAME image `stage-3-arm64` builds — flags match the exact proven pattern
+  `tools/mission2_day.py`'s `JetsonExecutor` already uses for HIL, verified
+  2026-07-28):
   ```bash
-  docker run --network host -v ~/fleet-ci-data:/root/fleet-ci-data <hil-image> \
-    bash -c "source install/setup.bash && ros2 launch nav_fleet robot_launch.py"
+  docker run --rm --name robot_brain --network host --ipc host \
+    -v $HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
+    -v $HOME/fleet-ci-data:/root/fleet-ci-data \
+    -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp -e ROS_DOMAIN_ID=0 \
+    <hil-image> bash -c "source /opt/ros/jazzy/setup.bash && \
+      source /ros2_ws/install/setup.bash && ros2 launch nav_fleet robot_launch.py"
   ```
   No `--device` flags needed — the container only talks DDS topics to the bare
   driver nodes on the same host, never touches `/dev` directly.
@@ -185,11 +191,22 @@ def generate_launch_description():
   no reason to line up with anything else).
 - [ ] Run the comparison test from the workstation:
   ```bash
-  FLEET_DB=~/fleet-ci-data/fleet_runs.db SIM_ENGINE=real python -m pytest \
-    tests/test_navigation.py -v --timeout=120
+  FLEET_DB=~/fleet-ci-data/fleet_runs.db SIM_ENGINE=real RUNNER_TYPE=real_robot \
+    python -m pytest tests/test_navigation.py -v --timeout=120
+  # RUNNER_TYPE=real_robot fixed 2026-07-28 — test_navigation.py used to hardcode
+  # 'local' regardless of sim_engine, which would have mixed real-robot rows into
+  # the sim drift baseline (the exact bug already fixed once for mission2 variants).
   python tools/sim_vs_real_comparison.py --sim-engine gazebo --real-engine real
   # Target: correlation >= 70%
   ```
+  **Note (checked 2026-07-28):** `test_navigation.py` is proven today only in
+  `stage-2-gazebo` — single machine, sim and test on the same box. `stage-4-hil`
+  never runs this test at all (only Mission 2's day script). Running pytest from the
+  workstation against the real robot's Nav2 action server is architecturally sound
+  (standard cross-machine DDS action calls — the same mechanism HIL already uses for
+  topics), but it's a genuinely NEW invocation shape, not something already proven by
+  an existing CI leg. Worth watching closely the first time, not assuming it "just
+  works" because the pieces are individually proven.
 - [ ] **Ground-truth check (not automated — this is the check):** visually confirm the
   robot's actual final position/behavior matches the logged PASS row before trusting
   it. Real hardware has no Gazebo-equivalent oracle; this is the accepted mitigation.
@@ -217,22 +234,27 @@ tagged.
 
 ### B2. After a test — pass or fail — pull evidence
 
-- [ ] Pull ROS2 logs: `python -m tools.pull_ros_logs --host <robot-ip-or-alias>`
+- [ ] Pull ROS2 logs: `python -m tools.pull_ros_logs --host mike@<robot-ip>` (or set
+  `JETSON_USER`/`JETSON_IP` env vars instead — same convention `scripts/hil_stage.sh`
+  uses — and omit `--host` entirely).
 - [ ] On a FAIL, a rosbag evidence bag should already be sitting in
   `reports/failure_bags/` (auto-captured by `mission_runner.py`'s failure-bag logic) —
   `scp` it back if it hasn't been pulled already.
-- [ ] Generate a report: `python -m tools.generate_test_report --runner-type <?> --scenario mission1`
-  — **known gap, not yet fixed:** `config/pipeline_matrix.yaml` only declares `sim`/
-  `hil` stages, no `real` stage, so `--stage real` doesn't exist yet. Use explicit
-  `--runner-type`/`--scenario` flags for now.
+- [ ] Generate a report: `python -m tools.generate_test_report --stage real`
+  (fixed 2026-07-28 — `config/pipeline_matrix.yaml` now declares a `real` stage:
+  `runner_type=real_robot`, `scenarios=[bedroom_nav]`, matching what
+  `test_navigation.py` actually logs; covered by
+  `tests/test_pipeline_matrix.py::test_real_config_declares_real_stage_matching_test_navigation`).
+  **Still open:** this only covers the BR-01 nav-only check, not a real run of
+  `mission_runner`'s actual `mission1` (navigate → photo → navigate back) —
+  decide separately whether the validation gate should also exercise the full
+  mission, not just nav-only.
 - [ ] Check drift: `python -m tools.baseline_monitor --run-id <id>` (or check the
-  dashboard's Drift tab).
-  — **known gap, not yet fixed:** `tests/test_navigation.py` hardcodes
-  `runner_type='local'` for every run regardless of `sim_engine`, so real-robot rows
-  currently get misfiled into the same bucket as sim-local rows — the exact
-  scenario-mixing bug this project already fixed once for mission2 variants. Fix
-  before trusting drift numbers on real data (give real runs their own
-  `runner_type`, e.g. `'real_robot'`).
+  dashboard's Drift tab). Real-robot rows now correctly get their own
+  `runner_type=real_robot` (fixed 2026-07-28 — `test_navigation.py` used to
+  hardcode `'local'` for every run, which would have mixed real-robot rows into
+  the sim baseline — the exact scenario-mixing bug already fixed once for
+  mission2 variants).
 
 ### B3. Code changed — getting back into HIL mode
 

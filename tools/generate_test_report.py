@@ -232,7 +232,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate a per-run PDF report for one runner_type's own scenarios"
     )
-    parser.add_argument("--stage", choices=["sim", "hil"], default=None,
+    parser.add_argument("--stage", choices=["sim", "hil", "real"], default=None,
                          help="declared source (config/pipeline_matrix.yaml) for "
                               "runner-type + scenarios — mutually exclusive with "
                               "--runner-type/--scenario")

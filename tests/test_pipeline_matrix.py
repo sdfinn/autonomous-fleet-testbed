@@ -40,3 +40,12 @@ def test_real_config_declares_hil_stage_matching_ci():
 
     assert runner_type == "hil_jetson"
     assert scenarios == ["mission2_no_ball", "mission2_yellow", "mission2_red"]
+
+
+def test_real_config_declares_real_stage_matching_test_navigation():
+    """RealRobotStartup.md's validation gate — matches the scenario
+    tests/test_navigation.py's telemetry_run fixture actually logs today."""
+    runner_type, scenarios = load_stage("real")
+
+    assert runner_type == "real_robot"
+    assert scenarios == ["bedroom_nav"]

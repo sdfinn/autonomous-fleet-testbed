@@ -64,7 +64,7 @@ def telemetry_run(nav_runner, metrics):
         step_log=[],
         robot_id=os.environ.get('ROBOT_ID', 'robot_001'),
         robot_type='jetson_ugv_pt',
-        runner_type='local',
+        runner_type=os.environ.get('RUNNER_TYPE', 'local'),
         sim_engine=os.environ.get('SIM_ENGINE', 'gazebo'),
         nav_success_rate=1.0 if nav_runner.last_result else 0.0,
         mean_position_error=nav_runner.last_position_error,
