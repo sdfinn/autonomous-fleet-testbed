@@ -1,26 +1,21 @@
-"""Compare sim and real fleet runs using the new fleet schema.
+"""Compare sim and real fleet runs from the single fleet telemetry database.
 
-This tool accepts two SQLite databases, one for simulation runs and one for
-real-world runs, and computes metric deltas and optional scenario-level
-correlation where scenario names align.
+Sim and real runs live in the SAME `runs` table (Session 12's design: one SQLite
+store, `sim_engine` column distinguishes gazebo | isaac | real) — this filters
+ONE database by `sim_engine` into two comparable subsets, rather than expecting
+two separate database files. The original two-DB design (`FLEET_SIM_DB`/
+`FLEET_REAL_DB`) never matched how `telemetry_logger.log_run()` actually writes,
+and its unfiltered query would have silently compared identical rows against
+themselves even if pointed at one file by hand. Fixed 2026-07-27 (Session 18
+prep) — see Release1Todo.md Session 18 for the history.
 """
 
-import os
+import argparse
 import sqlite3
-from pathlib import Path
 
 import pandas as pd
 
-_PROJECT_ROOT = Path(__file__).resolve().parent
-
-DEFAULT_SIM_DB = os.environ.get(
-    "FLEET_SIM_DB",
-    str(_PROJECT_ROOT.parent / "reports" / "fleet_runs.db"),
-)
-DEFAULT_REAL_DB = os.environ.get(
-    "FLEET_REAL_DB",
-    str(_PROJECT_ROOT.parent / "reports" / "fleet_real_runs.db"),
-)
+from tools.telemetry_logger import DB_PATH
 
 METRIC_KEYS = [
     "nav_success_rate",
@@ -42,7 +37,8 @@ def _get_available_columns(db_path: str) -> set:
         conn.close()
 
 
-def load_run_metrics(db_path: str) -> pd.DataFrame:
+def load_run_metrics(db_path: str, sim_engine: str) -> pd.DataFrame:
+    """Load rows for one `sim_engine` value (gazebo | isaac | real) from `db_path`."""
     available = _get_available_columns(db_path)
     selected = ["scenario"] + [m for m in METRIC_KEYS if m in available]
 
@@ -51,19 +47,20 @@ def load_run_metrics(db_path: str) -> pd.DataFrame:
 
     conn = sqlite3.connect(db_path)
     try:
-        query = f"SELECT {', '.join(selected)} FROM runs"
-        return pd.read_sql(query, conn)
+        query = f"SELECT {', '.join(selected)} FROM runs WHERE sim_engine = ?"
+        return pd.read_sql(query, conn, params=(sim_engine,))
     finally:
         conn.close()
 
 
-def compare_metrics(sim_db: str, real_db: str) -> dict:
-    sim = load_run_metrics(sim_db)
-    real = load_run_metrics(real_db)
+def compare_metrics(db_path: str, sim_engine: str = "gazebo", real_engine: str = "real") -> dict:
+    sim = load_run_metrics(db_path, sim_engine)
+    real = load_run_metrics(db_path, real_engine)
 
     results = {
-        "sim_db": sim_db,
-        "real_db": real_db,
+        "db": db_path,
+        "sim_engine": sim_engine,
+        "real_engine": real_engine,
         "metrics": {},
         "scenario_matches": 0,
     }
@@ -109,8 +106,9 @@ def compare_metrics(sim_db: str, real_db: str) -> dict:
 def print_comparison(results: dict) -> None:
     print("Sim vs Real Comparison")
     print("-----------------------")
-    print(f"Sim DB:  {results['sim_db']}")
-    print(f"Real DB: {results['real_db']}")
+    print(f"DB:          {results['db']}")
+    print(f"sim_engine:  {results['sim_engine']}")
+    print(f"real_engine: {results['real_engine']}")
     print(f"Scenario matches: {results['scenario_matches']}\n")
 
     for metric, entry in results["metrics"].items():
@@ -126,22 +124,26 @@ def print_comparison(results: dict) -> None:
 
 
 def main() -> None:
-    import argparse
-
     parser = argparse.ArgumentParser(description="Compare sim and real fleet run metrics.")
     parser.add_argument(
-        "--sim-db",
-        default=DEFAULT_SIM_DB,
-        help="Path to the simulation runs SQLite database.",
+        "--db",
+        default=DB_PATH,
+        help="Path to the fleet telemetry SQLite database (default: FLEET_DB / "
+             "tools.telemetry_logger.DB_PATH — the single DB every tool reads/writes).",
     )
     parser.add_argument(
-        "--real-db",
-        default=DEFAULT_REAL_DB,
-        help="Path to the real runs SQLite database.",
+        "--sim-engine",
+        default="gazebo",
+        help="sim_engine value to treat as the 'sim' side (default: gazebo).",
+    )
+    parser.add_argument(
+        "--real-engine",
+        default="real",
+        help="sim_engine value to treat as the 'real' side (default: real).",
     )
     args = parser.parse_args()
 
-    results = compare_metrics(args.sim_db, args.real_db)
+    results = compare_metrics(args.db, args.sim_engine, args.real_engine)
     print_comparison(results)
 
 
