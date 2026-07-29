@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Agentic test loop: diagnose failures, propose fixes, await human approval."""
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
 
 import anthropic
+import ollama
 
 from tools.baseline_monitor import check_run
 from tools.telemetry_logger import DB_PATH as FLEET_DB
@@ -23,6 +25,8 @@ except ModuleNotFoundError:  # no colcon overlay (non-interactive shell) — imp
 client = anthropic.Anthropic()
 
 NAV2_PARAMS_PATH = Path(__file__).resolve().parent.parent / 'src' / 'nav_fleet' / 'config' / 'nav2_params.yaml'
+
+OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'qwen2.5:14b-instruct')
 
 
 def load_nav2_params_text(path=NAV2_PARAMS_PATH):
@@ -111,6 +115,22 @@ TOOLS = [
         },
     },
 ]
+
+
+def _to_ollama_tools(tools):
+    """Anthropic-shaped TOOLS -> Ollama/OpenAI function-calling shape. Does not
+    mutate the input list."""
+    return [
+        {
+            'type': 'function',
+            'function': {
+                'name': t['name'],
+                'description': t['description'],
+                'parameters': t['input_schema'],
+            },
+        }
+        for t in tools
+    ]
 
 
 def load_latest_run(db_path=FLEET_DB):

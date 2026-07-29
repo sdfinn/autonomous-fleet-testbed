@@ -83,3 +83,23 @@ def test_diagnose_omits_trend_section_when_not_given(monkeypatch, tmp_path):
 
     prompt_text = captured["messages"][0]["content"]
     assert "Big-picture trend context" not in prompt_text
+
+
+def test_to_ollama_tools_converts_anthropic_shape_to_function_calling_shape():
+    ollama_tools = agentic_loop._to_ollama_tools(agentic_loop.TOOLS)
+
+    assert len(ollama_tools) == len(agentic_loop.TOOLS)
+    first = ollama_tools[0]
+    assert first["type"] == "function"
+    assert first["function"]["name"] == "propose_nav_param_change"
+    assert first["function"]["description"] == agentic_loop.TOOLS[0]["description"]
+    assert first["function"]["parameters"] == agentic_loop.TOOLS[0]["input_schema"]
+
+
+def test_to_ollama_tools_does_not_mutate_the_original_tools_list():
+    import copy
+    original = copy.deepcopy(agentic_loop.TOOLS)
+
+    agentic_loop._to_ollama_tools(agentic_loop.TOOLS)
+
+    assert agentic_loop.TOOLS == original
