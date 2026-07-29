@@ -457,13 +457,14 @@ def _detect_cross_item_conflicts(items):
 
 _EXTRACT_FIELD_ALIASES = {
     'propose_nav_param_change': {
-        'param_path': ['param_path', 'parameter', 'param'],
+        'param_path': ['param_path', 'parameter', 'param', 'parameter_name'],
         'current_value': ['current_value'],
         'proposed_value': ['proposed_value', 'new_value', 'value'],
         'rationale': ['rationale', 'reason', 'explanation'],
     },
     'propose_mission_plan': {
-        'mission_description': ['mission_description', 'description', 'mission'],
+        'mission_description': ['mission_description', 'description', 'mission',
+                                 'mission_name'],
         'rationale': ['rationale', 'reason', 'explanation'],
     },
     'generate_world_variant': {
@@ -507,19 +508,35 @@ def extract_prose_recommendations(analysis_text):
         parsed_input = _normalize_extracted_fields(tool_name, raw_pairs, body)
         matches.append((m.start(), {'tool_name': tool_name, 'input': parsed_input, 'title': title}))
 
-    json_object = re.compile(r'\{[^{}]*"tool"\s*:\s*"(' + tool_alternation + r')"[^{}]*\}')
-    for m in json_object.finditer(analysis_text):
+    # Balanced-brace scan (not a flat regex) — 2026-07-29, 4th real format found
+    # live: the model sometimes wraps args in a NESTED "parameters" sub-object
+    # ({"tool": "...", "parameters": {...}}), which a regex assuming a flat object
+    # (no nested {}) silently matches zero of. Try every '{' as a candidate open;
+    # cheap to do (a handful of braces in a short response) and correctly handles
+    # arbitrary nesting depth via real brace-balance tracking, not regex lookahead.
+    for idx, ch in enumerate(analysis_text):
+        if ch != '{':
+            continue
+        close_idx = _find_balanced_close_brace(analysis_text, idx)
+        span = analysis_text[idx:close_idx]
         try:
-            parsed = json.loads(m.group(0))
+            parsed = json.loads(span)
         except json.JSONDecodeError:
             continue
-        tool_name = parsed.pop('tool', None)
+        if not isinstance(parsed, dict):
+            continue
+        tool_name = parsed.get('tool')
         if tool_name not in tool_names:
             continue
-        title = _extract_nearby_title(analysis_text, m.start())
-        raw_pairs = {k: (v if isinstance(v, str) else str(v)) for k, v in parsed.items()}
+        fields = {k: v for k, v in parsed.items() if k != 'tool'}
+        for wrapper_key in ('parameters', 'input', 'args'):
+            nested = fields.pop(wrapper_key, None)
+            if isinstance(nested, dict):
+                fields.update(nested)
+        title = _extract_nearby_title(analysis_text, idx)
+        raw_pairs = {k: (v if isinstance(v, str) else str(v)) for k, v in fields.items()}
         parsed_input = _normalize_extracted_fields(tool_name, raw_pairs, '')
-        matches.append((m.start(), {'tool_name': tool_name, 'input': parsed_input, 'title': title}))
+        matches.append((idx, {'tool_name': tool_name, 'input': parsed_input, 'title': title}))
 
     matches.sort(key=lambda pair: pair[0])
     return [item for _, item in matches]
@@ -539,12 +556,39 @@ def _find_balanced_close_paren(text, open_idx):
     return len(text)  # unbalanced (shouldn't normally happen) — take the rest
 
 
+def _find_balanced_close_brace(text, open_idx):
+    """Same as _find_balanced_close_paren but for {}. A separate function, not a
+    shared parameterized one — string literals inside JSON can legally contain '('
+    or ')' without needing balance tracking, but this scan is specifically for JSON
+    object nesting, a different concern from the paren-call scan above."""
+    depth = 0
+    i = open_idx
+    while i < len(text):
+        if text[i] == '{':
+            depth += 1
+        elif text[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return len(text)
+
+
 _CODE_FENCE_LINE = re.compile(r'^```\s*\w*\s*$')       # ``` or ```python etc.
 _PUNCTUATION_ONLY_LINE = re.compile(r'^[`)\](}>\-*#\s]*$')  # stray brackets, rules
+# Generic structural headings the model reuses across items — not item-specific,
+# so grabbing one as "the title" is worse than no title (live bug, 2026-07-29:
+# 'GOOD — Recommendations' on the real page, meaningless to a reader).
+_GENERIC_SECTION_HEADINGS = {
+    'recommendations', 'metrics analysis', 'analysis', 'summary', "model's written analysis",
+}
 
 
 def _is_title_junk_line(line):
-    return bool(_CODE_FENCE_LINE.match(line)) or bool(_PUNCTUATION_ONLY_LINE.match(line))
+    if _CODE_FENCE_LINE.match(line) or _PUNCTUATION_ONLY_LINE.match(line):
+        return True
+    normalized = line.strip('#*: ').strip().lower()
+    return normalized in _GENERIC_SECTION_HEADINGS
 
 
 def _extract_nearby_title(text, call_start_idx, lookback=5):

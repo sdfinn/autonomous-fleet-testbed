@@ -138,12 +138,45 @@ Claude is working with files under this directory.
   `_ensure_run_columns` — this table already had real rows before the addition).
   Still explicitly NOT a human-feedback/scoring layer — deferred, not built.
 
-  32 tests across this round (TDD throughout), several built directly from Mike's
-  own pasted real output as fixtures (the exact incidents that motivated each fix).
-  Verified live via a running Streamlit instance + Playwright click TWICE this round
-  — first pass caught the `st.success`-as-context-manager bug immediately (would
-  have crashed on click), second pass confirmed real ✅/❌ verdicts firing and clean
-  titles after the code-fence fix.
+  **Round 3.1 (same day, after Mike's next real click):** two more real bugs, both
+  from format variety, not logic errors. (1) A 4th format: the model wrapped args in
+  a NESTED `"parameters": {...}` sub-object — the original JSON regex explicitly
+  excluded nested braces (`[^{}]*`) and silently matched **zero** of it. Replaced
+  with a real balanced-brace scan (`_find_balanced_close_brace`, mirrors the
+  paren-scanner) that tries every `{` as a candidate, `json.loads()`s the full
+  matched span regardless of nesting depth, and flattens a `parameters`/`input`/
+  `args` wrapper key into the top level before field-alias normalization — subsumes
+  the old flat-object case, doesn't need two code paths. (2) Titles sometimes came
+  out as the model's own generic `### Recommendations` section heading (not
+  item-specific) — added `_GENERIC_SECTION_HEADINGS` denylist so `_extract_nearby_
+  title` skips those too, same as code fences and stray punctuation.
+
+  **A 5TH format was then found in the SAME live-verification pass** — plain
+  colon-separated lines with no parens or braces at all
+  (`propose_nav_param_change: parameter: "robot_radius" new_value: 0.245`). **Not
+  yet built.** Deliberately stopped adding parsers reactively here — this is the
+  3rd new format discovered in one session of live testing, and every fix so far has
+  uncovered another one. Flagged to Mike as a real decision point rather than
+  silently attempting a 5th parser: keep extending format-by-format as they're
+  found (uncapped effort, always partial), accept the current best-effort coverage
+  and lean on the Summary's count + the always-visible raw text as the safety net
+  when extraction comes up short, or pursue something structurally different (e.g.
+  a second call asking the model to re-emit its own recommendations as strict
+  JSON). Not resolved as of this entry.
+
+  5 more tests in this sub-round (72 total in `tests/test_agentic_loop.py` as of this
+  entry), several built directly from Mike's own pasted real output as fixtures (the
+  exact incidents that motivated each fix).
+  Verified live via a running Streamlit instance + Playwright click FOUR times this
+  round — caught the `st.success`-as-context-manager bug before it ever reached
+  Mike, then three more real live-discovered bugs (formats 3 and 4, the generic-
+  heading title bug) each fixed and re-verified live in turn. **Also: a manually-run
+  `streamlit run dashboard/app.py` (no `--server.headless` flag — the tell for a
+  human-started session, distinct from this session's own always-headless
+  instances) was found bound to port 8501 mid-round, almost certainly Mike's own
+  session used to produce the pasted output being debugged — left untouched
+  throughout; verification moved to the auto-selected 8502 instead of assuming it
+  was safe to kill.**
 
   **Heads-up, not built:** Mike expects to ask for a second "deep dive" dashboard
   button running the same diagnosis with a more capable model for comparison —

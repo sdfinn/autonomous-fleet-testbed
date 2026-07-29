@@ -830,6 +830,19 @@ def test_extract_prose_recommendations_title_none_when_only_junk_precedes():
     assert items[0]['title'] is None
 
 
+def test_extract_prose_recommendations_title_skips_generic_section_heading():
+    """Live bug, 2026-07-29: the model's own generic '### Recommendations' section
+    heading (not an item-specific title) was picked up as the FIRST item's title —
+    'GOOD — Recommendations' on the real page, meaningless to a reader."""
+    text = (
+        '### Recommendations\n\n'
+        'propose_nav_param_change(parameter="odometry_frequency", new_value=50.0)\n'
+    )
+    items = agentic_loop.extract_prose_recommendations(text)
+
+    assert items[0]['title'] is None
+
+
 def test_extract_prose_recommendations_title_skips_stray_closing_paren():
     """Live bug, 2026-07-29: a lone ')' left over from a PRIOR multi-line call was
     picked up as the 'title' for the NEXT call."""
@@ -929,6 +942,89 @@ def test_extract_prose_recommendations_combines_paren_and_json_styles_in_one_tex
     items = agentic_loop.extract_prose_recommendations(combined)
 
     assert len(items) == 5
+
+
+_REAL_NESTED_JSON_STYLE_ANALYSIS_TEXT = """Improve Odometry Data Reliability
+
+{
+  "tool": "propose_nav_param_change",
+  "parameters": {
+    "parameter_name": "odometry_frequency",
+    "new_value": 50.0,
+    "rationale": "Increasing the odometry frequency to improve data reliability and reduce position errors."
+  }
+}
+
+Enhance Camera Stream Reliability
+
+{
+  "tool": "propose_nav_param_change",
+  "parameters": {
+    "parameter_name": "camera_frequency",
+    "new_value": 30.0,
+    "rationale": "Increasing the camera frequency to ensure more reliable and consistent data capture."
+  }
+}
+
+Generate More Challenging Missions
+
+{
+  "tool": "propose_mission_plan",
+  "parameters": {
+    "mission_name": "complex_hallway_navigation",
+    "locations": ["hallway_west", "bedroom_goal", "desk"],
+    "rationale": "Creating a mission that includes multiple waypoints to increase the complexity and challenge of navigation tasks."
+  }
+}
+
+Create A Harder World Variant
+
+{
+  "tool": "generate_world_variant",
+  "parameters": {
+    "variant_name": "high_obstacle_density",
+    "rationale": "Generating a world variant with increased obstacle density to test the robot's ability to navigate complex environments."
+  }
+}"""
+
+
+def test_extract_prose_recommendations_finds_all_calls_in_real_nested_json_text():
+    """4th real format observed live, 2026-07-29: a JSON object with args wrapped in
+    a nested "parameters" sub-object, not flat — the original json_object regex
+    explicitly excluded nested braces ([^{}]*) and silently found ZERO of these."""
+    items = agentic_loop.extract_prose_recommendations(_REAL_NESTED_JSON_STYLE_ANALYSIS_TEXT)
+
+    assert [i['tool_name'] for i in items] == [
+        'propose_nav_param_change', 'propose_nav_param_change',
+        'propose_mission_plan', 'generate_world_variant',
+    ]
+
+
+def test_extract_prose_recommendations_flattens_nested_parameters_object():
+    items = agentic_loop.extract_prose_recommendations(_REAL_NESTED_JSON_STYLE_ANALYSIS_TEXT)
+
+    assert items[0]['input']['param_path'] == 'odometry_frequency'
+    assert items[0]['input']['proposed_value'] == '50.0'
+    assert items[0]['input']['rationale'].startswith('Increasing the odometry')
+
+
+def test_extract_prose_recommendations_nested_json_pulls_title():
+    items = agentic_loop.extract_prose_recommendations(_REAL_NESTED_JSON_STYLE_ANALYSIS_TEXT)
+
+    assert items[0]['title'] == 'Improve Odometry Data Reliability'
+    assert items[3]['title'] == 'Create A Harder World Variant'
+
+
+def test_extract_prose_recommendations_nested_json_items_are_fact_checkable():
+    """odometry_frequency isn't a real nav2_params.yaml param — must come out 'bad'."""
+    response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._TextBlock(text=_REAL_NESTED_JSON_STYLE_ANALYSIS_TEXT),
+    ])
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    nav_param_items = [i for i in items if i['tool_name'] == 'propose_nav_param_change']
+    assert len(nav_param_items) == 2
+    assert all(i['auto_verdict'] == 'bad' for i in nav_param_items)
 
 
 def test_evaluate_diagnosis_items_fact_checks_extracted_items_too():
