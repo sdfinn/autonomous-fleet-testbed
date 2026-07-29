@@ -196,7 +196,7 @@ def test_diagnose_logs_ollama_model_name(monkeypatch, tmp_path):
     run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
                       result="PASS", step_log=[], db_path=db, runner_type="local")
     monkeypatch.setattr(agentic_loop, "_diagnose_ollama",
-                         lambda prompt: agentic_loop._DiagnosisResponse(content=[]))
+                         lambda prompt, **kw: agentic_loop._DiagnosisResponse(content=[]))
 
     run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
     agentic_loop.diagnose(run_data, db_path=db, backend='ollama')
@@ -276,6 +276,53 @@ class _FakeOllamaMessage:
 class _FakeOllamaChatResponse:
     def __init__(self, message):
         self.message = message
+
+
+def test_diagnose_ollama_passes_tools_by_default(monkeypatch):
+    captured = {}
+    fake_response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._ToolUseBlock(name='propose_mission_plan',
+                                    input={'mission_description': 'd', 'goals': [], 'rationale': 'r'}),
+    ])
+
+    def _fake_chat(**kwargs):
+        captured.update(kwargs)
+        return type('R', (), {'message': type('M', (), {
+            'content': None, 'tool_calls': [
+                type('C', (), {'function': type('F', (), {
+                    'name': 'propose_mission_plan',
+                    'arguments': {'mission_description': 'd', 'goals': [], 'rationale': 'r'},
+                })()})()],
+        })()})()
+
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', _fake_chat)
+
+    agentic_loop._diagnose_ollama('irrelevant prompt')
+
+    assert 'tools' in captured
+
+
+def test_diagnose_ollama_omits_tools_when_offer_tools_false(monkeypatch):
+    """2026-07-29, 4th-round simplification: the dashboard no longer wants the model
+    offered any tools at all — plain free text only, no native tool-calling attempt,
+    no JSON-fallback retry (nothing to retry from since no tool call was ever
+    possible)."""
+    captured = {}
+
+    def _fake_chat(**kwargs):
+        captured.update(kwargs)
+        return type('R', (), {'message': type('M', (), {'content': 'just analysis text'})()})()
+
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', _fake_chat)
+    monkeypatch.setattr(agentic_loop, '_diagnose_ollama_json_fallback',
+                         lambda *a, **kw: (_ for _ in ()).throw(
+                             AssertionError('fallback must not be called when offer_tools=False')))
+
+    result = agentic_loop._diagnose_ollama('irrelevant prompt', offer_tools=False)
+
+    assert 'tools' not in captured
+    assert result.content[0].type == 'text'
+    assert result.content[0].text == 'just analysis text'
 
 
 def test_diagnose_ollama_returns_tool_use_block(monkeypatch):
@@ -468,7 +515,7 @@ def test_diagnose_dispatches_to_ollama_backend_when_requested(monkeypatch, tmp_p
 
     captured = {}
 
-    def _fake_diagnose_ollama(prompt):
+    def _fake_diagnose_ollama(prompt, **kw):
         captured["prompt"] = prompt
         return "sentinel-ollama-response"
 
@@ -489,7 +536,7 @@ def test_diagnose_defaults_to_ollama_backend_when_env_var_unset(monkeypatch, tmp
                       result="PASS", step_log=[], db_path=db, runner_type="local")
 
     monkeypatch.setattr(agentic_loop, "_diagnose_ollama",
-                         lambda prompt: "sentinel-ollama-default")
+                         lambda prompt, **kw: "sentinel-ollama-default")
 
     run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
     result = agentic_loop.diagnose(run_data, db_path=db)  # no backend= given
@@ -504,7 +551,7 @@ def test_diagnose_reads_backend_from_env_var(monkeypatch, tmp_path):
     run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
                       result="PASS", step_log=[], db_path=db, runner_type="local")
 
-    monkeypatch.setattr(agentic_loop, "_diagnose_ollama", lambda prompt: "sentinel")
+    monkeypatch.setattr(agentic_loop, "_diagnose_ollama", lambda prompt, **kw: "sentinel")
 
     run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
     result = agentic_loop.diagnose(run_data, db_path=db)
@@ -525,6 +572,64 @@ def test_diagnose_explicit_backend_param_overrides_env_var(monkeypatch, tmp_path
     result = agentic_loop.diagnose(run_data, db_path=db, backend="claude")
 
     assert isinstance(result, _FakeResponse)
+
+
+def test_diagnose_claude_passes_tools_by_default(monkeypatch, tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+    captured = {}
+
+    def _fake_create(**kwargs):
+        captured.update(kwargs)
+        return _FakeResponse()
+
+    monkeypatch.setattr(agentic_loop.client.messages, "create", _fake_create)
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    agentic_loop.diagnose(run_data, db_path=db, backend="claude")
+
+    assert 'tools' in captured
+    assert captured['tools'] == agentic_loop.TOOLS
+
+
+def test_diagnose_omits_tools_when_offer_tools_false(monkeypatch, tmp_path):
+    """2026-07-29, 4th-round simplification: the dashboard opts out of offering the
+    model any tools at all — plain free text only. The CLI's own call is unaffected
+    (offer_tools defaults to True, unchanged)."""
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+    captured = {}
+
+    def _fake_create(**kwargs):
+        captured.update(kwargs)
+        return _FakeResponse()
+
+    monkeypatch.setattr(agentic_loop.client.messages, "create", _fake_create)
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    agentic_loop.diagnose(run_data, db_path=db, backend="claude", offer_tools=False)
+
+    assert 'tools' not in captured
+
+
+def test_diagnose_offer_tools_defaults_to_true(monkeypatch, tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+    captured = {}
+
+    def _fake_create(**kwargs):
+        captured.update(kwargs)
+        return _FakeResponse()
+
+    monkeypatch.setattr(agentic_loop.client.messages, "create", _fake_create)
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    agentic_loop.diagnose(run_data, db_path=db, backend="claude")  # offer_tools omitted
+
+    assert 'tools' in captured
 
 
 def test_evaluate_diagnosis_items_flags_value_mismatch_as_bad():
@@ -1120,6 +1225,52 @@ def test_summarize_diagnosis_includes_conflict_notes():
     lines = agentic_loop.summarize_diagnosis(items)
 
     assert any('disagrees with' in line for line in lines)
+
+
+def test_describe_potential_changes_no_matches():
+    lines = agentic_loop.describe_potential_changes('just some general discussion')
+
+    assert lines == ['No specific changes were identified in the analysis above.']
+
+
+def test_describe_potential_changes_no_text():
+    lines = agentic_loop.describe_potential_changes(None)
+
+    assert lines == ['No specific changes were identified in the analysis above.']
+
+
+def test_describe_potential_changes_nav_param_plain_language():
+    lines = agentic_loop.describe_potential_changes(_REAL_KWARGS_STYLE_ANALYSIS_TEXT)
+
+    assert len(lines) == 3
+    # No tool names, no JSON, no verdicts anywhere in the output.
+    for line in lines:
+        assert 'propose_' not in line
+        assert 'generate_' not in line
+        assert '{' not in line
+        assert 'GOOD' not in line and 'BAD' not in line and 'UNVERIFIED' not in line
+
+
+def test_describe_potential_changes_includes_title_and_rationale():
+    lines = agentic_loop.describe_potential_changes(_REAL_KWARGS_STYLE_ANALYSIS_TEXT)
+
+    assert any('Improve Odometry Frequency' in line for line in lines)
+    assert any('local_costmap.update_frequency' in line and '10.0' in line for line in lines)
+
+
+def test_describe_potential_changes_mission_and_world_variant_phrasing():
+    lines = agentic_loop.describe_potential_changes(_REAL_KWARGS_STYLE_ANALYSIS_TEXT)
+
+    joined = ' '.join(lines)
+    assert 'mission' in joined.lower()
+
+
+def test_describe_potential_changes_falls_back_to_raw_text():
+    lines = agentic_loop.describe_potential_changes(_REAL_COLON_STYLE_ANALYSIS_TEXT)
+
+    # The unparseable propose_mission_plan(home_base hallway_west ...) call still
+    # produces a line — existence stays visible even without clean field extraction.
+    assert len(lines) == 4
 
 
 def test_diagnose_rejects_unknown_backend(tmp_path):

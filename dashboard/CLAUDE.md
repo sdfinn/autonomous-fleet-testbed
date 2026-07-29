@@ -26,7 +26,7 @@ pass) — loads only when Claude is working with files under this directory.
   populated DB plus a deliberately-flagged synthetic-DB check (a guaranteed outlier,
   confirmed to render as a red point outside the shaded bands — proving the flagged
   path, not just the clean one) and a live GUI pass.
-  **AI Diagnosis section rebuilt across THREE rounds, 2026-07-29** (design:
+  **AI Diagnosis section rebuilt across FOUR rounds, 2026-07-29** (design:
   docs/superpowers/specs/2026-07-29-ai-diagnosis-items-and-feedback-design.md — full
   scope-correction history there). No longer "read-only" in the strictest sense — the
   button calls `diagnose(..., source='dashboard')`, which auto-logs to
@@ -34,37 +34,45 @@ pass) — loads only when Claude is working with files under this directory.
   — see that module's own CLAUDE.md entry); caption updated to say so plainly instead
   of claiming "nothing here writes any file."
 
-  **Round 1** shipped a two-section layout (raw model text, then a separate
-  structured proposal). **Round 2** un-collapsed an `st.expander` that had hidden
-  each item by default (a straight regression against "don't hide anything," caught
-  immediately on Mike's first look). **Round 3 (current)** rebuilt the whole section
-  after Mike's sharper feedback — "how do the recommendations map to the final
-  recommendation... I expect checkmarks and X's on pretty well every run" — around
-  one unified list (`evaluate_diagnosis_items()`, now merging real submitted tool
-  calls AND best-effort-extracted prose recommendations, see `tools/CLAUDE.md`'s
-  `agentic_loop.py` entry for the full mechanism):
+  **Current shape (round 4), what's actually on the page today:**
+  1. `"Model's Written Analysis (raw text)"` — the model's free text, shown once,
+     unedited. Deliberately left alone by explicit instruction ("Leave the Model's
+     Written Analysis alone. We will live with that.") — the one intentional touch
+     inside it is a single word-level fix, since its caption referenced "the
+     Recommendations list below," a section that no longer exists after round 4;
+     changed to "the Summary section below," nothing else in that block changed.
+  2. `"Summary"` — `tools.agentic_loop.describe_potential_changes()`'s plain-language
+     lines only. No tool names, no JSON, no good/bad/unverified/conflict badges, no
+     submitted-vs-extracted distinction — Mike's explicit round-4 ask, after
+     confirming via direct back-and-forth that this reads as "internal machinery,"
+     not something a user needs to see. The button call passes `offer_tools=False`
+     (see `tools/CLAUDE.md`'s `agentic_loop.py` entry) — the model is never given
+     tools to call on this specific request at all.
 
-  - `"Model's Written Analysis (raw text)"` — the model's free text, shown once,
-    captioned explanatory-only (renamed from a bare "Metrics Analysis" heading,
-    which visually duplicated the model's OWN internal heading of the same name).
-  - Recommendations — one bordered `st.container` per item, a real colored banner
-    (`st.success`/`error`/`warning`/`info` called AS the banner content, NOT as a
-    `with`-context manager — that mistake was caught by checking
-    `inspect.signature(st.success)` before trusting it, not by a crash) showing
-    GOOD/BAD/CONFLICT/UNVERIFIED + a title, a `**Why:**` line from the item's real
-    `rationale` field (not raw JSON as the only explanation), a source tag
-    (submitted vs. text-only), and a small nested "Technical details" expander for
-    the raw JSON — collapsing JSON specifically is fine, the readable content above
-    it never is.
-  - Summary — `summarize_diagnosis()`'s real tally (found/submitted/text-only counts,
-    a ✅/❌/⚠/➖ count line, conflict notes, text-only titles) instead of one terse
-    sentence, plus the fixed closing line.
+  **Rounds 1-3 (superseded, kept here only as history — do not treat as current
+  behavior):** round 1 shipped a two-section layout (raw text, then a separate
+  structured proposal). Round 2 un-collapsed an `st.expander` that had hidden each
+  item by default. Round 3 rebuilt around a unified badge/card list
+  (`evaluate_diagnosis_items()`, GOOD/BAD/CONFLICT/UNVERIFIED banners, "Technical
+  details" JSON expanders) after Mike asked for checkmarks and traceability — round 3
+  ALSO caught a real bug live (`st.success`/`error`/`warning`/`info` are not usable
+  as `with`-context managers; found via `inspect.signature` before it ever reached a
+  click). **All of round 3's dashboard-facing badge/card UI was then retired in
+  round 4** — not because it was broken, but because Mike concluded, after walking
+  through exactly what the tool-calling/verdict machinery was and wasn't doing, that
+  it was presenting invented structure around an unreliable local model's free text
+  as if it were more trustworthy than it actually is. **The underlying
+  `evaluate_diagnosis_items()`/`summarize_diagnosis()` machinery from round 3 is
+  NOT deleted** — it's untouched and still powers `tools/agentic_loop.py`'s CLI
+  (`run_loop()`), which keeps working exactly as it always has; round 4 only
+  changed what the DASHBOARD calls and renders.
 
   Verified live via Playwright against a real running instance on EVERY round
-  (4 separate live passes across the three rounds) — this session hit a stray
-  leftover `streamlit` process serving a stale import more than once, and would have
-  shipped the `st.success`-as-context-manager bug straight to Mike if the first
-  round-3 live click hadn't been done before reporting back. Never trust "the tests
-  pass" for this file — it has zero automated coverage by design (see below) and
-  every real bug in this section so far was caught by an actual browser click, not
-  by reading the diff.
+  (5 separate live passes across four rounds) — this session hit a stray leftover
+  `streamlit` process serving a stale import more than once (including once that
+  turned out to be Mike's own manually-started session, left untouched once
+  identified by the missing `--server.headless` flag), and would have shipped the
+  `st.success`-as-context-manager bug straight to Mike if the round-3 live click
+  hadn't happened before reporting back. Never trust "the tests pass" for this file
+  — it has zero automated coverage by design (see below) and every real bug in this
+  section so far was caught by an actual browser click, not by reading the diff.

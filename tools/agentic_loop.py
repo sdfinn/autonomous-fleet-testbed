@@ -233,15 +233,14 @@ Tool schemas:
     return _ToolUseBlock(name=name, input=dict(args))
 
 
-def _diagnose_ollama(prompt):
-    ollama_tools = _to_ollama_tools(TOOLS)
-    tools_by_name = {t['name']: t for t in TOOLS}
+def _call_ollama_chat(prompt, tools=None):
+    """Shared connection-error handling for both the tools=True and offer_tools=False
+    paths through _diagnose_ollama — avoids duplicating the try/except."""
+    kwargs = dict(model=OLLAMA_MODEL, messages=[{'role': 'user', 'content': prompt}])
+    if tools is not None:
+        kwargs['tools'] = tools
     try:
-        result = ollama.chat(
-            model=OLLAMA_MODEL,
-            messages=[{'role': 'user', 'content': prompt}],
-            tools=ollama_tools,
-        )
+        return ollama.chat(**kwargs)
     except Exception as exc:
         if 'not found' in str(exc).lower():
             raise RuntimeError(
@@ -252,6 +251,22 @@ def _diagnose_ollama(prompt):
             "Couldn't reach Ollama — is it running? Start it with `ollama serve` "
             "(or check `systemctl status ollama`), then retry."
         ) from exc
+
+
+def _diagnose_ollama(prompt, offer_tools=True):
+    if not offer_tools:
+        # 2026-07-29, 4th-round simplification: the dashboard doesn't want the model
+        # offered any tools at all — plain free text only. No native tool-calling
+        # attempt means no possibility of a tool call, so the JSON-fallback retry
+        # (which only exists to rescue a failed tool-calling attempt) doesn't apply
+        # here either — there's nothing to retry from.
+        result = _call_ollama_chat(prompt)
+        text = result.message.content or ''
+        return _DiagnosisResponse(content=[_TextBlock(text=text)] if text else [])
+
+    ollama_tools = _to_ollama_tools(TOOLS)
+    tools_by_name = {t['name']: t for t in TOOLS}
+    result = _call_ollama_chat(prompt, tools=ollama_tools)
 
     blocks = []
     if result.message.content:
@@ -542,6 +557,52 @@ def extract_prose_recommendations(analysis_text):
     return [item for _, item in matches]
 
 
+def describe_potential_changes(analysis_text):
+    """Plain-language dashboard summary (2026-07-29, 4th-round simplification —
+    Mike's explicit ask). Reuses extract_prose_recommendations()'s proven detection/
+    parsing, but the OUTPUT here is prose sentences only: no tool names, no JSON, no
+    good/bad/unverified/conflict verdicts, no submitted-vs-extracted distinction.
+    This is deliberately the DASHBOARD's own path — the CLI's evaluate_diagnosis_
+    items()/summarize_diagnosis() (badges, fact-checking, the whole tool-call
+    concept) are untouched and keep working exactly as before for run_loop().
+
+    Returns a list of plain sentences, always non-empty.
+    """
+    found = extract_prose_recommendations(analysis_text)
+    if not found:
+        return ['No specific changes were identified in the analysis above.']
+    return [_describe_one_change(item) for item in found]
+
+
+_CHANGE_KIND_PHRASE = {
+    'propose_nav_param_change': 'A parameter change was mentioned',
+    'propose_mission_plan': 'A mission plan was mentioned',
+    'generate_world_variant': 'A new world/obstacle layout was mentioned',
+}
+
+
+def _describe_one_change(item):
+    inputs = item['input']
+    phrase = _CHANGE_KIND_PHRASE.get(item['tool_name'], 'A potential change was mentioned')
+
+    param_path = inputs.get('param_path')
+    proposed_value = inputs.get('proposed_value')
+    if param_path and proposed_value is not None:
+        phrase += f': {param_path} → {proposed_value}'
+    phrase += '.'
+
+    rationale = inputs.get('rationale')
+    if rationale:
+        phrase += f' {rationale}'
+    elif inputs.get('raw_text'):
+        phrase += f' ({inputs["raw_text"]})'
+
+    if item['title']:
+        phrase = f"{item['title']}: {phrase}"
+
+    return phrase
+
+
 def _find_balanced_close_paren(text, open_idx):
     depth = 0
     i = open_idx
@@ -660,10 +721,19 @@ def _nav_param_values_match(claimed, real):
         return str(claimed) == str(real)
 
 
-def diagnose(run_data, db_path=FLEET_DB, trend_context=None, backend=None, source='cli'):
+def diagnose(run_data, db_path=FLEET_DB, trend_context=None, backend=None, source='cli',
+             offer_tools=True):
     """Call the configured backend (Ollama by default, or Claude — see backend=/
     AGENTIC_BACKEND) with telemetry + drift context; get structured diagnosis and
     proposed action.
+
+    `offer_tools` (2026-07-29, 4th-round simplification): whether the model is given
+    the option to make a real tool call at all. Defaults to True, preserving the
+    CLI's existing propose/approve/apply workflow exactly as it's always worked.
+    dashboard/app.py passes False — Mike's explicit call: the dashboard should show
+    plain free text only, no tool-calling concept, no submitted/verified distinction.
+    When False, no tools= is sent to the model at all (see _diagnose_claude/_diagnose_
+    ollama) — there is no possibility of a tool_use block in the response.
 
     Auto-logs the call to tools.diagnosis_log (2026-07-29 design) — system-driven,
     happens every time, no separate save action, same lifecycle as
@@ -737,10 +807,10 @@ home_base") or use generate_world_variant to propose a harder obstacle layout.""
 
     backend = backend or os.environ.get('AGENTIC_BACKEND', 'ollama')
     if backend == 'claude':
-        response = _diagnose_claude(prompt)
+        response = _diagnose_claude(prompt, offer_tools=offer_tools)
         model_name = 'claude-sonnet-5'
     elif backend == 'ollama':
-        response = _diagnose_ollama(prompt)
+        response = _diagnose_ollama(prompt, offer_tools=offer_tools)
         model_name = OLLAMA_MODEL
     else:
         raise ValueError(f"unknown AGENTIC_BACKEND {backend!r} — expected 'claude' or 'ollama'")
@@ -799,13 +869,15 @@ def summarize_diagnosis(items):
     return lines
 
 
-def _diagnose_claude(prompt):
-    return client.messages.create(
+def _diagnose_claude(prompt, offer_tools=True):
+    kwargs = dict(
         model='claude-sonnet-5',
         max_tokens=2048,
-        tools=TOOLS,
         messages=[{'role': 'user', 'content': prompt}],
     )
+    if offer_tools:
+        kwargs['tools'] = TOOLS
+    return client.messages.create(**kwargs)
 
 
 def apply_world_variant(layout, name):

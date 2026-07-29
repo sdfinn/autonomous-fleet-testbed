@@ -178,6 +178,55 @@ Claude is working with files under this directory.
   throughout; verification moved to the auto-selected 8502 instead of assuming it
   was safe to kill.**
 
+  **Round 4 (same day) — a genuine simplification, not another format-chasing
+  patch.** After finding a 5th and 6th prose format in round 3.1, Mike stepped back
+  from format-by-format extraction entirely and asked, via a careful step-by-step
+  Q&A (not a spec), for the dashboard's whole "structured recommendations" concept
+  to be retired: no tool names, no JSON, no good/bad/unverified/conflict badges, no
+  submitted-vs-extracted distinction. The badge/verdict machinery from rounds 2-3
+  (`evaluate_diagnosis_items`, `_evaluate_one_item`, `summarize_diagnosis`,
+  `_detect_cross_item_conflicts`) is **NOT deleted** — it's untouched and still
+  powers the CLI (`run_loop()`), which keeps its full propose/approve/apply
+  workflow exactly as before. The dashboard gets an entirely separate, much
+  simpler path:
+
+  - **`diagnose()` gained `offer_tools=True`** (default — CLI unaffected).
+    `dashboard/app.py` calls it with `offer_tools=False`: `_diagnose_claude`/
+    `_diagnose_ollama` skip passing `tools=` to the API at all — the model is never
+    given the *option* to make a real structured call, so there is no possibility
+    of a `tool_use` block in the response. (`_diagnose_ollama`'s JSON-fallback
+    retry, which only exists to rescue a failed tool-calling attempt, is skipped
+    entirely here too — nothing to retry from when no tool call was ever
+    possible.)
+  - **`describe_potential_changes(analysis_text)`** (new): reuses
+    `extract_prose_recommendations()`'s proven detection/parsing (same regex/
+    balanced-brace scanning), but translates the output into plain sentences —
+    `"A parameter change was mentioned: {param} → {value}. {rationale}"` — no tool
+    name, no JSON, no verdict. This is the dashboard's ONLY path now; it does not
+    call `evaluate_diagnosis_items` at all.
+  - Dashboard layout: "Model's Written Analysis" (raw model text — **explicitly
+    left untouched**, Mike's own words: "we will live with that") → one "Summary"
+    section with `describe_potential_changes()`'s plain-language lines. The old
+    badge/card "Recommendations" list and the old tally-based "Summary" are both
+    gone, replaced by this single section. One necessary one-word fix inside the
+    otherwise-untouched raw-analysis caption: it referenced "the Recommendations
+    list below," which no longer exists — changed to "the Summary section below"
+    to stay accurate, nothing else in that block touched.
+
+  **Honest loose end, not yet resolved:** the prompt text still says "submit [every
+  recommendation] as its own tool call" even on the `offer_tools=False` path, where
+  that's now structurally impossible — the model has no tool-calling option at all
+  on that call. Confirmed live: the model still writes `{"tool": ...}`-shaped JSON
+  in its prose, seemingly still trying to follow that now-nonsensical instruction.
+  Doesn't break anything (`describe_potential_changes` still parses it fine either
+  way), but the prompt and the API call are now inconsistent with each other for
+  the dashboard's case. Not fixed — flagged for Mike, not decided unilaterally.
+
+  11 new tests this round (83 total in `tests/test_agentic_loop.py`), TDD
+  throughout, plus 2 pre-existing `test_agentic_validate.py` fixtures updated for
+  the new `offer_tools` kwarg. Verified live via Playwright — confirmed zero tool
+  names, zero JSON, zero verdict badges anywhere on the rendered page.
+
   **Heads-up, not built:** Mike expects to ask for a second "deep dive" dashboard
   button running the same diagnosis with a more capable model for comparison —
   nothing here blocks it (`diagnose()` already takes `backend=`, `OLLAMA_MODEL` picks

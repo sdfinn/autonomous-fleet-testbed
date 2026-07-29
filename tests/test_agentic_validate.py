@@ -15,8 +15,8 @@ def test_agentic_validate_runs_end_to_end_with_mocked_backends(monkeypatch, caps
             )
         ])
 
-    monkeypatch.setattr(agentic_loop, '_diagnose_claude', lambda prompt: _fake_backend(prompt))
-    monkeypatch.setattr(agentic_loop, '_diagnose_ollama', lambda prompt: _fake_backend(prompt))
+    monkeypatch.setattr(agentic_loop, '_diagnose_claude', lambda prompt, **kw: _fake_backend(prompt))
+    monkeypatch.setattr(agentic_loop, '_diagnose_ollama', lambda prompt, **kw: _fake_backend(prompt))
 
     agentic_validate.main()
 
@@ -27,10 +27,10 @@ def test_agentic_validate_runs_end_to_end_with_mocked_backends(monkeypatch, caps
 
 
 def test_agentic_validate_prints_backend_error_instead_of_crashing(monkeypatch, capsys):
-    def _raise_claude(prompt):
+    def _raise_claude(prompt, **kw):
         raise RuntimeError('no API key')
 
-    def _raise_ollama(prompt):
+    def _raise_ollama(prompt, **kw):
         raise RuntimeError('ollama serve')
 
     monkeypatch.setattr(agentic_loop, '_diagnose_claude', _raise_claude)

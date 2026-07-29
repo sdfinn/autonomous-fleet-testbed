@@ -344,15 +344,12 @@ with tab5:
         st.caption(
             'Feeds this filtered view\'s trend to the configured diagnosis backend '
             '(a local Ollama model by default, or Claude) for a proposed diagnosis. '
-            'Logs this diagnosis automatically for future review — applies nothing; '
-            'applying a fix still means running `python -m tools.agentic_loop` from '
-            'the terminal, where the existing human-approval gate is unchanged.'
+            'Logs this diagnosis automatically for future review — applies nothing.'
         )
         if st.button('Diagnose with AI'):
-            from tools.agentic_loop import (diagnose, evaluate_diagnosis_items,
-                                             summarize_diagnosis)  # local import:
-            # avoid constructing anthropic.Anthropic() (module-level in agentic_loop.py)
-            # unless this button is actually clicked.
+            from tools.agentic_loop import describe_potential_changes, diagnose  # local
+            # import: avoid constructing anthropic.Anthropic() (module-level in
+            # agentic_loop.py) unless this button is actually clicked.
             visible_ids = [rid for rid in history if rid in _runs_by_id.index]
             if not visible_ids:
                 st.info('No runs in the current view to diagnose.')
@@ -364,54 +361,33 @@ with tab5:
                 run_data = latest_row.to_dict()
                 run_data['id'] = latest_run_id
                 with st.spinner('Asking the model...'):
+                    # offer_tools=False (2026-07-29, 4th-round simplification, Mike's
+                    # explicit call): the dashboard doesn't offer the model any tools
+                    # at all — plain free text only, no tool-calling concept anywhere
+                    # in this page. The CLI (tools/agentic_loop.py's run_loop()) is a
+                    # separate, untouched call path that still uses tools normally.
                     response = diagnose(run_data, db_path=DB_PATH, trend_context=trend_context,
-                                         source='dashboard')  # auto-logs internally
-                    items = evaluate_diagnosis_items(response)
+                                         source='dashboard', offer_tools=False)  # auto-logs
                     analysis_text = '\n'.join(
                         block.text for block in response.content if block.type == 'text') or None
 
                 # Distinct heading from the model's own — the model tends to write its
                 # own "Metrics Analysis"/"Recommendations" headings inside this same
-                # text, which looked like an accidental duplicate otherwise. Shown
-                # once, in full — the Recommendations list below extracts a structured
-                # version of anything actionable in it, so nothing here needs repeating.
+                # text, which looked like an accidental duplicate otherwise.
                 st.markdown("#### Model's Written Analysis (raw text)")
                 if analysis_text:
                     st.caption(
                         'Shown once, unedited. Explanatory only — never programmatically '
                         'trusted or acted on; anything actionable in it is extracted into '
-                        'the Recommendations list below.'
+                        'the Summary section below.'
                     )
                     st.markdown(analysis_text)
                 else:
                     st.caption('(model gave no free-text analysis this time)')
 
-                st.markdown('#### Recommendations')
-                banner_fn = {'good': st.success, 'bad': st.error,
-                             'conflict': st.warning, 'unverified': st.info}
-                verdict_label = {'good': '✅ GOOD', 'bad': '❌ BAD',
-                                  'conflict': '⚠ CONFLICT', 'unverified': '➖ UNVERIFIED'}
-                if not items:
-                    st.caption('(no recommendations found this time)')
-                for item in items:
-                    title = item['title'] or item['tool_name']
-                    source_tag = ('submitted — went through the real tool-calling API'
-                                   if item['source'] == 'submitted'
-                                   else 'TEXT ONLY — parsed from the written analysis '
-                                        'above, best-effort, never formally submitted')
-                    with st.container(border=True):
-                        banner_fn[item['auto_verdict']](
-                            f"{verdict_label[item['auto_verdict']]} — {title}")
-                        st.caption(source_tag)
-                        why = item['input'].get('rationale')
-                        if why:
-                            st.markdown(f'**Why:** {why}')
-                        if item['auto_notes']:
-                            st.markdown(item['auto_notes'])
-                        with st.expander('Technical details'):
-                            st.json(item['input'], expanded=True)
-
+                # Plain-language only, 2026-07-29 (Mike's explicit call): no tool
+                # names, no JSON, no good/bad/unverified/conflict badges — just what
+                # the pattern-matching step noticed in the text above, in sentences.
                 st.markdown('#### Summary')
-                for line in summarize_diagnosis(items):
+                for line in describe_potential_changes(analysis_text):
                     st.markdown(f'- {line}')
-                st.info('Please review proposed actions and provide feedback to project owner.')
