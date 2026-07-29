@@ -216,7 +216,7 @@ def resolve_goals(goals):
     return resolved
 
 
-def diagnose(run_data, db_path=FLEET_DB, trend_context=None):
+def diagnose(run_data, db_path=FLEET_DB, trend_context=None, backend=None):
     """Call Claude with telemetry + drift context; get structured diagnosis and proposed action.
 
     trend_context (Piece 5, optional): a plain-text summary from
@@ -273,13 +273,21 @@ with semantic location names to create a more challenging multi-waypoint mission
 (e.g. "visit the bedroom goal, then the desk, then return to home_base") or use
 generate_world_variant to propose a harder obstacle layout."""
 
-    response = client.messages.create(
+    backend = backend or os.environ.get('AGENTIC_BACKEND', 'claude')
+    if backend == 'claude':
+        return _diagnose_claude(prompt)
+    if backend == 'ollama':
+        return _diagnose_ollama(prompt)
+    raise ValueError(f"unknown AGENTIC_BACKEND {backend!r} — expected 'claude' or 'ollama'")
+
+
+def _diagnose_claude(prompt):
+    return client.messages.create(
         model='claude-sonnet-5',
         max_tokens=2048,
         tools=TOOLS,
         messages=[{'role': 'user', 'content': prompt}],
     )
-    return response
 
 
 def apply_world_variant(layout, name):

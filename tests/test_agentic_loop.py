@@ -213,3 +213,80 @@ def test_diagnose_ollama_raises_actionable_error_on_malformed_json_arguments(mon
 
     with pytest.raises(RuntimeError, match='malformed tool-call arguments'):
         agentic_loop._diagnose_ollama('irrelevant prompt text')
+
+
+def test_diagnose_dispatches_to_ollama_backend_when_requested(monkeypatch, tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+
+    captured = {}
+
+    def _fake_diagnose_ollama(prompt):
+        captured["prompt"] = prompt
+        return "sentinel-ollama-response"
+
+    monkeypatch.setattr(agentic_loop, "_diagnose_ollama", _fake_diagnose_ollama)
+
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    result = agentic_loop.diagnose(run_data, db_path=db, backend="ollama")
+
+    assert result == "sentinel-ollama-response"
+    assert "inflation_radius: 0.25" in captured["prompt"]
+
+
+def test_diagnose_defaults_to_claude_backend_when_env_var_unset(monkeypatch, tmp_path):
+    monkeypatch.delenv("AGENTIC_BACKEND", raising=False)
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+
+    monkeypatch.setattr(agentic_loop.client.messages, "create", lambda **kw: _FakeResponse())
+
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    result = agentic_loop.diagnose(run_data, db_path=db)  # no backend= given
+
+    assert isinstance(result, _FakeResponse)
+
+
+def test_diagnose_reads_backend_from_env_var(monkeypatch, tmp_path):
+    monkeypatch.setenv("AGENTIC_BACKEND", "ollama")
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+
+    monkeypatch.setattr(agentic_loop, "_diagnose_ollama", lambda prompt: "sentinel")
+
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    result = agentic_loop.diagnose(run_data, db_path=db)
+
+    assert result == "sentinel"
+
+
+def test_diagnose_explicit_backend_param_overrides_env_var(monkeypatch, tmp_path):
+    monkeypatch.setenv("AGENTIC_BACKEND", "ollama")
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+
+    monkeypatch.setattr(agentic_loop.client.messages, "create", lambda **kw: _FakeResponse())
+
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    result = agentic_loop.diagnose(run_data, db_path=db, backend="claude")
+
+    assert isinstance(result, _FakeResponse)
+
+
+def test_diagnose_rejects_unknown_backend(tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+
+    with pytest.raises(ValueError, match="unknown AGENTIC_BACKEND"):
+        agentic_loop.diagnose(run_data, db_path=db, backend="bogus")
