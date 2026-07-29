@@ -378,6 +378,113 @@ def test_diagnose_explicit_backend_param_overrides_env_var(monkeypatch, tmp_path
     assert isinstance(result, _FakeResponse)
 
 
+def test_validate_nav_param_proposal_flags_value_mismatch_against_real_file():
+    """Regression fixture for the Session 17 Piece 5 incident class: Claude once
+    claimed inflation_radius=0.55 when the real value was 0.25. Exercises the same
+    shape against a real, currently-tuned param (rotate_to_heading_angular_vel, real
+    value 0.5 — see the Session 16 Task 9e comment in nav2_params.yaml)."""
+    fake_call = agentic_loop._ToolUseBlock(
+        name='propose_nav_param_change',
+        input={'param_path': 'controller_server.rotate_to_heading_angular_vel',
+               'current_value': '1.2', 'proposed_value': '1.8', 'rationale': 'r'},
+    )
+    response = agentic_loop._DiagnosisResponse(content=[fake_call])
+
+    warnings = agentic_loop.validate_nav_param_proposal(response)
+
+    assert len(warnings) == 1
+    assert 'rotate_to_heading_angular_vel' in warnings[0]
+    assert '1.2' in warnings[0]
+    assert '0.5' in warnings[0]
+
+
+def test_validate_nav_param_proposal_passes_when_current_value_matches_real_file():
+    fake_call = agentic_loop._ToolUseBlock(
+        name='propose_nav_param_change',
+        input={'param_path': 'controller_server.rotate_to_heading_angular_vel',
+               'current_value': '0.5', 'proposed_value': '0.6', 'rationale': 'r'},
+    )
+    response = agentic_loop._DiagnosisResponse(content=[fake_call])
+
+    warnings = agentic_loop.validate_nav_param_proposal(response)
+
+    assert warnings == []
+
+
+def test_validate_nav_param_proposal_treats_numeric_equivalent_values_as_matching():
+    fake_call = agentic_loop._ToolUseBlock(
+        name='propose_nav_param_change',
+        input={'param_path': 'controller_server.rotate_to_heading_angular_vel',
+               'current_value': '0.50', 'proposed_value': '0.6', 'rationale': 'r'},
+    )
+    response = agentic_loop._DiagnosisResponse(content=[fake_call])
+
+    warnings = agentic_loop.validate_nav_param_proposal(response)
+
+    assert warnings == []
+
+
+def test_validate_nav_param_proposal_flags_param_not_found_at_all():
+    """Regression fixture for the 2026-07-29 incident: the local model invented
+    `scan_period` in a nonexistent `robot_description.yaml` — no such param exists
+    anywhere in the real nav2_params.yaml."""
+    fake_call = agentic_loop._ToolUseBlock(
+        name='propose_nav_param_change',
+        input={'param_path': 'lidar.scan_period', 'current_value': '0.1',
+               'proposed_value': '0.05', 'rationale': 'r'},
+    )
+    response = agentic_loop._DiagnosisResponse(content=[fake_call])
+
+    warnings = agentic_loop.validate_nav_param_proposal(response)
+
+    assert len(warnings) == 1
+    assert 'scan_period' in warnings[0]
+    assert 'not found' in warnings[0]
+
+
+def test_validate_nav_param_proposal_skips_when_no_current_value_given():
+    fake_call = agentic_loop._ToolUseBlock(
+        name='propose_nav_param_change',
+        input={'param_path': 'x.inflation_radius', 'proposed_value': '0.3', 'rationale': 'r'},
+    )
+    response = agentic_loop._DiagnosisResponse(content=[fake_call])
+
+    warnings = agentic_loop.validate_nav_param_proposal(response)
+
+    assert warnings == []
+
+
+def test_validate_nav_param_proposal_ignores_other_tool_calls():
+    fake_call = agentic_loop._ToolUseBlock(
+        name='propose_mission_plan',
+        input={'mission_description': 'd', 'goals': [], 'rationale': 'r'},
+    )
+    response = agentic_loop._DiagnosisResponse(content=[fake_call])
+
+    warnings = agentic_loop.validate_nav_param_proposal(response)
+
+    assert warnings == []
+
+
+def test_validate_nav_param_proposal_works_with_duck_typed_anthropic_style_blocks():
+    """Must work for BOTH backends via duck typing (type/name/input attributes), not
+    just Ollama's normalized _ToolUseBlock — this exact bug class (inflation_radius=
+    0.55) was originally a CLAUDE hallucination, Session 17 Piece 5."""
+    class _FakeAnthropicToolUseBlock:
+        type = 'tool_use'
+        name = 'propose_nav_param_change'
+        input = {'param_path': 'x.rotate_to_heading_angular_vel', 'current_value': '99',
+                 'proposed_value': '1.0', 'rationale': 'r'}
+
+    class _FakeAnthropicResponse:
+        content = [_FakeAnthropicToolUseBlock()]
+
+    warnings = agentic_loop.validate_nav_param_proposal(_FakeAnthropicResponse())
+
+    assert len(warnings) == 1
+    assert '99' in warnings[0]
+
+
 def test_diagnose_rejects_unknown_backend(tmp_path):
     db = str(tmp_path / "t.db")
     init_db(db)

@@ -3,6 +3,7 @@
 """Agentic test loop: diagnose failures, propose fixes, await human approval."""
 import json
 import os
+import re
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -313,6 +314,73 @@ def resolve_goals(goals):
     return resolved
 
 
+def validate_nav_param_proposal(response, nav2_params_text=None):
+    """Programmatic guardrail (2026-07-29): checks any propose_nav_param_change
+    tool-use block's claimed current_value against the real nav2_params.yaml text,
+    catching the exact hallucination class that has already bitten BOTH backends
+    once each (Claude: inflation_radius=0.55 vs real 0.25, Session 17 Piece 5;
+    Ollama: fabricated a nonexistent scan_period/robot_description.yaml, 2026-07-29).
+
+    Deliberately does not raise, retry, or hide anything — returns a list of
+    human-readable warning strings (empty if nothing to flag). Callers decide how to
+    surface warnings alongside the (still fully visible) proposal; Mike's explicit
+    call, 2026-07-29, is to keep showing raw model output as feedback, not hide it.
+
+    Works via duck typing (block.type/.name/.input) so it covers response.content
+    from either backend — Anthropic SDK's ToolUseBlock and this module's own
+    _ToolUseBlock both satisfy that shape.
+
+    Scope note: only catches claims made through the propose_nav_param_change tool's
+    structured current_value field. A fabrication that only ever appears in a
+    response's free-text narrative (never surfacing as a structured claim) isn't
+    caught here — that's what treating free text as unverified in the UI is for.
+    """
+    if nav2_params_text is None:
+        nav2_params_text = load_nav2_params_text()
+
+    warnings = []
+    for block in getattr(response, 'content', []):
+        if getattr(block, 'type', None) != 'tool_use':
+            continue
+        if getattr(block, 'name', None) != 'propose_nav_param_change':
+            continue
+        inputs = block.input
+        current_value = inputs.get('current_value')
+        if current_value is None:
+            continue  # optional field in the schema; nothing to check
+
+        param_path = inputs.get('param_path', '')
+        leaf = param_path.rsplit('.', 1)[-1] if param_path else ''
+        if not leaf:
+            continue
+
+        match = re.search(rf'(?<![\w.]){re.escape(leaf)}\s*:\s*(\S+)', nav2_params_text)
+        if match is None:
+            warnings.append(
+                f'⚠ param {leaf!r} (from param_path {param_path!r}) was not '
+                f'found anywhere in the real nav2_params.yaml — the model may have '
+                f'fabricated this parameter.'
+            )
+            continue
+
+        real_value = match.group(1).rstrip(',')
+        if not _nav_param_values_match(current_value, real_value):
+            warnings.append(
+                f'⚠ claimed current_value {current_value!r} for {leaf!r} does '
+                f'not match the real nav2_params.yaml value {real_value!r} — '
+                f'verify before applying.'
+            )
+
+    return warnings
+
+
+def _nav_param_values_match(claimed, real):
+    try:
+        return float(claimed) == float(real)
+    except (TypeError, ValueError):
+        return str(claimed) == str(real)
+
+
 def diagnose(run_data, db_path=FLEET_DB, trend_context=None, backend=None):
     """Call the configured backend (Ollama by default, or Claude — see backend=/
     AGENTIC_BACKEND) with telemetry + drift context; get structured diagnosis and
@@ -435,6 +503,10 @@ def run_loop():
           f"{run_data['scenario']} ({run_data['result']})")
 
     response = diagnose(run_data)
+
+    warnings = validate_nav_param_proposal(response)
+    for warning in warnings:
+        print(f'\n[agentic] {warning}')
 
     for block in response.content:
         if block.type == 'tool_use':

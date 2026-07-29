@@ -349,9 +349,9 @@ with tab5:
             'existing human-approval gate is unchanged.'
         )
         if st.button('Diagnose with AI'):
-            from tools.agentic_loop import diagnose  # local import: avoid constructing
-            # anthropic.Anthropic() (module-level in agentic_loop.py) unless this
-            # button is actually clicked.
+            from tools.agentic_loop import diagnose, validate_nav_param_proposal  # local
+            # import: avoid constructing anthropic.Anthropic() (module-level in
+            # agentic_loop.py) unless this button is actually clicked.
             visible_ids = [rid for rid in history if rid in _runs_by_id.index]
             if not visible_ids:
                 st.info('No runs in the current view to diagnose.')
@@ -364,8 +364,16 @@ with tab5:
                 run_data['id'] = latest_run_id
                 with st.spinner('Asking the model...'):
                     response = diagnose(run_data, db_path=DB_PATH, trend_context=trend_context)
+                    guardrail_warnings = validate_nav_param_proposal(response)
+                for warning in guardrail_warnings:
+                    st.warning(warning)
                 for block in response.content:
                     if block.type == 'text':
+                        st.caption(
+                            'Unverified model narrative — not checked against the real '
+                            'config, may contain fabricated file/param names or reversed '
+                            'recommendations. Read as a lead, not a decision.'
+                        )
                         st.markdown(block.text)
                     elif block.type == 'tool_use':
                         st.write(f'**Proposed action:** `{block.name}`')

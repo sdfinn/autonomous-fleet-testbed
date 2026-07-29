@@ -37,6 +37,51 @@ Claude is working with files under this directory.
   where native tool-calling silently drops. Verified against the real dashboard UI
   (Playwright-driven click on "Diagnose with AI"), not just mocked tests — see
   Release1Todo.md's resolved START HERE entry for the full verification trail.
+  **Separate, still-OPEN quality gap found the same day the tool-call bug was fixed
+  (2026-07-29, first real trend-view diagnosis against live drift data):** the local
+  model's free-text "analysis" narrative fabricated a config file that doesn't exist
+  anywhere in this repo (`robot_description.yaml`, `scan_period` param) and, for a
+  real param it DID name correctly (`rotate_to_heading_angular_vel`), recommended
+  reversing the sign of a deliberately-tuned, already-validated fix (Session 16 Task
+  9e slowed it 1.8→0.5 rad/s specifically to give AMCL more lidar scans per radian;
+  the model proposed speeding it back up to 1.2, exactly backwards) — while citing a
+  fabricated YAML nesting path (`navigation_bringup:`) that doesn't match the real
+  file's `controller_server:` structure. This is the same hallucination CLASS the
+  real-nav2_params.yaml prompt injection (Session 17 Piece 5) was built to prevent,
+  but that fix only grounds what the model CAN read, not what it reliably USES —
+  the free-text narrative ignored the injected real values in favor of generic Nav2
+  training-data boilerplate. Compounding the problem: the model's own structured tool
+  call (`propose_mission_plan`) didn't match its prose recommendation at all — none
+  of the narrative's parameter-change advice, right or wrong, ever reached a
+  schema-validated `propose_nav_param_change` call a human could actually review via
+  `human_approval()`. **Mitigation (b) built 2026-07-29 — `validate_nav_param_proposal(
+  response, nav2_params_text=None)`:** when a response contains a
+  `propose_nav_param_change` tool call with a `current_value`, checks it against the
+  real injected `nav2_params.yaml` text and returns a list of human-readable warning
+  strings (empty if nothing to flag) — closes the same gap as the original
+  0.55-vs-0.25 `inflation_radius` incident, but as code instead of relying on a human
+  to catch it every time. Deliberately does NOT raise, retry, or hide anything —
+  Mike's explicit call (2026-07-29): keep showing the raw model output as feedback
+  while iterating on quality, don't suppress it. Works via duck typing
+  (`block.type`/`.name`/`.input`) so it covers response objects from EITHER backend —
+  this bug class has bitten both Claude (Session 17 Piece 5) and Ollama (2026-07-29)
+  historically, so the guardrail isn't Ollama-specific. Wired into both real call
+  sites: `run_loop()`'s CLI (prints warnings before the approval prompt) and
+  `dashboard/app.py`'s Drift tab (`st.warning()` per flag, plus the free-text block
+  now carries an explicit "unverified model narrative" caption — mitigation (a)'s
+  *spirit* without literally hiding anything, per Mike's ask). 7 unit tests, TDD,
+  including exact regression fixtures for both the historical `inflation_radius`
+  incident (via a real currently-tuned param) and the 2026-07-29 `scan_period`
+  fabrication, run against the REAL `nav2_params.yaml` text, not a mock. **Scope
+  limit, confirmed not just theoretical:** only catches claims made through the
+  tool's structured `current_value` field — verified live the same day that the
+  actual 2026-07-29 incident response (which fabricated in free text but called
+  `propose_mission_plan`, not `propose_nav_param_change`) would NOT have been caught
+  by this guardrail; the "unverified narrative" UI caption is what covers that gap,
+  not this function. **Still open, not built:** (c) a bigger local model — parked,
+  no longer the first lever per Mike's priority (fix the small model's guardrails
+  first); a scored corrections-log table (schema design in progress, separate from
+  this piece) is the next planned step, not yet built.
 - `agentic_validate.py` — 2026-07-28: `python -m tools.agentic_validate` runs a small
   set of synthetic drift scenarios through both agentic_loop.py backends (Claude and
   Ollama) and prints both proposals side by side for manual comparison — the canary
