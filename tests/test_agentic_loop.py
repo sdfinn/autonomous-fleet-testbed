@@ -1273,6 +1273,39 @@ def test_describe_potential_changes_falls_back_to_raw_text():
     assert len(lines) == 4
 
 
+def test_normalize_extracted_fields_preserves_unrecognized_keys():
+    """Root cause of the 'pretty lame' summary bug, 2026-07-29: unrecognized field
+    names used to be silently DISCARDED (only aliased canonical fields were kept),
+    so when SOME field matched an alias but others didn't, the unmatched ones were
+    lost before display ever saw them — producing a bare, content-free sentence
+    even though the model had written real information."""
+    result = agentic_loop._normalize_extracted_fields(
+        'propose_nav_param_change', {'value': '6.0', 'target': 'local_costmap.width'}, '')
+
+    assert result['proposed_value'] == '6.0'  # aliased, as before
+    assert result['target'] == 'local_costmap.width'  # NEW: no longer discarded
+
+
+def test_describe_potential_changes_shows_proposed_value_alone_when_param_path_missing():
+    text = ('{"tool": "propose_nav_param_change", "value": 6.0, '
+            '"target": "local_costmap.width"}')
+    lines = agentic_loop.describe_potential_changes(text)
+
+    assert len(lines) == 1
+    assert lines[0] != 'A parameter change was mentioned.'  # not the bare/empty case
+    assert '6.0' in lines[0]
+
+
+def test_describe_potential_changes_shows_unrecognized_fields_instead_of_going_silent():
+    text = ('{"tool": "propose_mission_plan", "destination_sequence": '
+            '["bedroom_goal", "desk"]}')
+    lines = agentic_loop.describe_potential_changes(text)
+
+    assert len(lines) == 1
+    assert lines[0] != 'A mission plan was mentioned.'
+    assert 'destination_sequence' in lines[0]
+
+
 def test_diagnose_rejects_unknown_backend(tmp_path):
     db = str(tmp_path / "t.db")
     init_db(db)

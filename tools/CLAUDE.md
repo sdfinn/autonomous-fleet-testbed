@@ -227,6 +227,28 @@ Claude is working with files under this directory.
   the new `offer_tools` kwarg. Verified live via Playwright — confirmed zero tool
   names, zero JSON, zero verdict badges anywhere on the rendered page.
 
+  **Round 4.1 (same day) — the new plain-language Summary was live-quality-checked
+  and found genuinely weak on Mike's next real click:** two of four lines came back
+  as bare, content-free `"A parameter change was mentioned."` with nothing else,
+  even though the model HAD written real information. Root cause, traced precisely:
+  `_normalize_extracted_fields` started from an EMPTY dict and kept ONLY fields that
+  matched a known alias — if the model used a field name not in the alias list (e.g.
+  `"target"` instead of `"parameter"`), that value was silently discarded before
+  `describe_potential_changes` ever saw it, even when a SIBLING field (like
+  `proposed_value`) did match and made the dict non-empty (so the existing
+  `raw_text` empty-dict fallback never triggered either — a gap between two
+  fallbacks, not covered by either). Fixed at the source: `_normalize_extracted_
+  fields` now starts from a COPY of everything the model wrote (`dict(raw_pairs)`)
+  and adds canonical names on top, instead of starting empty and only keeping
+  recognized ones — nothing the model writes is discarded anymore, matching the
+  "never silently drop information" principle already established elsewhere in
+  this file (`extract_prose_recommendations`'s own docstring). `_describe_one_change`
+  also gained a genuine "show partial info" path (proposed_value alone, or any
+  otherwise-unrecognized field) instead of requiring the full ideal shape before
+  showing anything. 3 new tests (86 total), including one reproducing the exact
+  silent-discard mechanism directly. Verified live again — no more bare/empty
+  lines in that run's Summary.
+
   **Heads-up, not built:** Mike expects to ask for a second "deep dive" dashboard
   button running the same diagnosis with a more capable model for comparison —
   nothing here blocks it (`diagnose()` already takes `backend=`, `OLLAMA_MODEL` picks

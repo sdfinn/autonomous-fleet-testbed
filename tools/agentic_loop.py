@@ -581,7 +581,22 @@ _CHANGE_KIND_PHRASE = {
 }
 
 
+_KNOWN_DESCRIBED_FIELDS = {
+    'param_path', 'proposed_value', 'current_value', 'rationale',
+    'mission_description', 'variant_name', 'raw_text',
+}
+
+
 def _describe_one_change(item):
+    """2026-07-29, Summary-quality fix: the old version only ever showed a value if
+    BOTH param_path and proposed_value were found, and only ever showed an
+    explanation if a rationale field was found — anything else the model wrote
+    (a proposed_value with no recognized param name, or fields under names not in
+    our alias list) was silently dropped, producing a bare, content-free sentence
+    even when the model had written real information. Now shows partial structured
+    info when only some of it was found, and falls back to whatever unrecognized
+    fields ARE present (see _normalize_extracted_fields, which no longer discards
+    them) rather than going silent."""
     inputs = item['input']
     phrase = _CHANGE_KIND_PHRASE.get(item['tool_name'], 'A potential change was mentioned')
 
@@ -589,6 +604,10 @@ def _describe_one_change(item):
     proposed_value = inputs.get('proposed_value')
     if param_path and proposed_value is not None:
         phrase += f': {param_path} → {proposed_value}'
+    elif proposed_value is not None:
+        phrase += f': proposed value {proposed_value}'
+    elif param_path:
+        phrase += f': {param_path}'
     phrase += '.'
 
     rationale = inputs.get('rationale')
@@ -596,6 +615,11 @@ def _describe_one_change(item):
         phrase += f' {rationale}'
     elif inputs.get('raw_text'):
         phrase += f' ({inputs["raw_text"]})'
+    else:
+        leftover = {k: v for k, v in inputs.items() if k not in _KNOWN_DESCRIBED_FIELDS}
+        if leftover:
+            detail = ', '.join(f'{k}={v}' for k, v in leftover.items())
+            phrase += f' ({detail})'
 
     if item['title']:
         phrase = f"{item['title']}: {phrase}"
@@ -690,8 +714,16 @@ def _parse_kwargs_body(body):
 
 
 def _normalize_extracted_fields(tool_name, raw_pairs, body):
+    """2026-07-29, Summary-quality fix: previously started from an EMPTY dict and
+    kept only fields that matched a known alias, silently discarding anything the
+    model wrote under a name we didn't recognize. If one field aliased successfully
+    (e.g. proposed_value) but another didn't (e.g. the model called the param name
+    'target' instead of 'parameter'), the unmatched info vanished before display
+    ever saw it — producing a content-free "A parameter change was mentioned."
+    Now starts from a COPY of raw_pairs (nothing the model wrote is ever discarded),
+    then adds canonical field names on top wherever an alias matches."""
     aliases = _EXTRACT_FIELD_ALIASES.get(tool_name, {})
-    normalized = {}
+    normalized = dict(raw_pairs)
     for field, alias_list in aliases.items():
         for alias in alias_list:
             if alias in raw_pairs:
