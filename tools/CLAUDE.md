@@ -23,11 +23,20 @@ Claude is working with files under this directory.
   monkeypatches. Gained a local Ollama backend, 2026-07-28 (design:
   docs/superpowers/specs/2026-07-28-local-llm-diagnosis-design.md) — diagnose()
   dispatches to _diagnose_claude or _diagnose_ollama via a backend= param or the
-  AGENTIC_BACKEND env var (default 'claude', so behavior is unchanged unless
-  explicitly opted in); OLLAMA_MODEL env var picks the local model (default
-  qwen2.5:14b-instruct). Requires the ollama PyPI package (now in
-  requirements-ci.txt) and a running Ollama daemon for the 'ollama' backend only —
-  the default 'claude' backend's requirements are unchanged.
+  AGENTIC_BACKEND env var (default 'ollama' as of 2026-07-28); OLLAMA_MODEL env var
+  picks the local model (default qwen2.5:14b-instruct). Requires the ollama PyPI
+  package (now in requirements-ci.txt) and a running Ollama daemon for the 'ollama'
+  backend only — the 'claude' backend's requirements are unchanged. **Ollama
+  tool-call bug fixed 2026-07-29:** `_diagnose_ollama()` silently returned no tool
+  call at all (not an error — the model just answered in free text) once the real
+  `nav2_params.yaml` text pushed the prompt to ~16K chars; confirmed by direct
+  reproduction that the same model reliably calls a tool on a short prompt but not
+  this one. Fix: `_diagnose_ollama_json_fallback()` retries once with Ollama's
+  `format='json'` structured-output contract (schemas described in the prompt text)
+  when native tool-calling returns nothing — the JSON-constrained decoder holds up
+  where native tool-calling silently drops. Verified against the real dashboard UI
+  (Playwright-driven click on "Diagnose with AI"), not just mocked tests — see
+  Release1Todo.md's resolved START HERE entry for the full verification trail.
 - `agentic_validate.py` — 2026-07-28: `python -m tools.agentic_validate` runs a small
   set of synthetic drift scenarios through both agentic_loop.py backends (Claude and
   Ollama) and prints both proposals side by side for manual comparison — the canary
@@ -37,9 +46,8 @@ Claude is working with files under this directory.
   flipped to default 'ollama' the same session anyway** (Mike's explicit, informed
   call) — this predicted exactly the live failure hit via the dashboard's "Diagnose
   with AI" button at session end (`RuntimeError: ... did not propose a tool call`).
-  **Not yet fixed — see Release1Todo.md's "NEXT SESSION — START HERE" block (top of
-  file) for the live traceback, stopgap (`AGENTIC_BACKEND=claude`), and the
-  diagnostic plan.**
+  **Fixed 2026-07-29** — see the `agentic_loop.py` entry above and
+  Release1Todo.md's resolved START HERE entry.
 - `baseline_monitor.py` — Session 12+: `check_run(run_id)` compares one run against a
   rolling PASS-only baseline (config-driven, `config/drift_config.yaml`), sliced by
   `(runner_type, power_mode, scenario)` — the `scenario` dimension added Session 17

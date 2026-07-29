@@ -152,6 +152,85 @@ class _DiagnosisResponse:
     content: list
 
 
+def _validate_ollama_tool_proposal(name, args, tools_by_name):
+    """Shared validation for a (tool name, args) pair proposed by Ollama, used by
+    the JSON-prompted fallback below. Raises RuntimeError with an actionable message
+    on any mismatch; returns None on success."""
+    if name not in tools_by_name:
+        raise RuntimeError(
+            f'Ollama model {OLLAMA_MODEL!r} proposed an unknown tool '
+            f'{name!r} — expected one of {sorted(tools_by_name)}.'
+        )
+    if not isinstance(args, dict):
+        raise RuntimeError(
+            f'Ollama model {OLLAMA_MODEL!r} returned non-object tool-call '
+            f'arguments for {name!r}: {args!r}'
+        )
+    required = tools_by_name[name]['input_schema'].get('required', [])
+    missing = [key for key in required if key not in args]
+    if missing:
+        raise RuntimeError(
+            f'Ollama model {OLLAMA_MODEL!r} omitted required argument(s) '
+            f'{missing} for tool {name!r}: got {args!r}'
+        )
+
+
+def _diagnose_ollama_json_fallback(prompt, tools_by_name):
+    """Root cause (confirmed 2026-07-29 by direct reproduction against the live
+    model): qwen2.5:14b-instruct reliably invokes a tool via Ollama's native
+    tool-calling for short prompts, but silently degrades to free-text-only analysis
+    once the real diagnose() prompt's full nav2_params.yaml injection (~16K chars) is
+    included — no error, just no tool_calls. Native tool-calling and structured JSON
+    output are two different code paths in Ollama/llama.cpp; the JSON-constrained
+    decoder (format='json') holds up where native tool-calling silently drops. This
+    is the 'Approach C' fallback parked in the 2026-07-28 design spec, built now that
+    the validation harness (indirectly) and this live failure have shown native
+    tool-calling is unreliable for this model/prompt combination."""
+    schema_text = json.dumps(
+        {name: t['input_schema'] for name, t in tools_by_name.items()}, indent=2
+    )
+    fallback_prompt = f"""{prompt}
+
+Respond with ONLY a single JSON object (no other text, no markdown fences) in this
+exact shape:
+{{"tool": "<one of {sorted(tools_by_name)}>", "input": {{...fields matching that tool's schema below...}}}}
+
+Tool schemas:
+{schema_text}"""
+
+    try:
+        result = ollama.chat(
+            model=OLLAMA_MODEL,
+            messages=[{'role': 'user', 'content': fallback_prompt}],
+            format='json',
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f'Ollama model {OLLAMA_MODEL!r} did not propose a tool call for this '
+            f'prompt (native tool-calling returned no proposal, and the JSON-prompted '
+            f'fallback failed to reach Ollama: {exc}).'
+        ) from exc
+
+    try:
+        parsed = json.loads(result.message.content)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise RuntimeError(
+            f'Ollama model {OLLAMA_MODEL!r} did not propose a tool call for this '
+            f'prompt (native tool-calling returned no proposal, and the JSON-prompted '
+            f'fallback returned non-JSON content: {result.message.content!r}).'
+        ) from exc
+
+    name = parsed.get('tool') if isinstance(parsed, dict) else None
+    args = parsed.get('input') if isinstance(parsed, dict) else None
+    if name is None:
+        raise RuntimeError(
+            f'Ollama model {OLLAMA_MODEL!r} did not propose a tool call for this '
+            f'prompt (JSON-prompted fallback response had no "tool" key: {parsed!r}).'
+        )
+    _validate_ollama_tool_proposal(name, args, tools_by_name)
+    return _ToolUseBlock(name=name, input=dict(args))
+
+
 def _diagnose_ollama(prompt):
     ollama_tools = _to_ollama_tools(TOOLS)
     tools_by_name = {t['name']: t for t in TOOLS}
@@ -206,9 +285,7 @@ def _diagnose_ollama(prompt):
         blocks.append(_ToolUseBlock(name=name, input=dict(args)))
 
     if not any(isinstance(b, _ToolUseBlock) for b in blocks):
-        raise RuntimeError(
-            f'Ollama model {OLLAMA_MODEL!r} did not propose a tool call for this prompt.'
-        )
+        blocks.append(_diagnose_ollama_json_fallback(prompt, tools_by_name))
     return _DiagnosisResponse(content=blocks)
 
 

@@ -178,11 +178,80 @@ def test_diagnose_ollama_includes_text_block_when_model_writes_analysis(monkeypa
 
 
 def test_diagnose_ollama_raises_when_no_tool_call_returned(monkeypatch):
+    """Both the native attempt AND the JSON-prompted fallback fail to produce a
+    usable proposal here (fallback's json.loads on free-text analysis raises) —
+    covers the case where the fallback doesn't rescue a truly non-cooperative
+    response, not just the length-triggered failure mode below."""
     fake_response = _FakeOllamaChatResponse(
         _FakeOllamaMessage(content='just some analysis text, no proposal'))
     monkeypatch.setattr(agentic_loop.ollama, 'chat', lambda **kw: fake_response)
 
     with pytest.raises(RuntimeError, match='did not propose a tool call'):
+        agentic_loop._diagnose_ollama('irrelevant prompt text')
+
+
+def test_diagnose_ollama_falls_back_to_json_prompting_when_no_tool_call_returned(monkeypatch):
+    """Root cause fix, 2026-07-29: qwen2.5:14b-instruct's native tool-calling
+    reliably invokes a tool for short prompts but silently degrades to free-text-only
+    analysis once the real diagnose() prompt's full nav2_params.yaml injection
+    (~16K chars) is included — confirmed by direct reproduction against the live
+    model, not assumed. When native tool-calling returns no tool_calls, retry once
+    with Ollama's format='json' structured-output contract instead of raising
+    immediately (the parked 'Approach C' fallback from the 2026-07-28 design spec)."""
+    call_count = {'n': 0}
+
+    def _fake_chat(**kwargs):
+        call_count['n'] += 1
+        if call_count['n'] == 1:
+            assert 'tools' in kwargs
+            return _FakeOllamaChatResponse(
+                _FakeOllamaMessage(content='lots of free-text analysis, no tool call'))
+        assert kwargs.get('format') == 'json'
+        assert 'tools' not in kwargs
+        json_body = ('{"tool": "propose_nav_param_change", '
+                     '"input": {"param_path": "x", "proposed_value": "1", "rationale": "r"}}')
+        return _FakeOllamaChatResponse(_FakeOllamaMessage(content=json_body))
+
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', _fake_chat)
+
+    result = agentic_loop._diagnose_ollama('irrelevant prompt text')
+
+    assert call_count['n'] == 2
+    tool_blocks = [b for b in result.content if b.type == 'tool_use']
+    assert len(tool_blocks) == 1
+    assert tool_blocks[0].name == 'propose_nav_param_change'
+    assert tool_blocks[0].input['proposed_value'] == '1'
+
+
+def test_diagnose_ollama_json_fallback_raises_on_unknown_tool_name(monkeypatch):
+    call_count = {'n': 0}
+
+    def _fake_chat(**kwargs):
+        call_count['n'] += 1
+        if call_count['n'] == 1:
+            return _FakeOllamaChatResponse(_FakeOllamaMessage(content='no tool call here'))
+        return _FakeOllamaChatResponse(
+            _FakeOllamaMessage(content='{"tool": "not_a_real_tool", "input": {}}'))
+
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', _fake_chat)
+
+    with pytest.raises(RuntimeError, match='unknown tool'):
+        agentic_loop._diagnose_ollama('irrelevant prompt text')
+
+
+def test_diagnose_ollama_json_fallback_raises_on_missing_required_argument(monkeypatch):
+    call_count = {'n': 0}
+
+    def _fake_chat(**kwargs):
+        call_count['n'] += 1
+        if call_count['n'] == 1:
+            return _FakeOllamaChatResponse(_FakeOllamaMessage(content='no tool call here'))
+        return _FakeOllamaChatResponse(_FakeOllamaMessage(
+            content='{"tool": "propose_nav_param_change", "input": {"param_path": "x"}}'))
+
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', _fake_chat)
+
+    with pytest.raises(RuntimeError, match='omitted required argument'):
         agentic_loop._diagnose_ollama('irrelevant prompt text')
 
 
