@@ -36,7 +36,7 @@ def test_diagnose_injects_real_nav2_params_into_prompt(monkeypatch, tmp_path):
 
     run_data = {"id": run_id, "scenario": "mission1", "result": "PASS",
                 "sim_engine": "gazebo"}
-    agentic_loop.diagnose(run_data, db_path=db)
+    agentic_loop.diagnose(run_data, db_path=db, backend='claude')
 
     prompt_text = captured["messages"][0]["content"]
     assert "inflation_radius: 0.25" in prompt_text
@@ -58,7 +58,7 @@ def test_diagnose_includes_trend_context_when_given(monkeypatch, tmp_path):
 
     run_data = {"id": run_id, "scenario": "mission1", "result": "PASS",
                 "sim_engine": "gazebo"}
-    agentic_loop.diagnose(run_data, db_path=db,
+    agentic_loop.diagnose(run_data, db_path=db, backend='claude',
                            trend_context="  nav_success_rate: 3/20 runs flagged")
 
     prompt_text = captured["messages"][0]["content"]
@@ -81,7 +81,7 @@ def test_diagnose_omits_trend_section_when_not_given(monkeypatch, tmp_path):
 
     run_data = {"id": run_id, "scenario": "mission1", "result": "PASS",
                 "sim_engine": "gazebo"}
-    agentic_loop.diagnose(run_data, db_path=db)
+    agentic_loop.diagnose(run_data, db_path=db, backend='claude')
 
     prompt_text = captured["messages"][0]["content"]
     assert "Big-picture trend context" not in prompt_text
@@ -263,19 +263,20 @@ def test_diagnose_dispatches_to_ollama_backend_when_requested(monkeypatch, tmp_p
     assert "inflation_radius: 0.25" in captured["prompt"]
 
 
-def test_diagnose_defaults_to_claude_backend_when_env_var_unset(monkeypatch, tmp_path):
+def test_diagnose_defaults_to_ollama_backend_when_env_var_unset(monkeypatch, tmp_path):
     monkeypatch.delenv("AGENTIC_BACKEND", raising=False)
     db = str(tmp_path / "t.db")
     init_db(db)
     run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
                       result="PASS", step_log=[], db_path=db, runner_type="local")
 
-    monkeypatch.setattr(agentic_loop.client.messages, "create", lambda **kw: _FakeResponse())
+    monkeypatch.setattr(agentic_loop, "_diagnose_ollama",
+                         lambda prompt: "sentinel-ollama-default")
 
     run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
     result = agentic_loop.diagnose(run_data, db_path=db)  # no backend= given
 
-    assert isinstance(result, _FakeResponse)
+    assert result == "sentinel-ollama-default"
 
 
 def test_diagnose_reads_backend_from_env_var(monkeypatch, tmp_path):

@@ -342,7 +342,8 @@ with tab5:
         st.divider()
         st.subheader('AI Diagnosis (read-only)')
         st.caption(
-            'Feeds this filtered view\'s trend to Claude for a proposed diagnosis. '
+            'Feeds this filtered view\'s trend to the configured diagnosis backend '
+            '(a local Ollama model by default, or Claude) for a proposed diagnosis. '
             'Read-only — nothing here writes any file. Applying a fix still means '
             'running `python -m tools.agentic_loop` from the terminal, where the '
             'existing human-approval gate is unchanged.'
@@ -361,7 +362,7 @@ with tab5:
                 latest_row = _runs_by_id.loc[latest_run_id]
                 run_data = latest_row.to_dict()
                 run_data['id'] = latest_run_id
-                with st.spinner('Asking Claude...'):
+                with st.spinner('Asking the model...'):
                     response = diagnose(run_data, db_path=DB_PATH, trend_context=trend_context)
                 for block in response.content:
                     if block.type == 'text':

@@ -32,8 +32,8 @@ OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'qwen2.5:14b-instruct')
 
 def load_nav2_params_text(path=NAV2_PARAMS_PATH):
     """Raw text of the real nav2_params.yaml — injected into diagnose()'s prompt so
-    Claude reads actual current values instead of inferring them from memory (the
-    bug: it once claimed 0.55 for inflation_radius when the real value is 0.25).
+    the model reads actual current values instead of inferring them from memory (the
+    bug: Claude once claimed 0.55 for inflation_radius when the real value is 0.25).
     Direct context injection, no RAG — matches this project's standing decision."""
     return Path(path).read_text()
 
@@ -237,7 +237,9 @@ def resolve_goals(goals):
 
 
 def diagnose(run_data, db_path=FLEET_DB, trend_context=None, backend=None):
-    """Call Claude with telemetry + drift context; get structured diagnosis and proposed action.
+    """Call the configured backend (Ollama by default, or Claude — see backend=/
+    AGENTIC_BACKEND) with telemetry + drift context; get structured diagnosis and
+    proposed action.
 
     trend_context (Piece 5, optional): a plain-text summary from
     tools.baseline_monitor.build_trend_summary() — the dashboard's "Diagnose with AI"
@@ -293,7 +295,7 @@ with semantic location names to create a more challenging multi-waypoint mission
 (e.g. "visit the bedroom goal, then the desk, then return to home_base") or use
 generate_world_variant to propose a harder obstacle layout."""
 
-    backend = backend or os.environ.get('AGENTIC_BACKEND', 'claude')
+    backend = backend or os.environ.get('AGENTIC_BACKEND', 'ollama')
     if backend == 'claude':
         return _diagnose_claude(prompt)
     if backend == 'ollama':
@@ -311,7 +313,7 @@ def _diagnose_claude(prompt):
 
 
 def apply_world_variant(layout, name):
-    """Write a new SDF world file from Claude's obstacle layout."""
+    """Write a new SDF world file from the proposed obstacle layout."""
     obstacles_sdf = ''
     for obs in layout:
         obstacles_sdf += f"""
@@ -361,7 +363,7 @@ def run_loop():
         if block.type == 'tool_use':
             tool = block.name
             inputs = block.input
-            print(f'\n[agentic] Claude proposes: {tool}')
+            print(f'\n[agentic] Model proposes: {tool}')
 
             if not human_approval(tool, inputs):
                 print('[agentic] Proposal rejected by human. Exiting.')
@@ -393,7 +395,7 @@ def run_loop():
                     print(f'    → {step["label"]}: ({step["x"]}, {step["y"]})')
 
         elif block.type == 'text':
-            print(f'\n[Claude analysis]\n{block.text}')
+            print(f'\n[analysis]\n{block.text}')
 
 
 if __name__ == '__main__':
