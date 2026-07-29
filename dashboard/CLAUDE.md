@@ -34,10 +34,14 @@ pass) — loads only when Claude is working with files under this directory.
   The caption was updated to say so plainly instead of claiming "nothing here writes
   any file," which stopped being true. Layout: Metrics Analysis (the model's free
   text, captioned explanatory-only) → Recommendations (`evaluate_diagnosis_items()`,
-  one `st.expander` per item with a ✅/❌/⚠/➖ verdict badge and `st.json`, still
-  display-only — no verdict controls, no save button, that's a separate deferred
-  feature) → Summary (code-generated conflict notes + a fixed closing line, not the
-  model's own words). Verified live via Playwright against a real running instance,
-  not just read from the diff — this session hit a stray leftover `streamlit`
-  process serving a stale import TWICE, both times only caught by an actual browser
-  click, not by tests or a syntax check.
+  ✅/❌/⚠/➖ verdict badge + `st.json(..., expanded=True)` per item, ALWAYS visible —
+  still display-only, no verdict controls, no save button, that's a separate deferred
+  feature) → Summary (`build_conflict_notes()`'s code-generated notes + a fixed
+  closing line, not the model's own words). **First version of this section used
+  `st.expander` (collapsed by default) for each item — a straight regression against
+  "don't hide anything," caught immediately by Mike on first look ("seems like a lot
+  less information than before") and reverted the same day.** Verified live via
+  Playwright against a real running instance twice (once per round), not just read
+  from the diff — this session hit a stray leftover `streamlit` process serving a
+  stale import more than once, only ever caught by an actual browser click, never by
+  tests or a syntax check.

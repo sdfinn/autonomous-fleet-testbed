@@ -436,6 +436,45 @@ def _detect_cross_item_conflicts(items):
             )
 
 
+def detect_narrative_item_mismatch(analysis_text, items):
+    """Heuristic check (2026-07-29, second-round fix): catches the pattern observed
+    TWICE live — the model describes several recommendations in its free-text
+    Metrics Analysis (this model's habit: writing them out in a
+    tool_name(...)-style format) but only some of them actually become real,
+    submitted tool calls. Item-vs-item conflict detection (_detect_cross_item_
+    conflicts) doesn't catch this — it's prose vs. reality disagreeing, not two
+    items disagreeing with each other.
+
+    Counts how many times each known tool name appears verbatim in analysis_text
+    vs. how many times it was actually submitted; flags any tool mentioned MORE
+    often than submitted. Submitting more than mentioned is fine (not flagged) —
+    only the reverse is the failure mode this exists for.
+
+    Best-effort, not a guarantee: tied to this model's current habit of writing
+    tool names verbatim in its own prose. A differently-worded response (no literal
+    tool names in the text) won't be caught here.
+    """
+    if not analysis_text:
+        return []
+
+    submitted_counts = {}
+    for item in items:
+        submitted_counts[item['tool_name']] = submitted_counts.get(item['tool_name'], 0) + 1
+
+    notes = []
+    for tool in TOOLS:
+        name = tool['name']
+        mentioned = analysis_text.count(name)
+        submitted = submitted_counts.get(name, 0)
+        if mentioned > submitted:
+            notes.append(
+                f'⚠ the written analysis mentions `{name}` {mentioned} time(s), but '
+                f'only {submitted} were submitted as reviewable recommendations — '
+                f'treat the text above with caution.'
+            )
+    return notes
+
+
 def _nav_param_values_match(claimed, real):
     try:
         return float(claimed) == float(real)
@@ -529,17 +568,29 @@ home_base") or use generate_world_variant to propose a harder obstacle layout.""
         raise ValueError(f"unknown AGENTIC_BACKEND {backend!r} — expected 'claude' or 'ollama'")
 
     items = evaluate_diagnosis_items(response, nav2_params_text)
-    conflict_notes = [i['auto_notes'] for i in items if i['auto_verdict'] == 'conflict'] or None
     analysis_text = '\n'.join(
         block.text for block in getattr(response, 'content', [])
         if getattr(block, 'type', None) == 'text'
     ) or None
+    conflict_notes = build_conflict_notes(items, analysis_text)
     log_diagnosis(
         backend=backend, model_name=model_name, source=source, prompt_text=prompt,
-        analysis_text=analysis_text, items=items, conflict_notes=conflict_notes,
+        analysis_text=analysis_text, items=items, conflict_notes=conflict_notes or None,
         run_id=run_data.get('id'), db_path=db_path,
     )
     return response
+
+
+def build_conflict_notes(items, analysis_text):
+    """Shared by diagnose() (for auto-logging) and every caller that renders a
+    Summary section — merges the two independent sources of 'the AI's own
+    recommendations don't add up' findings: item-vs-item conflicts
+    (_detect_cross_item_conflicts, baked into each item's auto_verdict already) and
+    narrative-vs-item mismatches (detect_narrative_item_mismatch). Returns a plain
+    list, possibly empty — callers wanting None-when-empty (e.g. for JSON storage)
+    do that themselves."""
+    item_conflicts = [i['auto_notes'] for i in items if i['auto_verdict'] == 'conflict']
+    return item_conflicts + detect_narrative_item_mismatch(analysis_text, items)
 
 
 def _diagnose_claude(prompt):
@@ -601,9 +652,10 @@ def run_loop():
 
     response = diagnose(run_data)  # auto-logs internally (tools.diagnosis_log)
 
-    for block in response.content:
-        if block.type == 'text':
-            print(f'\n[Metrics Analysis]\n{block.text}')
+    analysis_text = '\n'.join(
+        block.text for block in response.content if block.type == 'text') or None
+    if analysis_text:
+        print(f'\n[Metrics Analysis]\n{analysis_text}')
 
     items = evaluate_diagnosis_items(response)
 
@@ -611,12 +663,12 @@ def run_loop():
     for i, item in enumerate(items):
         badge = _VERDICT_BADGE[item['auto_verdict']]
         print(f'  [{i}] {badge} {item["tool_name"]} — {item["auto_verdict"]}')
+        print(f'      {json.dumps(item["input"])}')
         if item['auto_notes']:
             print(f'      {item["auto_notes"]}')
 
-    conflict_notes = [item['auto_notes'] for item in items if item['auto_verdict'] == 'conflict']
     print('\n[Summary]')
-    for note in conflict_notes:
+    for note in build_conflict_notes(items, analysis_text):
         print(f'  {note}')
     print('  Please review proposed actions and provide feedback to project owner.')
 

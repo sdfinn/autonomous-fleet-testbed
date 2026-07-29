@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for tools/agentic_loop.py's diagnose() prompt-building — no real
 Anthropic API calls (client.messages.create is monkeypatched in every test)."""
+import json
 import sqlite3
 
 import pytest
@@ -203,6 +204,33 @@ def test_diagnose_logs_ollama_model_name(monkeypatch, tmp_path):
     row = sqlite3.connect(db).execute(
         "SELECT backend, model_name FROM ai_diagnoses ORDER BY id DESC LIMIT 1").fetchone()
     assert row == ('ollama', agentic_loop.OLLAMA_MODEL)
+
+
+def test_diagnose_logs_narrative_item_mismatch_in_conflict_notes(monkeypatch, tmp_path):
+    """Locks in the wiring, not just the unit — reproduces the exact live incident:
+    prose promises 3 param changes, 0 real items submitted."""
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+
+    fake_response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._TextBlock(
+            text='propose_nav_param_change(a:b:1)\npropose_nav_param_change(c:d:2)'),
+        agentic_loop._ToolUseBlock(name='propose_mission_plan',
+                                    input={'mission_description': 'd', 'goals': [], 'rationale': 'r'}),
+    ])
+    monkeypatch.setattr(agentic_loop.client.messages, "create", lambda **kw: fake_response)
+
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    agentic_loop.diagnose(run_data, db_path=db, backend='claude')
+
+    row = sqlite3.connect(db).execute(
+        "SELECT conflict_notes FROM ai_diagnoses ORDER BY id DESC LIMIT 1").fetchone()
+    notes = json.loads(row[0])
+    assert len(notes) == 1
+    assert 'propose_nav_param_change' in notes[0]
+    assert '2' in notes[0]
 
 
 def test_to_ollama_tools_converts_anthropic_shape_to_function_calling_shape():
@@ -692,6 +720,75 @@ def test_evaluate_diagnosis_items_bad_fact_check_takes_priority_over_conflict():
 
     assert items[0]['auto_verdict'] == 'bad'
     assert items[1]['auto_verdict'] == 'bad'
+
+
+def test_detect_narrative_item_mismatch_flags_unsubmitted_mentions():
+    """2026-07-29, second-round fix: catches the pattern observed TWICE live — the
+    model describes several recommendations in prose (this model's habit: writing
+    them in a tool_name(...)-style format) but only some become real submitted
+    items. Item-vs-item conflict detection alone doesn't catch this, since it's
+    prose vs. reality disagreeing, not two items disagreeing with each other."""
+    analysis_text = (
+        "propose_nav_param_change(local_costmap:robot_radius:0.237)\n"
+        "propose_nav_param_change(global_costmap:inflation_layer:inflation_radius:0.25)\n"
+        "propose_nav_param_change(local_costmap:inflation_layer:inflation_radius:0.20)\n"
+        "propose_mission_plan(home_base hallway_west bedroom_goal home_base)\n"
+    )
+    items = [{'tool_name': 'propose_mission_plan', 'input': {}, 'auto_verdict': 'unverified',
+              'auto_notes': None}]
+
+    notes = agentic_loop.detect_narrative_item_mismatch(analysis_text, items)
+
+    assert len(notes) == 1
+    assert 'propose_nav_param_change' in notes[0]
+    assert '3' in notes[0]
+    assert '0' in notes[0]
+
+
+def test_detect_narrative_item_mismatch_no_note_when_counts_match():
+    analysis_text = "propose_mission_plan(home_base bedroom_goal)"
+    items = [{'tool_name': 'propose_mission_plan', 'input': {}, 'auto_verdict': 'unverified',
+              'auto_notes': None}]
+
+    notes = agentic_loop.detect_narrative_item_mismatch(analysis_text, items)
+
+    assert notes == []
+
+
+def test_detect_narrative_item_mismatch_no_note_when_analysis_text_is_none():
+    items = [{'tool_name': 'propose_mission_plan', 'input': {}, 'auto_verdict': 'unverified',
+              'auto_notes': None}]
+
+    notes = agentic_loop.detect_narrative_item_mismatch(None, items)
+
+    assert notes == []
+
+
+def test_detect_narrative_item_mismatch_ignores_items_submitted_more_than_mentioned():
+    """Submitting MORE than the text mentions isn't a problem — only text promising
+    more than got submitted is."""
+    analysis_text = "just some general discussion, no tool names written out"
+    items = [{'tool_name': 'propose_mission_plan', 'input': {}, 'auto_verdict': 'unverified',
+              'auto_notes': None}]
+
+    notes = agentic_loop.detect_narrative_item_mismatch(analysis_text, items)
+
+    assert notes == []
+
+
+def test_detect_narrative_item_mismatch_flags_multiple_tools_independently():
+    analysis_text = (
+        "propose_nav_param_change(a:b:1)\n"
+        "generate_world_variant(harder_world)\n"
+    )
+    items = []
+
+    notes = agentic_loop.detect_narrative_item_mismatch(analysis_text, items)
+
+    assert len(notes) == 2
+    joined = ' '.join(notes)
+    assert 'propose_nav_param_change' in joined
+    assert 'generate_world_variant' in joined
 
 
 def test_diagnose_rejects_unknown_backend(tmp_path):

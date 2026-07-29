@@ -64,13 +64,36 @@ Claude is working with files under this directory.
   `{tool_name, input, auto_verdict, auto_notes}` record per tool-use block:
   `'good'`/`'bad'` for `propose_nav_param_change` (same fact-check logic as before —
   claimed `current_value` vs the real injected file), `'unverified'` for
-  `propose_mission_plan`/`generate_world_variant` (nothing to fact-check), and new:
+  `propose_mission_plan`/`generate_world_variant` (nothing to fact-check), and
   `'conflict'` when two-plus `propose_nav_param_change` items disagree on the same
   leaf param name with different `proposed_value`s — the clean, structured version of
   "the AI's own recommendations contradict each other." `'bad'` takes priority over
   `'conflict'` in the verdict label when both apply. Works via duck typing so it
   covers either backend's response shape (this bug class has bitten both Claude,
   Session 17 Piece 5, and Ollama, 2026-07-29). Pure function, nothing persisted here.
+
+  **Second-round fix, same day:** Mike's first look at the rebuilt page ("not really
+  what I expected... seems like a lot less information than before") caught two real
+  problems, not just a UI-taste disagreement. (1) The dashboard's recommendation
+  content had been put behind a collapsed `st.expander`, hiding it by default — a
+  straight regression against "don't hide anything" from earlier the same session;
+  reverted to always-visible (`st.json(..., expanded=True)`). (2) `_detect_cross_
+  item_conflicts` only catches TWO SUBMITTED items disagreeing with each other — it
+  said nothing when prose promises several actions and only some (or none) become
+  real items, which is the exact pattern from the original incident AND from a
+  second live run the same day (prose discussed 4 things, 1 real item existed).
+  **`detect_narrative_item_mismatch(analysis_text, items)`** closes this: counts how
+  many times each known tool name appears verbatim in the model's own analysis text
+  vs. how many times it was actually submitted, flags any tool mentioned MORE than
+  submitted. Explicitly a heuristic tied to this model's habit of writing tool names
+  out in its own prose (observed twice, not guaranteed for a differently-worded
+  response) — documented as such, not oversold. **`build_conflict_notes(items,
+  analysis_text)`** merges both sources (item-vs-item + narrative-vs-item) into one
+  list, shared by `diagnose()`'s auto-log and both render sites so the two callers
+  can't drift out of sync with each other. Verified live a second time: a real run's
+  Summary section correctly surfaced *"the written analysis mentions
+  `generate_world_variant` 1 time(s), but only 0 were submitted..."* — the actual
+  call-out Mike asked for, confirmed working end to end, not just unit-tested.
 
   **Auto-logs every call, 2026-07-29 (`tools.diagnosis_log`, see its own entry
   below)** — a NEW `source='cli'` (dashboard passes `'dashboard'`) param on

@@ -349,9 +349,10 @@ with tab5:
             'the terminal, where the existing human-approval gate is unchanged.'
         )
         if st.button('Diagnose with AI'):
-            from tools.agentic_loop import diagnose, evaluate_diagnosis_items  # local
-            # import: avoid constructing anthropic.Anthropic() (module-level in
-            # agentic_loop.py) unless this button is actually clicked.
+            from tools.agentic_loop import (build_conflict_notes, diagnose,
+                                             evaluate_diagnosis_items)  # local import:
+            # avoid constructing anthropic.Anthropic() (module-level in agentic_loop.py)
+            # unless this button is actually clicked.
             visible_ids = [rid for rid in history if rid in _runs_by_id.index]
             if not visible_ids:
                 st.info('No runs in the current view to diagnose.')
@@ -366,10 +367,10 @@ with tab5:
                     response = diagnose(run_data, db_path=DB_PATH, trend_context=trend_context,
                                          source='dashboard')  # auto-logs internally
                     items = evaluate_diagnosis_items(response)
+                    analysis_text = '\n'.join(
+                        block.text for block in response.content if block.type == 'text') or None
 
                 st.markdown('#### Metrics Analysis')
-                analysis_text = '\n'.join(
-                    block.text for block in response.content if block.type == 'text')
                 if analysis_text:
                     st.caption('Explanatory only — never programmatically trusted or acted on.')
                     st.markdown(analysis_text)
@@ -381,16 +382,13 @@ with tab5:
                 if not items:
                     st.caption('(no recommendations submitted this time)')
                 for item in items:
-                    with st.expander(
-                        f"{badge[item['auto_verdict']]} `{item['tool_name']}` — "
-                        f"{item['auto_verdict']}"
-                    ):
-                        st.json(item['input'])
-                        if item['auto_notes']:
-                            st.warning(item['auto_notes'])
+                    st.markdown(f"{badge[item['auto_verdict']]} `{item['tool_name']}` — "
+                                f"**{item['auto_verdict']}**")
+                    st.json(item['input'], expanded=True)
+                    if item['auto_notes']:
+                        st.warning(item['auto_notes'])
 
                 st.markdown('#### Summary')
-                conflict_notes = [i['auto_notes'] for i in items if i['auto_verdict'] == 'conflict']
-                for note in conflict_notes:
+                for note in build_conflict_notes(items, analysis_text):
                     st.warning(note)
                 st.info('Please review proposed actions and provide feedback to project owner.')
