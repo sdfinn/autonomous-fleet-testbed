@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for tools/agentic_loop.py's diagnose() prompt-building — no real
 Anthropic API calls (client.messages.create is monkeypatched in every test)."""
+import sqlite3
+
 import pytest
 
 from tools import agentic_loop
@@ -85,6 +87,122 @@ def test_diagnose_omits_trend_section_when_not_given(monkeypatch, tmp_path):
 
     prompt_text = captured["messages"][0]["content"]
     assert "Big-picture trend context" not in prompt_text
+
+
+def test_diagnose_prompt_requires_every_recommendation_as_a_tool_call(monkeypatch, tmp_path):
+    """2026-07-29 design: recommendations must come in as structured tool calls, not
+    buried in free-text prose (the exact failure mode that motivated
+    evaluate_diagnosis_items) — the prompt must say so explicitly."""
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+
+    captured = {}
+
+    def _fake_create(**kwargs):
+        captured["messages"] = kwargs["messages"]
+        return _FakeResponse()
+
+    monkeypatch.setattr(agentic_loop.client.messages, "create", _fake_create)
+
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS",
+                "sim_engine": "gazebo"}
+    agentic_loop.diagnose(run_data, db_path=db, backend='claude')
+
+    prompt_text = captured["messages"][0]["content"]
+    assert "own tool call" in prompt_text
+    assert "as many tools as you have recommendations" in prompt_text.lower()
+
+
+def test_diagnose_auto_logs_a_diagnosis_row(monkeypatch, tmp_path):
+    """2026-07-29 design: every diagnose() call auto-logs, no button, no separate
+    save action — same lifecycle as telemetry_logger.log_run()."""
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+
+    fake_response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._TextBlock(text='some analysis'),
+        agentic_loop._ToolUseBlock(name='propose_mission_plan',
+                                    input={'mission_description': 'd', 'goals': [], 'rationale': 'r'}),
+    ])
+    monkeypatch.setattr(agentic_loop.client.messages, "create", lambda **kw: fake_response)
+
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    agentic_loop.diagnose(run_data, db_path=db, backend='claude')
+
+    row = sqlite3.connect(db).execute(
+        "SELECT backend, model_name, source, run_id, analysis_text FROM ai_diagnoses "
+        "ORDER BY id DESC LIMIT 1").fetchone()
+    assert row == ('claude', 'claude-sonnet-5', 'cli', run_id, 'some analysis')
+
+    item_row = sqlite3.connect(db).execute(
+        "SELECT tool_name, auto_verdict FROM ai_diagnosis_items "
+        "ORDER BY id DESC LIMIT 1").fetchone()
+    assert item_row == ('propose_mission_plan', 'unverified')
+
+
+def test_diagnose_source_defaults_to_cli(monkeypatch, tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+    monkeypatch.setattr(agentic_loop.client.messages, "create", lambda **kw: _FakeResponse())
+
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    agentic_loop.diagnose(run_data, db_path=db, backend='claude')
+
+    row = sqlite3.connect(db).execute(
+        "SELECT source FROM ai_diagnoses ORDER BY id DESC LIMIT 1").fetchone()
+    assert row[0] == 'cli'
+
+
+def test_diagnose_source_param_is_logged(monkeypatch, tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+    monkeypatch.setattr(agentic_loop.client.messages, "create", lambda **kw: _FakeResponse())
+
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    agentic_loop.diagnose(run_data, db_path=db, backend='claude', source='dashboard')
+
+    row = sqlite3.connect(db).execute(
+        "SELECT source FROM ai_diagnoses ORDER BY id DESC LIMIT 1").fetchone()
+    assert row[0] == 'dashboard'
+
+
+def test_diagnose_logs_prompt_text(monkeypatch, tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+    monkeypatch.setattr(agentic_loop.client.messages, "create", lambda **kw: _FakeResponse())
+
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    agentic_loop.diagnose(run_data, db_path=db, backend='claude')
+
+    row = sqlite3.connect(db).execute(
+        "SELECT prompt_text FROM ai_diagnoses ORDER BY id DESC LIMIT 1").fetchone()
+    assert 'inflation_radius: 0.25' in row[0]
+
+
+def test_diagnose_logs_ollama_model_name(monkeypatch, tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+    monkeypatch.setattr(agentic_loop, "_diagnose_ollama",
+                         lambda prompt: agentic_loop._DiagnosisResponse(content=[]))
+
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    agentic_loop.diagnose(run_data, db_path=db, backend='ollama')
+
+    row = sqlite3.connect(db).execute(
+        "SELECT backend, model_name FROM ai_diagnoses ORDER BY id DESC LIMIT 1").fetchone()
+    assert row == ('ollama', agentic_loop.OLLAMA_MODEL)
 
 
 def test_to_ollama_tools_converts_anthropic_shape_to_function_calling_shape():
@@ -378,7 +496,7 @@ def test_diagnose_explicit_backend_param_overrides_env_var(monkeypatch, tmp_path
     assert isinstance(result, _FakeResponse)
 
 
-def test_validate_nav_param_proposal_flags_value_mismatch_against_real_file():
+def test_evaluate_diagnosis_items_flags_value_mismatch_as_bad():
     """Regression fixture for the Session 17 Piece 5 incident class: Claude once
     claimed inflation_radius=0.55 when the real value was 0.25. Exercises the same
     shape against a real, currently-tuned param (rotate_to_heading_angular_vel, real
@@ -390,15 +508,16 @@ def test_validate_nav_param_proposal_flags_value_mismatch_against_real_file():
     )
     response = agentic_loop._DiagnosisResponse(content=[fake_call])
 
-    warnings = agentic_loop.validate_nav_param_proposal(response)
+    items = agentic_loop.evaluate_diagnosis_items(response)
 
-    assert len(warnings) == 1
-    assert 'rotate_to_heading_angular_vel' in warnings[0]
-    assert '1.2' in warnings[0]
-    assert '0.5' in warnings[0]
+    assert len(items) == 1
+    assert items[0]['auto_verdict'] == 'bad'
+    assert 'rotate_to_heading_angular_vel' in items[0]['auto_notes']
+    assert '1.2' in items[0]['auto_notes']
+    assert '0.5' in items[0]['auto_notes']
 
 
-def test_validate_nav_param_proposal_passes_when_current_value_matches_real_file():
+def test_evaluate_diagnosis_items_marks_value_match_as_good():
     fake_call = agentic_loop._ToolUseBlock(
         name='propose_nav_param_change',
         input={'param_path': 'controller_server.rotate_to_heading_angular_vel',
@@ -406,12 +525,13 @@ def test_validate_nav_param_proposal_passes_when_current_value_matches_real_file
     )
     response = agentic_loop._DiagnosisResponse(content=[fake_call])
 
-    warnings = agentic_loop.validate_nav_param_proposal(response)
+    items = agentic_loop.evaluate_diagnosis_items(response)
 
-    assert warnings == []
+    assert items[0]['auto_verdict'] == 'good'
+    assert items[0]['auto_notes'] is None
 
 
-def test_validate_nav_param_proposal_treats_numeric_equivalent_values_as_matching():
+def test_evaluate_diagnosis_items_treats_numeric_equivalent_values_as_good():
     fake_call = agentic_loop._ToolUseBlock(
         name='propose_nav_param_change',
         input={'param_path': 'controller_server.rotate_to_heading_angular_vel',
@@ -419,12 +539,12 @@ def test_validate_nav_param_proposal_treats_numeric_equivalent_values_as_matchin
     )
     response = agentic_loop._DiagnosisResponse(content=[fake_call])
 
-    warnings = agentic_loop.validate_nav_param_proposal(response)
+    items = agentic_loop.evaluate_diagnosis_items(response)
 
-    assert warnings == []
+    assert items[0]['auto_verdict'] == 'good'
 
 
-def test_validate_nav_param_proposal_flags_param_not_found_at_all():
+def test_evaluate_diagnosis_items_flags_param_not_found_as_bad():
     """Regression fixture for the 2026-07-29 incident: the local model invented
     `scan_period` in a nonexistent `robot_description.yaml` — no such param exists
     anywhere in the real nav2_params.yaml."""
@@ -435,38 +555,65 @@ def test_validate_nav_param_proposal_flags_param_not_found_at_all():
     )
     response = agentic_loop._DiagnosisResponse(content=[fake_call])
 
-    warnings = agentic_loop.validate_nav_param_proposal(response)
+    items = agentic_loop.evaluate_diagnosis_items(response)
 
-    assert len(warnings) == 1
-    assert 'scan_period' in warnings[0]
-    assert 'not found' in warnings[0]
+    assert items[0]['auto_verdict'] == 'bad'
+    assert 'scan_period' in items[0]['auto_notes']
+    assert 'not found' in items[0]['auto_notes']
 
 
-def test_validate_nav_param_proposal_skips_when_no_current_value_given():
+def test_evaluate_diagnosis_items_marks_no_current_value_claim_as_good():
     fake_call = agentic_loop._ToolUseBlock(
         name='propose_nav_param_change',
         input={'param_path': 'x.inflation_radius', 'proposed_value': '0.3', 'rationale': 'r'},
     )
     response = agentic_loop._DiagnosisResponse(content=[fake_call])
 
-    warnings = agentic_loop.validate_nav_param_proposal(response)
+    items = agentic_loop.evaluate_diagnosis_items(response)
 
-    assert warnings == []
+    assert items[0]['auto_verdict'] == 'good'
 
 
-def test_validate_nav_param_proposal_ignores_other_tool_calls():
+def test_evaluate_diagnosis_items_marks_other_tools_as_unverified():
     fake_call = agentic_loop._ToolUseBlock(
         name='propose_mission_plan',
         input={'mission_description': 'd', 'goals': [], 'rationale': 'r'},
     )
     response = agentic_loop._DiagnosisResponse(content=[fake_call])
 
-    warnings = agentic_loop.validate_nav_param_proposal(response)
+    items = agentic_loop.evaluate_diagnosis_items(response)
 
-    assert warnings == []
+    assert items[0]['auto_verdict'] == 'unverified'
+    assert items[0]['auto_notes'] is None
 
 
-def test_validate_nav_param_proposal_works_with_duck_typed_anthropic_style_blocks():
+def test_evaluate_diagnosis_items_ignores_text_blocks():
+    response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._TextBlock(text='some analysis'),
+        agentic_loop._ToolUseBlock(name='propose_mission_plan',
+                                    input={'mission_description': 'd', 'goals': [], 'rationale': 'r'}),
+    ])
+
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    assert len(items) == 1
+    assert items[0]['tool_name'] == 'propose_mission_plan'
+
+
+def test_evaluate_diagnosis_items_returns_items_in_order():
+    response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._ToolUseBlock(name='propose_mission_plan',
+                                    input={'mission_description': 'a', 'goals': [], 'rationale': 'r'}),
+        agentic_loop._ToolUseBlock(name='generate_world_variant',
+                                    input={'variant_name': 'b', 'obstacle_layout': [], 'rationale': 'r'}),
+    ])
+
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    assert [i['tool_name'] for i in items] == ['propose_mission_plan', 'generate_world_variant']
+
+
+def test_evaluate_diagnosis_items_works_with_duck_typed_anthropic_style_blocks():
     """Must work for BOTH backends via duck typing (type/name/input attributes), not
     just Ollama's normalized _ToolUseBlock — this exact bug class (inflation_radius=
     0.55) was originally a CLAUDE hallucination, Session 17 Piece 5."""
@@ -479,10 +626,72 @@ def test_validate_nav_param_proposal_works_with_duck_typed_anthropic_style_block
     class _FakeAnthropicResponse:
         content = [_FakeAnthropicToolUseBlock()]
 
-    warnings = agentic_loop.validate_nav_param_proposal(_FakeAnthropicResponse())
+    items = agentic_loop.evaluate_diagnosis_items(_FakeAnthropicResponse())
 
-    assert len(warnings) == 1
-    assert '99' in warnings[0]
+    assert items[0]['auto_verdict'] == 'bad'
+    assert '99' in items[0]['auto_notes']
+
+
+def test_evaluate_diagnosis_items_detects_conflict_between_two_items():
+    """The 2026-07-29 ask: when the AI's own recommendations disagree with each other,
+    say so. Two propose_nav_param_change items targeting the same leaf param
+    (rotate_to_heading_angular_vel) with different proposed_values — matched by leaf
+    name since the model may not write identical full param_path strings."""
+    response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._ToolUseBlock(
+            name='propose_nav_param_change',
+            input={'param_path': 'a.rotate_to_heading_angular_vel',
+                   'proposed_value': '1.2', 'rationale': 'r1'}),
+        agentic_loop._ToolUseBlock(
+            name='propose_nav_param_change',
+            input={'param_path': 'b.rotate_to_heading_angular_vel',
+                   'proposed_value': '0.3', 'rationale': 'r2'}),
+    ])
+
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    assert items[0]['auto_verdict'] == 'conflict'
+    assert items[1]['auto_verdict'] == 'conflict'
+    assert '1' in items[0]['auto_notes']  # mentions the conflicting sibling item
+
+
+def test_evaluate_diagnosis_items_no_conflict_when_items_agree():
+    response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._ToolUseBlock(
+            name='propose_nav_param_change',
+            input={'param_path': 'a.rotate_to_heading_angular_vel',
+                   'proposed_value': '1.2', 'rationale': 'r1'}),
+        agentic_loop._ToolUseBlock(
+            name='propose_nav_param_change',
+            input={'param_path': 'b.rotate_to_heading_angular_vel',
+                   'proposed_value': '1.2', 'rationale': 'r2'}),
+    ])
+
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    assert items[0]['auto_verdict'] == 'good'
+    assert items[1]['auto_verdict'] == 'good'
+
+
+def test_evaluate_diagnosis_items_bad_fact_check_takes_priority_over_conflict():
+    """Two items disagree with each other AND both fail the fact check (a fabricated
+    param) — 'bad' is the more objective, more important finding, so it wins over
+    'conflict' in the verdict label."""
+    response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._ToolUseBlock(
+            name='propose_nav_param_change',
+            input={'param_path': 'a.scan_period', 'current_value': '0.1',
+                   'proposed_value': '0.05', 'rationale': 'r1'}),
+        agentic_loop._ToolUseBlock(
+            name='propose_nav_param_change',
+            input={'param_path': 'b.scan_period', 'current_value': '0.1',
+                   'proposed_value': '0.02', 'rationale': 'r2'}),
+    ])
+
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    assert items[0]['auto_verdict'] == 'bad'
+    assert items[1]['auto_verdict'] == 'bad'
 
 
 def test_diagnose_rejects_unknown_backend(tmp_path):

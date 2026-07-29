@@ -37,51 +37,74 @@ Claude is working with files under this directory.
   where native tool-calling silently drops. Verified against the real dashboard UI
   (Playwright-driven click on "Diagnose with AI"), not just mocked tests — see
   Release1Todo.md's resolved START HERE entry for the full verification trail.
-  **Separate, still-OPEN quality gap found the same day the tool-call bug was fixed
-  (2026-07-29, first real trend-view diagnosis against live drift data):** the local
-  model's free-text "analysis" narrative fabricated a config file that doesn't exist
-  anywhere in this repo (`robot_description.yaml`, `scan_period` param) and, for a
-  real param it DID name correctly (`rotate_to_heading_angular_vel`), recommended
-  reversing the sign of a deliberately-tuned, already-validated fix (Session 16 Task
-  9e slowed it 1.8→0.5 rad/s specifically to give AMCL more lidar scans per radian;
-  the model proposed speeding it back up to 1.2, exactly backwards) — while citing a
-  fabricated YAML nesting path (`navigation_bringup:`) that doesn't match the real
-  file's `controller_server:` structure. This is the same hallucination CLASS the
-  real-nav2_params.yaml prompt injection (Session 17 Piece 5) was built to prevent,
-  but that fix only grounds what the model CAN read, not what it reliably USES —
-  the free-text narrative ignored the injected real values in favor of generic Nav2
-  training-data boilerplate. Compounding the problem: the model's own structured tool
-  call (`propose_mission_plan`) didn't match its prose recommendation at all — none
-  of the narrative's parameter-change advice, right or wrong, ever reached a
-  schema-validated `propose_nav_param_change` call a human could actually review via
-  `human_approval()`. **Mitigation (b) built 2026-07-29 — `validate_nav_param_proposal(
-  response, nav2_params_text=None)`:** when a response contains a
-  `propose_nav_param_change` tool call with a `current_value`, checks it against the
-  real injected `nav2_params.yaml` text and returns a list of human-readable warning
-  strings (empty if nothing to flag) — closes the same gap as the original
-  0.55-vs-0.25 `inflation_radius` incident, but as code instead of relying on a human
-  to catch it every time. Deliberately does NOT raise, retry, or hide anything —
-  Mike's explicit call (2026-07-29): keep showing the raw model output as feedback
-  while iterating on quality, don't suppress it. Works via duck typing
-  (`block.type`/`.name`/`.input`) so it covers response objects from EITHER backend —
-  this bug class has bitten both Claude (Session 17 Piece 5) and Ollama (2026-07-29)
-  historically, so the guardrail isn't Ollama-specific. Wired into both real call
-  sites: `run_loop()`'s CLI (prints warnings before the approval prompt) and
-  `dashboard/app.py`'s Drift tab (`st.warning()` per flag, plus the free-text block
-  now carries an explicit "unverified model narrative" caption — mitigation (a)'s
-  *spirit* without literally hiding anything, per Mike's ask). 7 unit tests, TDD,
-  including exact regression fixtures for both the historical `inflation_radius`
-  incident (via a real currently-tuned param) and the 2026-07-29 `scan_period`
-  fabrication, run against the REAL `nav2_params.yaml` text, not a mock. **Scope
-  limit, confirmed not just theoretical:** only catches claims made through the
-  tool's structured `current_value` field — verified live the same day that the
-  actual 2026-07-29 incident response (which fabricated in free text but called
-  `propose_mission_plan`, not `propose_nav_param_change`) would NOT have been caught
-  by this guardrail; the "unverified narrative" UI caption is what covers that gap,
-  not this function. **Still open, not built:** (c) a bigger local model — parked,
-  no longer the first lever per Mike's priority (fix the small model's guardrails
-  first); a scored corrections-log table (schema design in progress, separate from
-  this piece) is the next planned step, not yet built.
+  **Quality gap found 2026-07-29 (first real trend-view diagnosis against live drift
+  data), fully redesigned the same day — see
+  docs/superpowers/specs/2026-07-29-ai-diagnosis-items-and-feedback-design.md for the
+  full history (three scope corrections in one session, each captured there).** The
+  local model's free-text narrative fabricated a config file that doesn't exist
+  anywhere in this repo (`robot_description.yaml`, `scan_period`) and recommended
+  reversing a deliberately-tuned, already-validated fix (`rotate_to_heading_angular_vel`,
+  Session 16 Task 9e) — while its ONE actual structured tool call
+  (`propose_mission_plan`) had nothing to do with any of it. Root design response:
+  stop letting recommendations hide in prose at all.
+
+  **`diagnose()`'s prompt now requires every recommendation as its own tool call**
+  (Metrics Analysis prose is explanatory-only; "if it isn't submitted as its own tool
+  call, it will not be reviewed") — **verified live 2026-07-29 that qwen2.5:14b-instruct
+  does NOT reliably comply**: one real trend-view run still wrote 3 nav-param
+  recommendations as fake-function-call-formatted prose (`propose_nav_param_change(
+  local_costmap:robot_radius:0.237)`) alongside only 1 real tool call. Not a bug in
+  the new design — the new Recommendations list makes this exact gap directly visible
+  (prose says 4 things, the list shows 1 real item) instead of hiding it, which was
+  the actual point. Left as a known, confirmed model-compliance limitation, not
+  silently claimed fixed.
+
+  **`evaluate_diagnosis_items(response, nav2_params_text=None)`** (supersedes the
+  narrower `validate_nav_param_proposal`, same day) returns one
+  `{tool_name, input, auto_verdict, auto_notes}` record per tool-use block:
+  `'good'`/`'bad'` for `propose_nav_param_change` (same fact-check logic as before —
+  claimed `current_value` vs the real injected file), `'unverified'` for
+  `propose_mission_plan`/`generate_world_variant` (nothing to fact-check), and new:
+  `'conflict'` when two-plus `propose_nav_param_change` items disagree on the same
+  leaf param name with different `proposed_value`s — the clean, structured version of
+  "the AI's own recommendations contradict each other." `'bad'` takes priority over
+  `'conflict'` in the verdict label when both apply. Works via duck typing so it
+  covers either backend's response shape (this bug class has bitten both Claude,
+  Session 17 Piece 5, and Ollama, 2026-07-29). Pure function, nothing persisted here.
+
+  **Auto-logs every call, 2026-07-29 (`tools.diagnosis_log`, see its own entry
+  below)** — a NEW `source='cli'` (dashboard passes `'dashboard'`) param on
+  `diagnose()` is the only thing a caller says about itself; `diagnose()` itself
+  computes items/analysis text/conflict notes and logs them before returning, no
+  separate save action anywhere, same lifecycle as `telemetry_logger.log_run()`.
+  **Explicitly NOT a human-feedback/scoring layer** — Mike's clear distinction,
+  2026-07-29: system-driven writes (this) are fine now; user-driven writes (a
+  good/partial/bad button) are deferred, not built.
+
+  `run_loop()` (CLI) and `dashboard/app.py`'s Drift tab both render: Metrics Analysis
+  → Recommendations (badge + notes per item) → Summary (code-generated conflict notes
+  + the fixed line "Please review proposed actions and provide feedback to project
+  owner.", not model-written). 24 tests total across `evaluate_diagnosis_items`,
+  `diagnose()`'s new prompt/logging behavior, and `tools/diagnosis_log.py` — TDD
+  throughout, including regression fixtures for both historical incidents
+  (`inflation_radius`, `scan_period`) run against the REAL `nav2_params.yaml` text.
+  Verified live via a running Streamlit instance + Playwright click, not just unit
+  tests (this session's own established practice — two prior incidents this session
+  were only caught that way).
+
+  **Heads-up, not built:** Mike expects to ask for a second "deep dive" dashboard
+  button running the same diagnosis with a more capable model for comparison —
+  nothing here blocks it (`diagnose()` already takes `backend=`, `OLLAMA_MODEL` picks
+  the model), just not exposed as a second button yet.
+- `diagnosis_log.py` — 2026-07-29: auto-log for every `agentic_loop.diagnose()` call,
+  same `fleet_runs.db`. `init_db()`/`log_diagnosis(**kwargs) -> diagnosis_id` mirror
+  `telemetry_logger.py`'s `runs`/`steps` two-table shape: one `ai_diagnoses` row per
+  call (backend, model_name, source, prompt_text, analysis_text, conflict_notes) plus
+  one `ai_diagnosis_items` row per recommendation (tool_name, item_input JSON,
+  auto_verdict, auto_notes). Deliberately has NO human-verdict columns — this is the
+  system-driven half only; a human-feedback/scoring layer is a separate, deferred
+  design (see the 2026-07-29 spec's scope-correction history) that would arrive as an
+  additive migration later, not retrofitted here speculatively.
 - `agentic_validate.py` — 2026-07-28: `python -m tools.agentic_validate` runs a small
   set of synthetic drift scenarios through both agentic_loop.py backends (Claude and
   Ollama) and prints both proposals side by side for manual comparison — the canary

@@ -13,6 +13,7 @@ import anthropic
 import ollama
 
 from tools.baseline_monitor import check_run
+from tools.diagnosis_log import log_diagnosis
 from tools.telemetry_logger import DB_PATH as FLEET_DB
 # Canonical map lives in the nav_fleet package (Session 15) — the workspace overlay
 # (auto-sourced by .bashrc) normally makes it importable here. Fall back to importing
@@ -314,64 +315,125 @@ def resolve_goals(goals):
     return resolved
 
 
-def validate_nav_param_proposal(response, nav2_params_text=None):
-    """Programmatic guardrail (2026-07-29): checks any propose_nav_param_change
-    tool-use block's claimed current_value against the real nav2_params.yaml text,
-    catching the exact hallucination class that has already bitten BOTH backends
-    once each (Claude: inflation_radius=0.55 vs real 0.25, Session 17 Piece 5;
-    Ollama: fabricated a nonexistent scan_period/robot_description.yaml, 2026-07-29).
+def evaluate_diagnosis_items(response, nav2_params_text=None):
+    """Turns response.content's tool-use blocks into a display-ready list of
+    recommendation items, each with an automatic verdict (2026-07-29 design:
+    docs/superpowers/specs/2026-07-29-ai-diagnosis-items-and-feedback-design.md).
+    Supersedes the narrower validate_nav_param_proposal (2026-07-29, same day) — same
+    fact-check logic, generalized to cover every tool type plus cross-item conflicts.
 
-    Deliberately does not raise, retry, or hide anything — returns a list of
-    human-readable warning strings (empty if nothing to flag). Callers decide how to
-    surface warnings alongside the (still fully visible) proposal; Mike's explicit
-    call, 2026-07-29, is to keep showing raw model output as feedback, not hide it.
+    Returns one {'tool_name', 'input', 'auto_verdict', 'auto_notes'} dict per tool-use
+    block, in order (text blocks are skipped — they have no item to evaluate).
 
-    Works via duck typing (block.type/.name/.input) so it covers response.content
-    from either backend — Anthropic SDK's ToolUseBlock and this module's own
-    _ToolUseBlock both satisfy that shape.
+    auto_verdict is one of:
+      'good'       — propose_nav_param_change with no current_value claim, or one that
+                     matches the real nav2_params.yaml; no conflicting sibling item.
+      'bad'        — propose_nav_param_change whose current_value claim doesn't match
+                     the real file, or whose param isn't found there at all. Takes
+                     priority over 'conflict' when both apply — a fact-check failure is
+                     the more objective, more important finding.
+      'conflict'   — two or more propose_nav_param_change items (matched by leaf param
+                     name, since the model may not write identical full param_path
+                     strings) propose different values for what's effectively the same
+                     parameter. The clean, structured version of "the AI's own
+                     recommendations disagree with each other."
+      'unverified' — any other tool (propose_mission_plan, generate_world_variant) —
+                     nothing in the real config to fact-check a mission plan or world
+                     layout against.
 
-    Scope note: only catches claims made through the propose_nav_param_change tool's
-    structured current_value field. A fabrication that only ever appears in a
-    response's free-text narrative (never surfacing as a structured claim) isn't
-    caught here — that's what treating free text as unverified in the UI is for.
+    Deliberately does not raise, retry, or hide anything — pure computation, nothing
+    persisted here (see tools.diagnosis_log for the separate, system-driven auto-log).
+    Works via duck typing (block.type/.name/.input) so it covers response.content from
+    either backend — Anthropic SDK's ToolUseBlock and this module's own _ToolUseBlock
+    both satisfy that shape.
+
+    Scope note: only catches claims made through a tool's structured fields. A
+    fabrication that only ever appears in the response's free-text narrative (never
+    surfacing as a structured claim) isn't caught here.
     """
     if nav2_params_text is None:
         nav2_params_text = load_nav2_params_text()
 
-    warnings = []
+    items = []
     for block in getattr(response, 'content', []):
         if getattr(block, 'type', None) != 'tool_use':
             continue
-        if getattr(block, 'name', None) != 'propose_nav_param_change':
-            continue
-        inputs = block.input
-        current_value = inputs.get('current_value')
-        if current_value is None:
-            continue  # optional field in the schema; nothing to check
+        items.append(_evaluate_one_item(block, nav2_params_text))
 
-        param_path = inputs.get('param_path', '')
-        leaf = param_path.rsplit('.', 1)[-1] if param_path else ''
-        if not leaf:
-            continue
+    _detect_cross_item_conflicts(items)
+    return items
 
-        match = re.search(rf'(?<![\w.]){re.escape(leaf)}\s*:\s*(\S+)', nav2_params_text)
-        if match is None:
-            warnings.append(
+
+def _evaluate_one_item(block, nav2_params_text):
+    name = block.name
+    inputs = block.input
+    if name != 'propose_nav_param_change':
+        return {'tool_name': name, 'input': inputs, 'auto_verdict': 'unverified',
+                'auto_notes': None}
+
+    current_value = inputs.get('current_value')
+    if current_value is None:
+        return {'tool_name': name, 'input': inputs, 'auto_verdict': 'good', 'auto_notes': None}
+
+    param_path = inputs.get('param_path', '')
+    leaf = param_path.rsplit('.', 1)[-1] if param_path else ''
+    if not leaf:
+        return {'tool_name': name, 'input': inputs, 'auto_verdict': 'good', 'auto_notes': None}
+
+    match = re.search(rf'(?<![\w.]){re.escape(leaf)}\s*:\s*(\S+)', nav2_params_text)
+    if match is None:
+        return {
+            'tool_name': name, 'input': inputs, 'auto_verdict': 'bad',
+            'auto_notes': (
                 f'⚠ param {leaf!r} (from param_path {param_path!r}) was not '
                 f'found anywhere in the real nav2_params.yaml — the model may have '
                 f'fabricated this parameter.'
-            )
-            continue
+            ),
+        }
 
-        real_value = match.group(1).rstrip(',')
-        if not _nav_param_values_match(current_value, real_value):
-            warnings.append(
+    real_value = match.group(1).rstrip(',')
+    if not _nav_param_values_match(current_value, real_value):
+        return {
+            'tool_name': name, 'input': inputs, 'auto_verdict': 'bad',
+            'auto_notes': (
                 f'⚠ claimed current_value {current_value!r} for {leaf!r} does '
                 f'not match the real nav2_params.yaml value {real_value!r} — '
                 f'verify before applying.'
-            )
+            ),
+        }
 
-    return warnings
+    return {'tool_name': name, 'input': inputs, 'auto_verdict': 'good', 'auto_notes': None}
+
+
+def _detect_cross_item_conflicts(items):
+    """Mutates items in place: groups propose_nav_param_change items by leaf param
+    name, flags any group with more than one distinct proposed_value as 'conflict' —
+    unless an item already failed its own fact check ('bad' takes priority, see
+    evaluate_diagnosis_items's docstring)."""
+    by_leaf = {}
+    for idx, item in enumerate(items):
+        if item['tool_name'] != 'propose_nav_param_change':
+            continue
+        param_path = item['input'].get('param_path', '')
+        leaf = param_path.rsplit('.', 1)[-1] if param_path else ''
+        if not leaf:
+            continue
+        by_leaf.setdefault(leaf, []).append(idx)
+
+    for leaf, indices in by_leaf.items():
+        proposed_values = {items[i]['input'].get('proposed_value') for i in indices}
+        if len(proposed_values) <= 1:
+            continue  # they agree — not a conflict
+        for i in indices:
+            if items[i]['auto_verdict'] == 'bad':
+                continue  # fact-check failure takes priority over conflict
+            others = [j for j in indices if j != i]
+            items[i]['auto_verdict'] = 'conflict'
+            items[i]['auto_notes'] = (
+                f'⚠ disagrees with recommendation(s) {others} for the same '
+                f'parameter ({leaf!r}) — proposed values: '
+                f'{sorted(proposed_values)}.'
+            )
 
 
 def _nav_param_values_match(claimed, real):
@@ -381,10 +443,16 @@ def _nav_param_values_match(claimed, real):
         return str(claimed) == str(real)
 
 
-def diagnose(run_data, db_path=FLEET_DB, trend_context=None, backend=None):
+def diagnose(run_data, db_path=FLEET_DB, trend_context=None, backend=None, source='cli'):
     """Call the configured backend (Ollama by default, or Claude — see backend=/
     AGENTIC_BACKEND) with telemetry + drift context; get structured diagnosis and
     proposed action.
+
+    Auto-logs the call to tools.diagnosis_log (2026-07-29 design) — system-driven,
+    happens every time, no separate save action, same lifecycle as
+    tools.telemetry_logger.log_run(). `source` ('cli' default, dashboard/app.py passes
+    'dashboard') is the only thing a caller needs to say about itself; everything else
+    logged (backend, model, prompt, evaluated items, conflicts) is derived here.
 
     trend_context (Piece 5, optional): a plain-text summary from
     tools.baseline_monitor.build_trend_summary() — the dashboard's "Diagnose with AI"
@@ -434,18 +502,44 @@ one run):
 Available named locations in this environment (use these in mission plans):
 {locations_str}
 
-Analyse the results. If any metric is FLAGGED, diagnose the likely cause and use ONE
-tool to propose a concrete action. If nothing is flagged, use propose_mission_plan
-with semantic location names to create a more challenging multi-waypoint mission
-(e.g. "visit the bedroom goal, then the desk, then return to home_base") or use
-generate_world_variant to propose a harder obstacle layout."""
+Respond in two clearly separate parts:
+
+1. Metrics Analysis (prose): briefly explain what's flagged and why, in plain language.
+This text is shown to a human for context only — it is never programmatically trusted or
+acted on, so do not put anything here that needs to be applied.
+
+2. Recommendations (structured, one tool call per recommendation): for every concrete
+action you recommend, submit it as its own tool call — call propose_nav_param_change once
+per parameter you want changed, propose_mission_plan for a mission suggestion, or
+generate_world_variant for a harder world. Call as many tools as you have recommendations
+for — do not describe an actionable recommendation only in the Metrics Analysis prose; if
+it isn't submitted as its own tool call, it will not be reviewed. If nothing is flagged,
+use propose_mission_plan with semantic location names to create a more challenging
+multi-waypoint mission (e.g. "visit the bedroom goal, then the desk, then return to
+home_base") or use generate_world_variant to propose a harder obstacle layout."""
 
     backend = backend or os.environ.get('AGENTIC_BACKEND', 'ollama')
     if backend == 'claude':
-        return _diagnose_claude(prompt)
-    if backend == 'ollama':
-        return _diagnose_ollama(prompt)
-    raise ValueError(f"unknown AGENTIC_BACKEND {backend!r} — expected 'claude' or 'ollama'")
+        response = _diagnose_claude(prompt)
+        model_name = 'claude-sonnet-5'
+    elif backend == 'ollama':
+        response = _diagnose_ollama(prompt)
+        model_name = OLLAMA_MODEL
+    else:
+        raise ValueError(f"unknown AGENTIC_BACKEND {backend!r} — expected 'claude' or 'ollama'")
+
+    items = evaluate_diagnosis_items(response, nav2_params_text)
+    conflict_notes = [i['auto_notes'] for i in items if i['auto_verdict'] == 'conflict'] or None
+    analysis_text = '\n'.join(
+        block.text for block in getattr(response, 'content', [])
+        if getattr(block, 'type', None) == 'text'
+    ) or None
+    log_diagnosis(
+        backend=backend, model_name=model_name, source=source, prompt_text=prompt,
+        analysis_text=analysis_text, items=items, conflict_notes=conflict_notes,
+        run_id=run_data.get('id'), db_path=db_path,
+    )
+    return response
 
 
 def _diagnose_claude(prompt):
@@ -497,54 +591,70 @@ def human_approval(action_type, details):
     return answer == 'y'
 
 
+_VERDICT_BADGE = {'good': '✅', 'bad': '❌', 'conflict': '⚠', 'unverified': '➖'}
+
+
 def run_loop():
     run_data = load_latest_run()
     print(f"[agentic] Loaded run {run_data['id']}: "
           f"{run_data['scenario']} ({run_data['result']})")
 
-    response = diagnose(run_data)
-
-    warnings = validate_nav_param_proposal(response)
-    for warning in warnings:
-        print(f'\n[agentic] {warning}')
+    response = diagnose(run_data)  # auto-logs internally (tools.diagnosis_log)
 
     for block in response.content:
-        if block.type == 'tool_use':
-            tool = block.name
-            inputs = block.input
-            print(f'\n[agentic] Model proposes: {tool}')
+        if block.type == 'text':
+            print(f'\n[Metrics Analysis]\n{block.text}')
 
-            if not human_approval(tool, inputs):
-                print('[agentic] Proposal rejected by human. Exiting.')
-                return
+    items = evaluate_diagnosis_items(response)
 
-            if tool == 'generate_world_variant':
-                path = apply_world_variant(inputs['obstacle_layout'], inputs['variant_name'])
-                # Honest instruction (S17 review CR-11a): the launch files hardcode
-                # bedroom_simple.sdf — there is no world:= argument yet (a `world` launch
-                # arg is R2 NL->world territory). Until then, running a variant means
-                # pointing the launch at it by hand.
-                print(f'[agentic] World variant created at {path}. To run it, edit '
-                      f'src/nav_fleet/launch/sim_only_launch.py world_path to point at '
-                      f'this file (no world:= launch argument exists yet).')
+    print('\n[Recommendations]')
+    for i, item in enumerate(items):
+        badge = _VERDICT_BADGE[item['auto_verdict']]
+        print(f'  [{i}] {badge} {item["tool_name"]} — {item["auto_verdict"]}')
+        if item['auto_notes']:
+            print(f'      {item["auto_notes"]}')
 
-            elif tool == 'propose_nav_param_change':
-                print('[agentic] Apply this change to src/nav_fleet/config/nav2_params.yaml:')
-                print(f'  {inputs["param_path"]}: {inputs["proposed_value"]}')
-                print(f'  Rationale: {inputs["rationale"]}')
+    conflict_notes = [item['auto_notes'] for item in items if item['auto_verdict'] == 'conflict']
+    print('\n[Summary]')
+    for note in conflict_notes:
+        print(f'  {note}')
+    print('  Please review proposed actions and provide feedback to project owner.')
 
-            elif tool == 'propose_mission_plan':
-                resolved = resolve_goals(inputs['goals'])
-                plan = {**inputs, 'goals_resolved': resolved}
-                plan_path = Path('reports/mission_plan.json')
-                plan_path.write_text(json.dumps(plan, indent=2))
-                print(f'[agentic] Mission plan saved to {plan_path}')
-                print(f'  Mission: {inputs["mission_description"]}')
-                for step in resolved:
-                    print(f'    → {step["label"]}: ({step["x"]}, {step["y"]})')
+    for i, (block, item) in enumerate(zip(
+        (b for b in response.content if b.type == 'tool_use'), items
+    )):
+        tool = block.name
+        inputs = block.input
+        print(f"\n[agentic] Recommendation [{i}] ({item['auto_verdict']}): {tool}")
 
-        elif block.type == 'text':
-            print(f'\n[analysis]\n{block.text}')
+        if not human_approval(tool, inputs):
+            print('[agentic] Proposal rejected by human. Skipping.')
+            continue
+
+        if tool == 'generate_world_variant':
+            path = apply_world_variant(inputs['obstacle_layout'], inputs['variant_name'])
+            # Honest instruction (S17 review CR-11a): the launch files hardcode
+            # bedroom_simple.sdf — there is no world:= argument yet (a `world` launch
+            # arg is R2 NL->world territory). Until then, running a variant means
+            # pointing the launch at it by hand.
+            print(f'[agentic] World variant created at {path}. To run it, edit '
+                  f'src/nav_fleet/launch/sim_only_launch.py world_path to point at '
+                  f'this file (no world:= launch argument exists yet).')
+
+        elif tool == 'propose_nav_param_change':
+            print('[agentic] Apply this change to src/nav_fleet/config/nav2_params.yaml:')
+            print(f'  {inputs["param_path"]}: {inputs["proposed_value"]}')
+            print(f'  Rationale: {inputs["rationale"]}')
+
+        elif tool == 'propose_mission_plan':
+            resolved = resolve_goals(inputs['goals'])
+            plan = {**inputs, 'goals_resolved': resolved}
+            plan_path = Path('reports/mission_plan.json')
+            plan_path.write_text(json.dumps(plan, indent=2))
+            print(f'[agentic] Mission plan saved to {plan_path}')
+            print(f'  Mission: {inputs["mission_description"]}')
+            for step in resolved:
+                print(f'    → {step["label"]}: ({step["x"]}, {step["y"]})')
 
 
 if __name__ == '__main__':

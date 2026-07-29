@@ -340,16 +340,16 @@ with tab5:
         st.dataframe(pd.DataFrame(detail_rows), use_container_width=True)
 
         st.divider()
-        st.subheader('AI Diagnosis (read-only)')
+        st.subheader('AI Diagnosis')
         st.caption(
             'Feeds this filtered view\'s trend to the configured diagnosis backend '
             '(a local Ollama model by default, or Claude) for a proposed diagnosis. '
-            'Read-only — nothing here writes any file. Applying a fix still means '
-            'running `python -m tools.agentic_loop` from the terminal, where the '
-            'existing human-approval gate is unchanged.'
+            'Logs this diagnosis automatically for future review — applies nothing; '
+            'applying a fix still means running `python -m tools.agentic_loop` from '
+            'the terminal, where the existing human-approval gate is unchanged.'
         )
         if st.button('Diagnose with AI'):
-            from tools.agentic_loop import diagnose, validate_nav_param_proposal  # local
+            from tools.agentic_loop import diagnose, evaluate_diagnosis_items  # local
             # import: avoid constructing anthropic.Anthropic() (module-level in
             # agentic_loop.py) unless this button is actually clicked.
             visible_ids = [rid for rid in history if rid in _runs_by_id.index]
@@ -363,18 +363,34 @@ with tab5:
                 run_data = latest_row.to_dict()
                 run_data['id'] = latest_run_id
                 with st.spinner('Asking the model...'):
-                    response = diagnose(run_data, db_path=DB_PATH, trend_context=trend_context)
-                    guardrail_warnings = validate_nav_param_proposal(response)
-                for warning in guardrail_warnings:
-                    st.warning(warning)
-                for block in response.content:
-                    if block.type == 'text':
-                        st.caption(
-                            'Unverified model narrative — not checked against the real '
-                            'config, may contain fabricated file/param names or reversed '
-                            'recommendations. Read as a lead, not a decision.'
-                        )
-                        st.markdown(block.text)
-                    elif block.type == 'tool_use':
-                        st.write(f'**Proposed action:** `{block.name}`')
-                        st.json(block.input)
+                    response = diagnose(run_data, db_path=DB_PATH, trend_context=trend_context,
+                                         source='dashboard')  # auto-logs internally
+                    items = evaluate_diagnosis_items(response)
+
+                st.markdown('#### Metrics Analysis')
+                analysis_text = '\n'.join(
+                    block.text for block in response.content if block.type == 'text')
+                if analysis_text:
+                    st.caption('Explanatory only — never programmatically trusted or acted on.')
+                    st.markdown(analysis_text)
+                else:
+                    st.caption('(model gave no free-text analysis this time)')
+
+                st.markdown('#### Recommendations')
+                badge = {'good': '✅', 'bad': '❌', 'conflict': '⚠', 'unverified': '➖'}
+                if not items:
+                    st.caption('(no recommendations submitted this time)')
+                for item in items:
+                    with st.expander(
+                        f"{badge[item['auto_verdict']]} `{item['tool_name']}` — "
+                        f"{item['auto_verdict']}"
+                    ):
+                        st.json(item['input'])
+                        if item['auto_notes']:
+                            st.warning(item['auto_notes'])
+
+                st.markdown('#### Summary')
+                conflict_notes = [i['auto_notes'] for i in items if i['auto_verdict'] == 'conflict']
+                for note in conflict_notes:
+                    st.warning(note)
+                st.info('Please review proposed actions and provide feedback to project owner.')
