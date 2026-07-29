@@ -481,6 +481,16 @@ jobs:
           source ~/fleet-env/bin/activate
           python -m tools.baseline_monitor
 
+      # Plain console-log output, deliberately NOT $GITHUB_STEP_SUMMARY — GitHub's
+      # Summary tab has a confirmed platform bug showing stale/wrong-job content
+      # (Release1Todo.md, 2026-07-23 + recurred 2026-07-25); the console log is the
+      # reliable part of a run. See docs/superpowers/specs/2026-07-28-local-llm-
+      # diagnosis-design.md.
+      - name: Fleet status
+        run: |
+          source ~/fleet-env/bin/activate
+          python -m tools.fleet_status --stage sim
+
       - name: Upload PDF report
         id: upload_pdf
         uses: actions/upload-artifact@v4
@@ -537,6 +547,13 @@ jobs:
         run: |
           source ~/fleet-env/bin/activate
           python -m tools.baseline_monitor
+
+      # Plain console-log output, deliberately NOT $GITHUB_STEP_SUMMARY — see the
+      # matching comment in stage-5-reports-sim.
+      - name: Fleet status
+        run: |
+          source ~/fleet-env/bin/activate
+          python -m tools.fleet_status --stage hil
 
       - name: Upload PDF report
         id: upload_pdf
