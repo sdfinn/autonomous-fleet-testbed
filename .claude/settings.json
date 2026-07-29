@@ -5,11 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Dashboard: streamlit run dashboard/app.py (from repo root; fleet-env venv auto-activates via .bashrc)'"
-          },
-          {
-            "type": "command",
-            "command": "cd ~/autonomous-fleet-testbed && ~/fleet-env/bin/python -m tools.fleet_status 2>/dev/null || echo 'Fleet status unavailable (DB not initialized yet?) — run manually: python -m tools.fleet_status'"
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/session_start_status.sh",
+            "args": []
           }
         ]
       }

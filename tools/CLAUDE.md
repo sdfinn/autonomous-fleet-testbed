@@ -70,8 +70,10 @@ Claude is working with files under this directory.
   tool answers "what's the fleet's last known state" not "this CI run's own result";
   `--max-age-minutes` overrides it (CI passes `30` to get the tighter behavior back).
   Wired into three places: standalone CLI, the Claude Code SessionStart hook
-  (`.claude/settings.json`), and a `stage-5-reports-*` CI console-log step
-  (deliberately not `$GITHUB_STEP_SUMMARY` — see the design spec for why).
+  (`.claude/settings.json`, calling `.claude/hooks/session_start_status.sh` as of
+  2026-07-29 — see root CLAUDE.md's Gotchas for why plain `echo` there never actually
+  reached the user), and a `stage-5-reports-*` CI console-log step (deliberately not
+  `$GITHUB_STEP_SUMMARY` — see the design spec for why).
 - `generate_test_report.py` — Session 12: originally a blanket "last 100 runs" PDF.
   **Rewritten Session 17 Piece 4 (2026-07-21):** `generate_report(runner_type,
   scenarios, ...)` now scopes to one CI stage's own results only — the latest row

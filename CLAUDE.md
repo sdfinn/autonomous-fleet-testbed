@@ -382,6 +382,28 @@ docker buildx build --platform linux/arm64 \
   CRLF line terminators". Rule: never touch `ci.yml` with a raw Python/shell
   read-modify-write script; always use Edit (or `sed -i` with GNU sed, which also
   preserves line endings) for this specific file.
+- **A Claude Code `SessionStart` hook's plain stdout reaches ONLY Claude's own context,
+  never the human user's terminal — confirmed against the official docs 2026-07-29,
+  after Mike reported the dashboard-reminder hook (added 2026-07-28, `.claude/
+  settings.json`) "isn't working."** It wasn't a flake: Claude Code's docs state
+  plainly that for `SessionStart` (and `UserPromptSubmit`/`UserPromptExpansion`),
+  stdout is "added as context that Claude can see and act on" — nothing about the
+  user seeing it. The hook was genuinely running (Claude's own system-reminder showed
+  `SessionStart:startup hook success: ...` every session), which is exactly why this
+  was easy to wrongly call "already working" from inside a session — the assistant
+  DOES see it fire, the human never does. To make a `SessionStart` hook's output
+  user-visible, its stdout must be JSON with a `systemMessage` field (shown to the
+  user) — `hookSpecificOutput.additionalContext` is the separate field for Claude-only
+  context; plain unstructured stdout is Claude-only for this event, full stop. Fixed
+  by moving the hook's logic into `.claude/hooks/session_start_status.sh`, which emits
+  `{"systemMessage": ..., "hookSpecificOutput": {"additionalContext": ...}}` via `jq`
+  instead of plain `echo`; `.claude/settings.json` now invokes that script via
+  `${CLAUDE_PROJECT_DIR}` (the documented placeholder for referencing hook scripts
+  regardless of working directory) rather than inlining two bare `echo`/`python -m`
+  commands. **Lesson for any future hook meant to inform the human specifically:**
+  "the assistant received it in a system-reminder" is NOT evidence the user saw
+  anything — verify hook user-visibility by checking for `systemMessage` in its JSON
+  output, not by trusting that a hook "fired successfully."
 
 ## See also (moved out of this file by /doctor, 2026-07-27, context-lazy-loading pass)
 - Nav2 launch gotchas (Session 10+) — `src/nav_fleet/CLAUDE.md`
