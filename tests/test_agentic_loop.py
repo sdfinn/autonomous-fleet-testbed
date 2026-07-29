@@ -1286,6 +1286,33 @@ def test_normalize_extracted_fields_preserves_unrecognized_keys():
     assert result['target'] == 'local_costmap.width'  # NEW: no longer discarded
 
 
+def test_normalize_extracted_fields_removes_raw_keys_once_consumed_by_an_alias():
+    """2026-07-29, follow-up fix: preserving raw_pairs (previous fix) introduced a
+    NEW bug — a key that successfully aliased (e.g. 'value' -> proposed_value) was
+    ALSO left sitting in the dict under its original name, so display showed the
+    same information twice: 'local_costmap.width -> 5. (parameter=local_costmap.
+    width, value=5)'. Once a raw key has been folded into a canonical field, it
+    must not also remain as a separate, redundant 'leftover' field."""
+    result = agentic_loop._normalize_extracted_fields(
+        'propose_nav_param_change',
+        {'parameter': 'local_costmap.width', 'value': '5'}, '')
+
+    assert result == {'param_path': 'local_costmap.width', 'proposed_value': '5'}
+    assert 'parameter' not in result
+    assert 'value' not in result
+
+
+def test_describe_potential_changes_no_duplicate_value_in_parentheses():
+    """Reproduces the exact live incident: real param_path/proposed_value already
+    shown in the main sentence must not ALSO appear in a redundant '(parameter=...,
+    value=...)' parenthetical."""
+    text = '{"tool": "propose_nav_param_change", "parameter": "local_costmap.width", "value": 5}'
+
+    lines = agentic_loop.describe_potential_changes(text)
+
+    assert lines == ['A parameter change was mentioned: local_costmap.width → 5.']
+
+
 def test_describe_potential_changes_shows_proposed_value_alone_when_param_path_missing():
     text = ('{"tool": "propose_nav_param_change", "value": 6.0, '
             '"target": "local_costmap.width"}')

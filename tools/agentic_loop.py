@@ -721,18 +721,30 @@ def _normalize_extracted_fields(tool_name, raw_pairs, body):
     'target' instead of 'parameter'), the unmatched info vanished before display
     ever saw it — producing a content-free "A parameter change was mentioned."
     Now starts from a COPY of raw_pairs (nothing the model wrote is ever discarded),
-    then adds canonical field names on top wherever an alias matches."""
+    then adds canonical field names on top wherever an alias matches.
+
+    Follow-up fix, same day: that change introduced a NEW bug — a raw key that
+    successfully aliased was ALSO left behind under its original name, so display
+    showed the same value twice ("local_costmap.width → 5. (parameter=local_costmap.
+    width, value=5)"). Once a raw key has been folded into a canonical field, it's
+    removed — only genuinely UNCONSUMED raw keys survive to be shown as extra
+    "leftover" detail by _describe_one_change.
+    """
     aliases = _EXTRACT_FIELD_ALIASES.get(tool_name, {})
     normalized = dict(raw_pairs)
+    consumed = set()
     for field, alias_list in aliases.items():
         for alias in alias_list:
             if alias in raw_pairs:
                 normalized[field] = raw_pairs[alias]
+                if alias != field:  # e.g. 'rationale' aliases to itself — removing
+                    consumed.add(alias)  # it would delete the value we just set
                 break
 
     if tool_name == 'propose_nav_param_change':
         if 'component' in raw_pairs and 'param_path' in normalized:
             normalized['param_path'] = f"{raw_pairs['component']}.{normalized['param_path']}"
+            consumed.add('component')
         elif not normalized.get('param_path') and '=' not in body:
             # Colon-style positional: component[:subcomponent...]:param:value
             segments = [s.strip() for s in body.split(':') if s.strip()]
@@ -740,6 +752,9 @@ def _normalize_extracted_fields(tool_name, raw_pairs, body):
                 *path_parts, value = segments
                 normalized['param_path'] = '.'.join(path_parts)
                 normalized['proposed_value'] = value
+
+    for alias in consumed:
+        normalized.pop(alias, None)
 
     if not normalized and body.strip():
         normalized['raw_text'] = body.strip()

@@ -249,6 +249,22 @@ Claude is working with files under this directory.
   silent-discard mechanism directly. Verified live again — no more bare/empty
   lines in that run's Summary.
 
+  **Round 4.2 (same day) — that fix introduced a NEW bug, caught before push by
+  reviewing the next real output rather than assuming "tests pass" meant "done":**
+  preserving raw_pairs (4.1's fix) meant a raw key that successfully aliased (e.g.
+  `"value"` → `proposed_value`) was ALSO left behind under its original name — so
+  display showed the same value twice: `"local_costmap.width → 5. (parameter=
+  local_costmap.width, value=5)"`. `_normalize_extracted_fields` now tracks which
+  raw keys were actually consumed by a successful alias match and removes them
+  afterward — with one care needed: `rationale` aliases to itself (`'rationale':
+  ['rationale', 'reason', 'explanation']`), so naively removing "consumed" aliases
+  deleted the value that had just been assigned to it; fixed by only marking an
+  alias consumed when it differs from the canonical field name it maps to. 2 more
+  tests (88 total), one reproducing the exact duplicate-value output verbatim.
+  Verified live (no crash across two more clicks, though neither happened to hit a
+  recognized format that round — separate, already-known variability, not this
+  bug) plus the exact-field-name unit test.
+
   **Heads-up, not built:** Mike expects to ask for a second "deep dive" dashboard
   button running the same diagnosis with a more capable model for comparison —
   nothing here blocks it (`diagnose()` already takes `backend=`, `OLLAMA_MODEL` picks
