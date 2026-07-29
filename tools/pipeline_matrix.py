@@ -23,3 +23,10 @@ def load_stage(stage, path=DEFAULT_PATH):
         raise UnknownStageError(f"unknown pipeline stage {stage!r}; known: {sorted(matrix)}")
     entry = matrix[stage]
     return entry["runner_type"], list(entry["scenarios"])
+
+
+def list_stages(path=DEFAULT_PATH):
+    """All declared stage names (e.g. ['hil', 'real', 'sim']), sorted."""
+    with open(path) as f:
+        matrix = yaml.safe_load(f)
+    return sorted(matrix)

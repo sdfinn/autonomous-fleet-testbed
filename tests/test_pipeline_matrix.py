@@ -3,7 +3,7 @@ scenarios belong to which CI report stage (Session 17 Piece 6)."""
 
 import pytest
 
-from tools.pipeline_matrix import UnknownStageError, load_stage
+from tools.pipeline_matrix import UnknownStageError, list_stages, load_stage
 
 
 def test_load_stage_reads_runner_type_and_scenarios(tmp_path):
@@ -49,3 +49,16 @@ def test_real_config_declares_real_stage_matching_test_navigation():
 
     assert runner_type == "real_robot"
     assert scenarios == ["bedroom_nav"]
+
+
+def test_list_stages_returns_all_declared_stage_names(tmp_path):
+    config = tmp_path / "matrix.yaml"
+    config.write_text(
+        "sim:\n  runner_type: local\n  scenarios: [a]\n"
+        "hil:\n  runner_type: hil_jetson\n  scenarios: [b]\n"
+    )
+    assert list_stages(path=config) == ["hil", "sim"]
+
+
+def test_real_config_lists_all_three_stages():
+    assert list_stages() == ["hil", "real", "sim"]
