@@ -349,8 +349,8 @@ with tab5:
             'the terminal, where the existing human-approval gate is unchanged.'
         )
         if st.button('Diagnose with AI'):
-            from tools.agentic_loop import (build_conflict_notes, diagnose,
-                                             evaluate_diagnosis_items)  # local import:
+            from tools.agentic_loop import (diagnose, evaluate_diagnosis_items,
+                                             summarize_diagnosis)  # local import:
             # avoid constructing anthropic.Anthropic() (module-level in agentic_loop.py)
             # unless this button is actually clicked.
             visible_ids = [rid for rid in history if rid in _runs_by_id.index]
@@ -370,25 +370,48 @@ with tab5:
                     analysis_text = '\n'.join(
                         block.text for block in response.content if block.type == 'text') or None
 
-                st.markdown('#### Metrics Analysis')
+                # Distinct heading from the model's own — the model tends to write its
+                # own "Metrics Analysis"/"Recommendations" headings inside this same
+                # text, which looked like an accidental duplicate otherwise. Shown
+                # once, in full — the Recommendations list below extracts a structured
+                # version of anything actionable in it, so nothing here needs repeating.
+                st.markdown("#### Model's Written Analysis (raw text)")
                 if analysis_text:
-                    st.caption('Explanatory only — never programmatically trusted or acted on.')
+                    st.caption(
+                        'Shown once, unedited. Explanatory only — never programmatically '
+                        'trusted or acted on; anything actionable in it is extracted into '
+                        'the Recommendations list below.'
+                    )
                     st.markdown(analysis_text)
                 else:
                     st.caption('(model gave no free-text analysis this time)')
 
                 st.markdown('#### Recommendations')
-                badge = {'good': '✅', 'bad': '❌', 'conflict': '⚠', 'unverified': '➖'}
+                banner_fn = {'good': st.success, 'bad': st.error,
+                             'conflict': st.warning, 'unverified': st.info}
+                verdict_label = {'good': '✅ GOOD', 'bad': '❌ BAD',
+                                  'conflict': '⚠ CONFLICT', 'unverified': '➖ UNVERIFIED'}
                 if not items:
-                    st.caption('(no recommendations submitted this time)')
+                    st.caption('(no recommendations found this time)')
                 for item in items:
-                    st.markdown(f"{badge[item['auto_verdict']]} `{item['tool_name']}` — "
-                                f"**{item['auto_verdict']}**")
-                    st.json(item['input'], expanded=True)
-                    if item['auto_notes']:
-                        st.warning(item['auto_notes'])
+                    title = item['title'] or item['tool_name']
+                    source_tag = ('submitted — went through the real tool-calling API'
+                                   if item['source'] == 'submitted'
+                                   else 'TEXT ONLY — parsed from the written analysis '
+                                        'above, best-effort, never formally submitted')
+                    with st.container(border=True):
+                        banner_fn[item['auto_verdict']](
+                            f"{verdict_label[item['auto_verdict']]} — {title}")
+                        st.caption(source_tag)
+                        why = item['input'].get('rationale')
+                        if why:
+                            st.markdown(f'**Why:** {why}')
+                        if item['auto_notes']:
+                            st.markdown(item['auto_notes'])
+                        with st.expander('Technical details'):
+                            st.json(item['input'], expanded=True)
 
                 st.markdown('#### Summary')
-                for note in build_conflict_notes(items, analysis_text):
-                    st.warning(note)
+                for line in summarize_diagnosis(items):
+                    st.markdown(f'- {line}')
                 st.info('Please review proposed actions and provide feedback to project owner.')

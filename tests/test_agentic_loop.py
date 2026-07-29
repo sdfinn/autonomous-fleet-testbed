@@ -206,9 +206,11 @@ def test_diagnose_logs_ollama_model_name(monkeypatch, tmp_path):
     assert row == ('ollama', agentic_loop.OLLAMA_MODEL)
 
 
-def test_diagnose_logs_narrative_item_mismatch_in_conflict_notes(monkeypatch, tmp_path):
+def test_diagnose_logs_prose_only_recommendations_as_extracted_items(monkeypatch, tmp_path):
     """Locks in the wiring, not just the unit — reproduces the exact live incident:
-    prose promises 3 param changes, 0 real items submitted."""
+    prose promises 2 param changes, 0 real items submitted for either. Third-round
+    design: these are no longer just a conflict_notes count, they're real logged
+    items with source='extracted'."""
     db = str(tmp_path / "t.db")
     init_db(db)
     run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
@@ -225,12 +227,13 @@ def test_diagnose_logs_narrative_item_mismatch_in_conflict_notes(monkeypatch, tm
     run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
     agentic_loop.diagnose(run_data, db_path=db, backend='claude')
 
-    row = sqlite3.connect(db).execute(
-        "SELECT conflict_notes FROM ai_diagnoses ORDER BY id DESC LIMIT 1").fetchone()
-    notes = json.loads(row[0])
-    assert len(notes) == 1
-    assert 'propose_nav_param_change' in notes[0]
-    assert '2' in notes[0]
+    rows = sqlite3.connect(db).execute(
+        "SELECT tool_name, source FROM ai_diagnosis_items ORDER BY item_index").fetchall()
+    assert rows == [
+        ('propose_mission_plan', 'submitted'),
+        ('propose_nav_param_change', 'extracted'),
+        ('propose_nav_param_change', 'extracted'),
+    ]
 
 
 def test_to_ollama_tools_converts_anthropic_shape_to_function_calling_shape():
@@ -602,6 +605,25 @@ def test_evaluate_diagnosis_items_marks_no_current_value_claim_as_good():
     assert items[0]['auto_verdict'] == 'good'
 
 
+def test_evaluate_diagnosis_items_flags_nonexistent_param_bad_even_without_current_value():
+    """2026-07-29, third-round fix: a missing current_value used to short-circuit
+    straight to 'good' WITHOUT checking whether the param itself is real — meaning a
+    fabricated param with no current_value claim was invisible to the guardrail. Most
+    real-world prose recommendations never state a current_value at all, so this was
+    silently disabling the check almost every time. Now checks existence regardless;
+    only the value-match check is skipped when there's no current_value to compare."""
+    fake_call = agentic_loop._ToolUseBlock(
+        name='propose_nav_param_change',
+        input={'param_path': 'x.scan_period', 'proposed_value': '0.05', 'rationale': 'r'},
+    )
+    response = agentic_loop._DiagnosisResponse(content=[fake_call])
+
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    assert items[0]['auto_verdict'] == 'bad'
+    assert 'scan_period' in items[0]['auto_notes']
+
+
 def test_evaluate_diagnosis_items_marks_other_tools_as_unverified():
     fake_call = agentic_loop._ToolUseBlock(
         name='propose_mission_plan',
@@ -722,73 +744,286 @@ def test_evaluate_diagnosis_items_bad_fact_check_takes_priority_over_conflict():
     assert items[1]['auto_verdict'] == 'bad'
 
 
-def test_detect_narrative_item_mismatch_flags_unsubmitted_mentions():
-    """2026-07-29, second-round fix: catches the pattern observed TWICE live — the
-    model describes several recommendations in prose (this model's habit: writing
-    them in a tool_name(...)-style format) but only some become real submitted
-    items. Item-vs-item conflict detection alone doesn't catch this, since it's
-    prose vs. reality disagreeing, not two items disagreeing with each other."""
-    analysis_text = (
-        "propose_nav_param_change(local_costmap:robot_radius:0.237)\n"
-        "propose_nav_param_change(global_costmap:inflation_layer:inflation_radius:0.25)\n"
-        "propose_nav_param_change(local_costmap:inflation_layer:inflation_radius:0.20)\n"
-        "propose_mission_plan(home_base hallway_west bedroom_goal home_base)\n"
+_REAL_KWARGS_STYLE_ANALYSIS_TEXT = """Recommendations
+Improve Odometry Frequency
+
+propose_nav_param_change(
+    component="local_costmap",
+    parameter="update_frequency",
+    new_value=10.0,
+)
+
+Enhance Camera Performance
+
+propose_nav_param_change(
+    component="camera_interface",
+    parameter="image_transport",
+    new_value="compressed"
+)
+
+Create More Challenging Missions
+
+propose_mission_plan(
+    mission=[
+        "visit the bedroom_goal",
+        "then go to the desk",
+        "return to home_base"
+    ]
+)"""
+
+_REAL_COLON_STYLE_ANALYSIS_TEXT = (
+    'propose_nav_param_change(local_costmap:robot_radius:0.237)\n'
+    'propose_nav_param_change(global_costmap:inflation_layer:inflation_radius:0.25)\n'
+    'propose_nav_param_change(local_costmap:inflation_layer:inflation_radius:0.20)\n'
+    'propose_mission_plan(home_base hallway_west bedroom_goal home_base)'
+)
+
+
+def test_extract_prose_recommendations_returns_empty_for_no_text():
+    assert agentic_loop.extract_prose_recommendations(None) == []
+    assert agentic_loop.extract_prose_recommendations('') == []
+
+
+def test_extract_prose_recommendations_returns_empty_when_no_tool_calls_written():
+    assert agentic_loop.extract_prose_recommendations('just some plain analysis text') == []
+
+
+def test_extract_prose_recommendations_finds_all_calls_in_real_kwargs_style_text():
+    items = agentic_loop.extract_prose_recommendations(_REAL_KWARGS_STYLE_ANALYSIS_TEXT)
+
+    assert [i['tool_name'] for i in items] == [
+        'propose_nav_param_change', 'propose_nav_param_change', 'propose_mission_plan',
+    ]
+
+
+def test_extract_prose_recommendations_pulls_nearby_title():
+    items = agentic_loop.extract_prose_recommendations(_REAL_KWARGS_STYLE_ANALYSIS_TEXT)
+
+    assert items[0]['title'] == 'Improve Odometry Frequency'
+    assert items[1]['title'] == 'Enhance Camera Performance'
+    assert items[2]['title'] == 'Create More Challenging Missions'
+
+
+def test_extract_prose_recommendations_title_skips_markdown_code_fence():
+    """Live bug, 2026-07-29: the model sometimes wraps its pseudo-call in a
+    ```python fence — the naive 'nearest preceding line' heuristic grabbed the
+    fence marker itself ('```python') as the title. Must look past fence lines to
+    find a real title, or fall back to None rather than show junk."""
+    text = (
+        'Optimize Odometry Update Rate\n'
+        '```python\n'
+        'propose_nav_param_change(\n'
+        '    parameter="update_frequency",\n'
+        '    new_value=10.0,\n'
+        ')\n'
+        '```\n'
     )
-    items = [{'tool_name': 'propose_mission_plan', 'input': {}, 'auto_verdict': 'unverified',
-              'auto_notes': None}]
+    items = agentic_loop.extract_prose_recommendations(text)
 
-    notes = agentic_loop.detect_narrative_item_mismatch(analysis_text, items)
-
-    assert len(notes) == 1
-    assert 'propose_nav_param_change' in notes[0]
-    assert '3' in notes[0]
-    assert '0' in notes[0]
+    assert items[0]['title'] == 'Optimize Odometry Update Rate'
 
 
-def test_detect_narrative_item_mismatch_no_note_when_counts_match():
-    analysis_text = "propose_mission_plan(home_base bedroom_goal)"
-    items = [{'tool_name': 'propose_mission_plan', 'input': {}, 'auto_verdict': 'unverified',
-              'auto_notes': None}]
+def test_extract_prose_recommendations_title_none_when_only_junk_precedes():
+    text = '```python\npropose_nav_param_change(parameter="x", new_value=1)\n```'
+    items = agentic_loop.extract_prose_recommendations(text)
 
-    notes = agentic_loop.detect_narrative_item_mismatch(analysis_text, items)
-
-    assert notes == []
+    assert items[0]['title'] is None
 
 
-def test_detect_narrative_item_mismatch_no_note_when_analysis_text_is_none():
-    items = [{'tool_name': 'propose_mission_plan', 'input': {}, 'auto_verdict': 'unverified',
-              'auto_notes': None}]
-
-    notes = agentic_loop.detect_narrative_item_mismatch(None, items)
-
-    assert notes == []
-
-
-def test_detect_narrative_item_mismatch_ignores_items_submitted_more_than_mentioned():
-    """Submitting MORE than the text mentions isn't a problem — only text promising
-    more than got submitted is."""
-    analysis_text = "just some general discussion, no tool names written out"
-    items = [{'tool_name': 'propose_mission_plan', 'input': {}, 'auto_verdict': 'unverified',
-              'auto_notes': None}]
-
-    notes = agentic_loop.detect_narrative_item_mismatch(analysis_text, items)
-
-    assert notes == []
-
-
-def test_detect_narrative_item_mismatch_flags_multiple_tools_independently():
-    analysis_text = (
-        "propose_nav_param_change(a:b:1)\n"
-        "generate_world_variant(harder_world)\n"
+def test_extract_prose_recommendations_title_skips_stray_closing_paren():
+    """Live bug, 2026-07-29: a lone ')' left over from a PRIOR multi-line call was
+    picked up as the 'title' for the NEXT call."""
+    text = (
+        'propose_nav_param_change(\n'
+        '    parameter="a",\n'
+        '    new_value=1,\n'
+        ')\n'
+        'Second Recommendation\n'
+        'propose_mission_plan(mission="b")\n'
     )
-    items = []
+    items = agentic_loop.extract_prose_recommendations(text)
 
-    notes = agentic_loop.detect_narrative_item_mismatch(analysis_text, items)
+    assert items[1]['title'] == 'Second Recommendation'
 
-    assert len(notes) == 2
-    joined = ' '.join(notes)
-    assert 'propose_nav_param_change' in joined
-    assert 'generate_world_variant' in joined
+
+def test_extract_prose_recommendations_combines_component_and_parameter_into_param_path():
+    items = agentic_loop.extract_prose_recommendations(_REAL_KWARGS_STYLE_ANALYSIS_TEXT)
+
+    assert items[0]['input']['param_path'] == 'local_costmap.update_frequency'
+    assert items[0]['input']['proposed_value'] == '10.0'
+    assert items[1]['input']['param_path'] == 'camera_interface.image_transport'
+    assert items[1]['input']['proposed_value'] == 'compressed'
+
+
+def test_extract_prose_recommendations_never_returns_empty_input_for_a_found_call():
+    """Even the loosely-structured mission plan call must produce SOMETHING non-empty
+    — existence stays visible even when details can't be cleanly parsed."""
+    items = agentic_loop.extract_prose_recommendations(_REAL_KWARGS_STYLE_ANALYSIS_TEXT)
+
+    assert items[2]['input']  # non-empty dict
+
+
+def test_extract_prose_recommendations_parses_colon_style_three_segments():
+    items = agentic_loop.extract_prose_recommendations(_REAL_COLON_STYLE_ANALYSIS_TEXT)
+
+    assert items[0]['input']['param_path'] == 'local_costmap.robot_radius'
+    assert items[0]['input']['proposed_value'] == '0.237'
+
+
+def test_extract_prose_recommendations_parses_colon_style_four_segments():
+    items = agentic_loop.extract_prose_recommendations(_REAL_COLON_STYLE_ANALYSIS_TEXT)
+
+    assert items[1]['input']['param_path'] == 'global_costmap.inflation_layer.inflation_radius'
+    assert items[1]['input']['proposed_value'] == '0.25'
+    assert items[2]['input']['param_path'] == 'local_costmap.inflation_layer.inflation_radius'
+    assert items[2]['input']['proposed_value'] == '0.20'
+
+
+def test_extract_prose_recommendations_falls_back_to_raw_text_when_unparseable():
+    items = agentic_loop.extract_prose_recommendations(_REAL_COLON_STYLE_ANALYSIS_TEXT)
+
+    assert items[3]['tool_name'] == 'propose_mission_plan'
+    assert items[3]['input']  # non-empty — didn't silently drop it
+
+
+_REAL_JSON_OBJECT_STYLE_ANALYSIS_TEXT = (
+    'Optimize parameters related to camera integration or adjust the camera\'s '
+    'configuration settings.\n'
+    '{ "tool": "propose_nav_param_change", "parameter": "camera/image_transport", '
+    '"value": "compressed" }'
+)
+
+
+def test_extract_prose_recommendations_parses_real_json_object_style_call():
+    """Third real format observed live, 2026-07-29: the model sometimes writes a
+    single-line JSON object with a "tool" key instead of a tool_name(...) call —
+    valid JSON, so parsed directly rather than via the paren-call regex."""
+    items = agentic_loop.extract_prose_recommendations(_REAL_JSON_OBJECT_STYLE_ANALYSIS_TEXT)
+
+    assert len(items) == 1
+    assert items[0]['tool_name'] == 'propose_nav_param_change'
+    assert items[0]['input']['param_path'] == 'camera/image_transport'
+    assert items[0]['input']['proposed_value'] == 'compressed'
+
+
+def test_extract_prose_recommendations_json_object_style_is_fact_checkable():
+    response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._TextBlock(text=_REAL_JSON_OBJECT_STYLE_ANALYSIS_TEXT),
+    ])
+
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    assert len(items) == 1
+    assert items[0]['source'] == 'extracted'
+    # 'camera/image_transport' isn't a real nav2_params.yaml param — must be 'bad'.
+    assert items[0]['auto_verdict'] == 'bad'
+
+
+def test_extract_prose_recommendations_ignores_unrelated_json_objects():
+    text = '{"foo": "bar", "baz": 1}'
+    assert agentic_loop.extract_prose_recommendations(text) == []
+
+
+def test_extract_prose_recommendations_combines_paren_and_json_styles_in_one_text():
+    combined = _REAL_COLON_STYLE_ANALYSIS_TEXT + '\n' + _REAL_JSON_OBJECT_STYLE_ANALYSIS_TEXT
+    items = agentic_loop.extract_prose_recommendations(combined)
+
+    assert len(items) == 5
+
+
+def test_evaluate_diagnosis_items_fact_checks_extracted_items_too():
+    """The whole point of extraction: prose-only recommendations get the SAME
+    fact-check as real submitted tool calls, end to end via evaluate_diagnosis_items
+    — scan_period doesn't exist anywhere in the real nav2_params.yaml."""
+    response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._TextBlock(text='propose_nav_param_change(lidar:scan_period:0.1)'),
+    ])
+
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    assert len(items) == 1
+    assert items[0]['source'] == 'extracted'
+    assert items[0]['auto_verdict'] == 'bad'
+    assert 'scan_period' in items[0]['auto_notes']
+
+
+def test_evaluate_diagnosis_items_tags_submitted_items_correctly():
+    response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._ToolUseBlock(name='propose_mission_plan',
+                                    input={'mission_description': 'd', 'goals': [], 'rationale': 'r'}),
+    ])
+
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    assert items[0]['source'] == 'submitted'
+    assert items[0]['title'] is None
+
+
+def test_evaluate_diagnosis_items_reproduces_the_real_incident_end_to_end():
+    """Regression fixture: the exact live incident that motivated extraction — one
+    real submitted mission plan, plus prose describing three other recommendations
+    that never became real tool calls. All four must now appear in one list."""
+    response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._TextBlock(text=_REAL_KWARGS_STYLE_ANALYSIS_TEXT),
+        agentic_loop._ToolUseBlock(name='propose_mission_plan',
+                                    input={'mission_description': 'd', 'goals': [], 'rationale': 'r'}),
+    ])
+
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    assert len(items) == 4
+    sources = [i['source'] for i in items]
+    assert sources.count('submitted') == 1
+    assert sources.count('extracted') == 3
+
+
+def test_summarize_diagnosis_reports_no_recommendations():
+    assert agentic_loop.summarize_diagnosis([]) == \
+        ['No recommendations were found in this response — nothing to review.']
+
+
+def test_summarize_diagnosis_tally_line_counts_by_source():
+    response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._TextBlock(text=_REAL_KWARGS_STYLE_ANALYSIS_TEXT),
+        agentic_loop._ToolUseBlock(name='propose_mission_plan',
+                                    input={'mission_description': 'd', 'goals': [], 'rationale': 'r'}),
+    ])
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    lines = agentic_loop.summarize_diagnosis(items)
+
+    assert '4 recommendation(s) found' in lines[0]
+    assert '1 formally submitted' in lines[0]
+    assert '3 found only in the written text' in lines[0]
+
+
+def test_summarize_diagnosis_lists_extracted_titles():
+    response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._TextBlock(text=_REAL_KWARGS_STYLE_ANALYSIS_TEXT),
+    ])
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    lines = agentic_loop.summarize_diagnosis(items)
+
+    assert any('Improve Odometry Frequency' in line for line in lines)
+
+
+def test_summarize_diagnosis_includes_conflict_notes():
+    response = agentic_loop._DiagnosisResponse(content=[
+        agentic_loop._ToolUseBlock(
+            name='propose_nav_param_change',
+            input={'param_path': 'a.rotate_to_heading_angular_vel',
+                   'proposed_value': '1.2', 'rationale': 'r1'}),
+        agentic_loop._ToolUseBlock(
+            name='propose_nav_param_change',
+            input={'param_path': 'b.rotate_to_heading_angular_vel',
+                   'proposed_value': '0.3', 'rationale': 'r2'}),
+    ])
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    lines = agentic_loop.summarize_diagnosis(items)
+
+    assert any('disagrees with' in line for line in lines)
 
 
 def test_diagnose_rejects_unknown_backend(tmp_path):

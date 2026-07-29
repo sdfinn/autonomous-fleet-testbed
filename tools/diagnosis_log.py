@@ -44,17 +44,38 @@ def init_db(db_path: str = DB_PATH):
             FOREIGN KEY (diagnosis_id) REFERENCES ai_diagnoses(id)
         )
     """)
+    _ensure_diagnosis_item_columns(conn)
     conn.commit()
     conn.close()
+
+
+# 2026-07-29 third-round addition: 'source' ('submitted'|'extracted') and 'title'
+# (best-effort label for extracted items, NULL for submitted ones) — additive
+# migration, same pattern as telemetry_logger.py's RUNS_COLUMNS/_ensure_run_columns,
+# since the table already existed (and had real rows) before this addition.
+DIAGNOSIS_ITEM_COLUMNS = {
+    "source": "TEXT",
+    "title": "TEXT",
+}
+
+
+def _ensure_diagnosis_item_columns(conn):
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(ai_diagnosis_items)").fetchall()}
+    for name, col_type in DIAGNOSIS_ITEM_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE ai_diagnosis_items ADD COLUMN {name} {col_type}")
 
 
 def log_diagnosis(*, backend, model_name, source, prompt_text, analysis_text,
                    items, conflict_notes=None, run_id=None, db_path: str = DB_PATH):
     """Insert one ai_diagnoses row plus one ai_diagnosis_items row per item.
 
-    `items`: list of {'tool_name', 'input', 'auto_verdict', 'auto_notes'} dicts, in
-    display order (see tools.agentic_loop.evaluate_diagnosis_items). `conflict_notes`:
-    list of human-readable strings, or None. Returns the new ai_diagnoses.id.
+    `items`: list of {'tool_name', 'input', 'auto_verdict', 'auto_notes', 'source',
+    'title'} dicts, in display order (see
+    tools.agentic_loop.evaluate_diagnosis_items — 'source' here is per-ITEM,
+    'submitted' or 'extracted'; unrelated to this function's own `source` kwarg,
+    which is per-DIAGNOSIS, 'cli' or 'dashboard'). `conflict_notes`: list of
+    human-readable strings, or None. Returns the new ai_diagnoses.id.
     """
     init_db(db_path)
     conn = sqlite3.connect(db_path)
@@ -70,10 +91,11 @@ def log_diagnosis(*, backend, model_name, source, prompt_text, analysis_text,
     diagnosis_id = cur.lastrowid
     cur.executemany(
         "INSERT INTO ai_diagnosis_items "
-        "(diagnosis_id, item_index, tool_name, item_input, auto_verdict, auto_notes) "
-        "VALUES (?,?,?,?,?,?)",
+        "(diagnosis_id, item_index, tool_name, item_input, auto_verdict, auto_notes, "
+        "source, title) VALUES (?,?,?,?,?,?,?,?)",
         [(diagnosis_id, i, item["tool_name"], json.dumps(item["input"]),
-          item["auto_verdict"], item.get("auto_notes"))
+          item["auto_verdict"], item.get("auto_notes"), item.get("source"),
+          item.get("title"))
          for i, item in enumerate(items)],
     )
     conn.commit()

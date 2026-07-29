@@ -72,48 +72,78 @@ Claude is working with files under this directory.
   covers either backend's response shape (this bug class has bitten both Claude,
   Session 17 Piece 5, and Ollama, 2026-07-29). Pure function, nothing persisted here.
 
-  **Second-round fix, same day:** Mike's first look at the rebuilt page ("not really
-  what I expected... seems like a lot less information than before") caught two real
-  problems, not just a UI-taste disagreement. (1) The dashboard's recommendation
-  content had been put behind a collapsed `st.expander`, hiding it by default — a
-  straight regression against "don't hide anything" from earlier the same session;
-  reverted to always-visible (`st.json(..., expanded=True)`). (2) `_detect_cross_
-  item_conflicts` only catches TWO SUBMITTED items disagreeing with each other — it
-  said nothing when prose promises several actions and only some (or none) become
-  real items, which is the exact pattern from the original incident AND from a
-  second live run the same day (prose discussed 4 things, 1 real item existed).
-  **`detect_narrative_item_mismatch(analysis_text, items)`** closes this: counts how
-  many times each known tool name appears verbatim in the model's own analysis text
-  vs. how many times it was actually submitted, flags any tool mentioned MORE than
-  submitted. Explicitly a heuristic tied to this model's habit of writing tool names
-  out in its own prose (observed twice, not guaranteed for a differently-worded
-  response) — documented as such, not oversold. **`build_conflict_notes(items,
-  analysis_text)`** merges both sources (item-vs-item + narrative-vs-item) into one
-  list, shared by `diagnose()`'s auto-log and both render sites so the two callers
-  can't drift out of sync with each other. Verified live a second time: a real run's
-  Summary section correctly surfaced *"the written analysis mentions
-  `generate_world_variant` 1 time(s), but only 0 were submitted..."* — the actual
-  call-out Mike asked for, confirmed working end to end, not just unit-tested.
+  **Second-round fix, same day:** Mike's first look caught the recommendation JSON
+  hidden behind a collapsed `st.expander` (reverted to always-visible) and that
+  item-vs-item conflict detection alone doesn't catch prose promising several
+  actions where only some (or none) become real submitted items.
 
-  **Auto-logs every call, 2026-07-29 (`tools.diagnosis_log`, see its own entry
-  below)** — a NEW `source='cli'` (dashboard passes `'dashboard'`) param on
-  `diagnose()` is the only thing a caller says about itself; `diagnose()` itself
-  computes items/analysis text/conflict notes and logs them before returning, no
-  separate save action anywhere, same lifecycle as `telemetry_logger.log_run()`.
-  **Explicitly NOT a human-feedback/scoring layer** — Mike's clear distinction,
-  2026-07-29: system-driven writes (this) are fine now; user-driven writes (a
-  good/partial/bad button) are deferred, not built.
+  **Third-round rebuild, same day — Mike's reaction to the second round: "not really
+  what I expected... how do the recommendations map to the final recommendation...
+  I expect checkmarks and X's on pretty well every run."** Root cause of ALL of it:
+  splitting "the model's prose" and "the model's real tool calls" into two visually
+  disconnected sections was the wrong shape. Rebuilt around one idea — **every
+  recommendation the model produces, whether formally submitted or only described in
+  prose, becomes one item in ONE list**, each independently fact-checked:
 
-  `run_loop()` (CLI) and `dashboard/app.py`'s Drift tab both render: Metrics Analysis
-  → Recommendations (badge + notes per item) → Summary (code-generated conflict notes
-  + the fixed line "Please review proposed actions and provide feedback to project
-  owner.", not model-written). 24 tests total across `evaluate_diagnosis_items`,
-  `diagnose()`'s new prompt/logging behavior, and `tools/diagnosis_log.py` — TDD
-  throughout, including regression fixtures for both historical incidents
-  (`inflation_radius`, `scan_period`) run against the REAL `nav2_params.yaml` text.
-  Verified live via a running Streamlit instance + Playwright click, not just unit
-  tests (this session's own established practice — two prior incidents this session
-  were only caught that way).
+  - **`extract_prose_recommendations(analysis_text)`** (new): best-effort parser,
+    supersedes `detect_narrative_item_mismatch` entirely (a mismatch COUNT was the
+    wrong output — a real, checkable ITEM is). Handles THREE distinct formats
+    confirmed live across different runs: kwargs-style (`tool_name(key=value,...)`),
+    colon-style positional (`tool_name(a:b:c)`), and a flat JSON object
+    (`{"tool": "...", ...}`) — the model doesn't consistently pick one. Best-effort
+    title extraction skips markdown code-fence lines and stray punctuation (both
+    caught live producing junk titles like `` ```python `` and `)` before the fix)
+    — falls back to `None` (rendered as the bare tool name) rather than show
+    garbage. Never silently drops a found call — an unparseable body still produces
+    an item with `{'raw_text': ...}` so its existence stays visible.
+  - **`_evaluate_one_item` now checks param EXISTENCE regardless of whether a
+    `current_value` was claimed** — previously a missing `current_value` short-
+    circuited straight to `'good'` without checking anything, and most real prose
+    recommendations never state a current value at all, so ✅/❌ almost never fired
+    in practice. This single change is most of what makes "checkmarks on pretty well
+    every run" actually true now.
+  - **`evaluate_diagnosis_items(response, nav2_params_text=None)`** now merges
+    submitted tool-use blocks AND extracted prose items into one list, each tagged
+    `'source'`: `'submitted'` or `'extracted'`, run through the SAME fact-check and
+    the SAME cross-item conflict detection regardless of source (so a submitted item
+    and a prose-only mention of the same param now correctly conflict with each
+    other too, not just two submitted items).
+  - **`summarize_diagnosis(items)`** (new, supersedes `build_conflict_notes`): a real
+    tally — "N found, S submitted, E text-only" + a ✅/❌/⚠/➖ count line + conflict
+    notes + the list of text-only titles — instead of one terse audit sentence.
+  - Dashboard: each recommendation is its own bordered `st.container` with a real
+    colored banner (`st.success`/`st.error`/`st.warning`/`st.info` — NOT usable as
+    `with`-context managers themselves, confirmed via `inspect.signature` before
+    trusting it, caught what would've been an immediate crash before it ever reached
+    the live test) holding a **GOOD/BAD/CONFLICT/UNVERIFIED** label + title, a
+    `**Why:**` line pulled straight from the item's `rationale` field (no more raw
+    JSON as the only explanation), a source tag distinguishing submitted from
+    text-only, and technical JSON detail in a small nested expander (collapsing raw
+    JSON specifically is fine; the readable why/what above it is never hidden). The
+    "Metrics Analysis" heading was renamed `"Model's Written Analysis (raw text)"` —
+    the model writes its own "Metrics Analysis"/"Recommendations" headings inside
+    the same prose, which looked like an accidental duplicate otherwise; shown once,
+    not repeated, since the Recommendations list now extracts anything actionable
+    from it.
+  - `run_loop()` (CLI): same unified list, printed with title/why/verdict/tag per
+    item; the human-approval/apply loop now only iterates `source='submitted'`
+    items — extracted items are a best-effort text parse, not schema-validated, and
+    aren't safe to apply as if they'd gone through the real tool-calling path.
+
+  **Auto-logs every call (`tools.diagnosis_log`, see its own entry below)** — a
+  `source='cli'`/`'dashboard'` param on `diagnose()` (per-DIAGNOSIS) is unrelated to
+  each item's own `'source'` field (per-ITEM, submitted/extracted) — same name,
+  different axis, worth not confusing. `ai_diagnosis_items` gained `source`/`title`
+  columns (additive migration, same pattern as `telemetry_logger.py`'s
+  `_ensure_run_columns` — this table already had real rows before the addition).
+  Still explicitly NOT a human-feedback/scoring layer — deferred, not built.
+
+  32 tests across this round (TDD throughout), several built directly from Mike's
+  own pasted real output as fixtures (the exact incidents that motivated each fix).
+  Verified live via a running Streamlit instance + Playwright click TWICE this round
+  — first pass caught the `st.success`-as-context-manager bug immediately (would
+  have crashed on click), second pass confirmed real ✅/❌ verdicts firing and clean
+  titles after the code-fence fix.
 
   **Heads-up, not built:** Mike expects to ask for a second "deep dive" dashboard
   button running the same diagnosis with a more capable model for comparison —
@@ -124,10 +154,13 @@ Claude is working with files under this directory.
   `telemetry_logger.py`'s `runs`/`steps` two-table shape: one `ai_diagnoses` row per
   call (backend, model_name, source, prompt_text, analysis_text, conflict_notes) plus
   one `ai_diagnosis_items` row per recommendation (tool_name, item_input JSON,
-  auto_verdict, auto_notes). Deliberately has NO human-verdict columns — this is the
-  system-driven half only; a human-feedback/scoring layer is a separate, deferred
-  design (see the 2026-07-29 spec's scope-correction history) that would arrive as an
-  additive migration later, not retrofitted here speculatively.
+  auto_verdict, auto_notes, **source, title** — the latter two added same-day,
+  third-round rebuild, via `DIAGNOSIS_ITEM_COLUMNS`/`_ensure_diagnosis_item_columns`,
+  additive migration since the table already had real rows). Deliberately has NO
+  human-verdict columns — this is the system-driven half only; a human-feedback/
+  scoring layer is a separate, deferred design (see the 2026-07-29 spec's scope-
+  correction history) that would arrive as an additive migration later, not
+  retrofitted here speculatively.
 - `agentic_validate.py` — 2026-07-28: `python -m tools.agentic_validate` runs a small
   set of synthetic drift scenarios through both agentic_loop.py backends (Claude and
   Ollama) and prints both proposals side by side for manual comparison — the canary

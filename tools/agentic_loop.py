@@ -316,40 +316,45 @@ def resolve_goals(goals):
 
 
 def evaluate_diagnosis_items(response, nav2_params_text=None):
-    """Turns response.content's tool-use blocks into a display-ready list of
-    recommendation items, each with an automatic verdict (2026-07-29 design:
-    docs/superpowers/specs/2026-07-29-ai-diagnosis-items-and-feedback-design.md).
-    Supersedes the narrower validate_nav_param_proposal (2026-07-29, same day) — same
-    fact-check logic, generalized to cover every tool type plus cross-item conflicts.
+    """Turns a diagnose() response into a display-ready, UNIFIED list of
+    recommendation items — both formally submitted tool calls AND best-effort
+    extracted from the free-text narrative (2026-07-29 third-round rebuild: Mike's
+    first review of the two-source split caught that a real submitted item and
+    several prose-only recommendations looked like two disconnected things with no
+    way to tell how they related — now every recommendation the model produced
+    lands in ONE list, each tagged with where it came from).
 
-    Returns one {'tool_name', 'input', 'auto_verdict', 'auto_notes'} dict per tool-use
-    block, in order (text blocks are skipped — they have no item to evaluate).
+    Returns one dict per recommendation, in order (submitted items first, then
+    extracted ones): {'tool_name', 'input', 'auto_verdict', 'auto_notes', 'source',
+    'title'}. `source` is `'submitted'` (a real tool_use block) or `'extracted'`
+    (parsed from prose by extract_prose_recommendations — best-effort, may be
+    incomplete). `title` is a human-readable label: the model's own nearby heading
+    for extracted items, None for submitted items (callers derive their own display
+    title from the real structured fields).
 
-    auto_verdict is one of:
-      'good'       — propose_nav_param_change with no current_value claim, or one that
-                     matches the real nav2_params.yaml; no conflicting sibling item.
-      'bad'        — propose_nav_param_change whose current_value claim doesn't match
-                     the real file, or whose param isn't found there at all. Takes
-                     priority over 'conflict' when both apply — a fact-check failure is
-                     the more objective, more important finding.
-      'conflict'   — two or more propose_nav_param_change items (matched by leaf param
-                     name, since the model may not write identical full param_path
-                     strings) propose different values for what's effectively the same
-                     parameter. The clean, structured version of "the AI's own
-                     recommendations disagree with each other."
+    auto_verdict is one of, computed identically regardless of source — extracted
+    items get the SAME fact-check as real ones, which is the whole point (checking
+    existence works even without a current_value claim, which is the common case for
+    prose-written recommendations — see _evaluate_one_item):
+      'good'       — propose_nav_param_change whose param exists in the real
+                     nav2_params.yaml, and whose current_value claim (if any) matches
+                     it; no conflicting sibling item.
+      'bad'        — propose_nav_param_change whose param isn't found in the real
+                     file at all, or whose current_value claim doesn't match it.
+                     Takes priority over 'conflict' when both apply — a fact-check
+                     failure is the more objective, more important finding.
+      'conflict'   — two or more propose_nav_param_change items (matched by leaf
+                     param name, regardless of source) propose different values for
+                     what's effectively the same parameter.
       'unverified' — any other tool (propose_mission_plan, generate_world_variant) —
                      nothing in the real config to fact-check a mission plan or world
                      layout against.
 
     Deliberately does not raise, retry, or hide anything — pure computation, nothing
     persisted here (see tools.diagnosis_log for the separate, system-driven auto-log).
-    Works via duck typing (block.type/.name/.input) so it covers response.content from
-    either backend — Anthropic SDK's ToolUseBlock and this module's own _ToolUseBlock
-    both satisfy that shape.
-
-    Scope note: only catches claims made through a tool's structured fields. A
-    fabrication that only ever appears in the response's free-text narrative (never
-    surfacing as a structured claim) isn't caught here.
+    Works via duck typing (block.type/.name/.input) so it covers response.content
+    from either backend — Anthropic SDK's ToolUseBlock and this module's own
+    _ToolUseBlock both satisfy that shape.
     """
     if nav2_params_text is None:
         nav2_params_text = load_nav2_params_text()
@@ -358,28 +363,38 @@ def evaluate_diagnosis_items(response, nav2_params_text=None):
     for block in getattr(response, 'content', []):
         if getattr(block, 'type', None) != 'tool_use':
             continue
-        items.append(_evaluate_one_item(block, nav2_params_text))
+        evaluated = _evaluate_one_item(block.name, block.input, nav2_params_text)
+        evaluated['source'] = 'submitted'
+        evaluated['title'] = None
+        items.append(evaluated)
+
+    analysis_text = '\n'.join(
+        block.text for block in getattr(response, 'content', [])
+        if getattr(block, 'type', None) == 'text'
+    ) or None
+    for extracted in extract_prose_recommendations(analysis_text):
+        evaluated = _evaluate_one_item(extracted['tool_name'], extracted['input'], nav2_params_text)
+        evaluated['source'] = 'extracted'
+        evaluated['title'] = extracted['title']
+        items.append(evaluated)
 
     _detect_cross_item_conflicts(items)
     return items
 
 
-def _evaluate_one_item(block, nav2_params_text):
-    name = block.name
-    inputs = block.input
+def _evaluate_one_item(name, inputs, nav2_params_text):
     if name != 'propose_nav_param_change':
         return {'tool_name': name, 'input': inputs, 'auto_verdict': 'unverified',
                 'auto_notes': None}
-
-    current_value = inputs.get('current_value')
-    if current_value is None:
-        return {'tool_name': name, 'input': inputs, 'auto_verdict': 'good', 'auto_notes': None}
 
     param_path = inputs.get('param_path', '')
     leaf = param_path.rsplit('.', 1)[-1] if param_path else ''
     if not leaf:
         return {'tool_name': name, 'input': inputs, 'auto_verdict': 'good', 'auto_notes': None}
 
+    # Existence check runs regardless of whether current_value was claimed — most
+    # real-world prose recommendations never state one, so gating this behind
+    # current_value (the old behavior) silently disabled the check almost every time.
     match = re.search(rf'(?<![\w.]){re.escape(leaf)}\s*:\s*(\S+)', nav2_params_text)
     if match is None:
         return {
@@ -390,6 +405,10 @@ def _evaluate_one_item(block, nav2_params_text):
                 f'fabricated this parameter.'
             ),
         }
+
+    current_value = inputs.get('current_value')
+    if current_value is None:
+        return {'tool_name': name, 'input': inputs, 'auto_verdict': 'good', 'auto_notes': None}
 
     real_value = match.group(1).rstrip(',')
     if not _nav_param_values_match(current_value, real_value):
@@ -436,43 +455,158 @@ def _detect_cross_item_conflicts(items):
             )
 
 
-def detect_narrative_item_mismatch(analysis_text, items):
-    """Heuristic check (2026-07-29, second-round fix): catches the pattern observed
-    TWICE live — the model describes several recommendations in its free-text
-    Metrics Analysis (this model's habit: writing them out in a
-    tool_name(...)-style format) but only some of them actually become real,
-    submitted tool calls. Item-vs-item conflict detection (_detect_cross_item_
-    conflicts) doesn't catch this — it's prose vs. reality disagreeing, not two
-    items disagreeing with each other.
+_EXTRACT_FIELD_ALIASES = {
+    'propose_nav_param_change': {
+        'param_path': ['param_path', 'parameter', 'param'],
+        'current_value': ['current_value'],
+        'proposed_value': ['proposed_value', 'new_value', 'value'],
+        'rationale': ['rationale', 'reason', 'explanation'],
+    },
+    'propose_mission_plan': {
+        'mission_description': ['mission_description', 'description', 'mission'],
+        'rationale': ['rationale', 'reason', 'explanation'],
+    },
+    'generate_world_variant': {
+        'variant_name': ['variant_name', 'name'],
+        'rationale': ['rationale', 'reason', 'explanation'],
+    },
+}
 
-    Counts how many times each known tool name appears verbatim in analysis_text
-    vs. how many times it was actually submitted; flags any tool mentioned MORE
-    often than submitted. Submitting more than mentioned is fine (not flagged) —
-    only the reverse is the failure mode this exists for.
 
-    Best-effort, not a guarantee: tied to this model's current habit of writing
-    tool names verbatim in its own prose. A differently-worded response (no literal
-    tool names in the text) won't be caught here.
+def extract_prose_recommendations(analysis_text):
+    """Best-effort parser (2026-07-29, third-round fix): the model consistently
+    writes UNSUBMITTED recommendations inside its own free text — observed live in
+    THREE distinct formats so far: kwargs-style (`tool_name(key=value, ...)`),
+    colon-style positional (`tool_name(a:b:c)`), and a flat JSON object
+    (`{"tool": "tool_name", ...}`). Extracts each into the same {'tool_name',
+    'input'} shape evaluate_diagnosis_items already knows how to fact-check, plus a
+    best-effort 'title' from the nearby text — callers tag these 'source':
+    'extracted' to distinguish them from real submitted tool calls.
+
+    Explicitly tied to this model's CURRENT writing habits — a differently-formatted
+    response may not be caught, and this is not claimed as a general-purpose code
+    parser. Never raises and never silently drops a found call: an unparseable body
+    still produces an item (title + tool_name, input falls back to {'raw_text': ...})
+    so its EXISTENCE stays visible even when its details can't be extracted.
     """
     if not analysis_text:
         return []
 
-    submitted_counts = {}
-    for item in items:
-        submitted_counts[item['tool_name']] = submitted_counts.get(item['tool_name'], 0) + 1
+    tool_names = [t['name'] for t in TOOLS]
+    tool_alternation = '|'.join(re.escape(n) for n in tool_names)
+    matches = []  # (start_pos, item_dict) — sorted into text order before returning
 
-    notes = []
-    for tool in TOOLS:
-        name = tool['name']
-        mentioned = analysis_text.count(name)
-        submitted = submitted_counts.get(name, 0)
-        if mentioned > submitted:
-            notes.append(
-                f'⚠ the written analysis mentions `{name}` {mentioned} time(s), but '
-                f'only {submitted} were submitted as reviewable recommendations — '
-                f'treat the text above with caution.'
-            )
-    return notes
+    call_start = re.compile(r'\b(' + tool_alternation + r')\s*\(')
+    for m in call_start.finditer(analysis_text):
+        tool_name = m.group(1)
+        open_idx = m.end() - 1
+        close_idx = _find_balanced_close_paren(analysis_text, open_idx)
+        body = analysis_text[open_idx + 1:close_idx - 1]
+        title = _extract_nearby_title(analysis_text, m.start())
+        raw_pairs = _parse_kwargs_body(body)
+        parsed_input = _normalize_extracted_fields(tool_name, raw_pairs, body)
+        matches.append((m.start(), {'tool_name': tool_name, 'input': parsed_input, 'title': title}))
+
+    json_object = re.compile(r'\{[^{}]*"tool"\s*:\s*"(' + tool_alternation + r')"[^{}]*\}')
+    for m in json_object.finditer(analysis_text):
+        try:
+            parsed = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            continue
+        tool_name = parsed.pop('tool', None)
+        if tool_name not in tool_names:
+            continue
+        title = _extract_nearby_title(analysis_text, m.start())
+        raw_pairs = {k: (v if isinstance(v, str) else str(v)) for k, v in parsed.items()}
+        parsed_input = _normalize_extracted_fields(tool_name, raw_pairs, '')
+        matches.append((m.start(), {'tool_name': tool_name, 'input': parsed_input, 'title': title}))
+
+    matches.sort(key=lambda pair: pair[0])
+    return [item for _, item in matches]
+
+
+def _find_balanced_close_paren(text, open_idx):
+    depth = 0
+    i = open_idx
+    while i < len(text):
+        if text[i] == '(':
+            depth += 1
+        elif text[i] == ')':
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return len(text)  # unbalanced (shouldn't normally happen) — take the rest
+
+
+_CODE_FENCE_LINE = re.compile(r'^```\s*\w*\s*$')       # ``` or ```python etc.
+_PUNCTUATION_ONLY_LINE = re.compile(r'^[`)\](}>\-*#\s]*$')  # stray brackets, rules
+
+
+def _is_title_junk_line(line):
+    return bool(_CODE_FENCE_LINE.match(line)) or bool(_PUNCTUATION_ONLY_LINE.match(line))
+
+
+def _extract_nearby_title(text, call_start_idx, lookback=5):
+    """Best-effort: scans backward through up to `lookback` non-blank lines before
+    the call, skipping "junk" lines (markdown code fences like ```python, and
+    stray leftover punctuation like a lone ')' from a PRIOR multi-line call) that
+    aren't real titles, and returns the first line that looks like a heading rather
+    than a sentence fragment. Returns None if nothing suitable is found within the
+    lookback window — a missing title is honest; a junk one (2026-07-29 live bugs:
+    '```python', ')') is worse than none."""
+    preceding = text[:call_start_idx]
+    lines = [l.strip() for l in preceding.splitlines() if l.strip()]
+    for line in reversed(lines[-lookback:]):
+        if _is_title_junk_line(line):
+            continue
+        candidate = line.strip('#*: ').strip()
+        if candidate and len(candidate) <= 80 and not candidate.endswith('.'):
+            return candidate
+        return None  # nearest real line exists but doesn't look like a title
+    return None
+
+
+def _parse_kwargs_body(body):
+    """Parses key=value pairs from a call body (handles quoted strings and simple
+    bracketed lists as single opaque values). Returns {} if the body isn't
+    kwargs-shaped at all (e.g. colon-style positional args) — that's expected and
+    handled by _normalize_extracted_fields's fallback, not an error here."""
+    pairs = {}
+    for m in re.finditer(
+        r'(\w+)\s*=\s*("(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|\[[^\]]*\]|[-\w./]+)',
+        body,
+    ):
+        key, value = m.group(1), m.group(2)
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in '"\'':
+            value = value[1:-1]
+        pairs[key] = value
+    return pairs
+
+
+def _normalize_extracted_fields(tool_name, raw_pairs, body):
+    aliases = _EXTRACT_FIELD_ALIASES.get(tool_name, {})
+    normalized = {}
+    for field, alias_list in aliases.items():
+        for alias in alias_list:
+            if alias in raw_pairs:
+                normalized[field] = raw_pairs[alias]
+                break
+
+    if tool_name == 'propose_nav_param_change':
+        if 'component' in raw_pairs and 'param_path' in normalized:
+            normalized['param_path'] = f"{raw_pairs['component']}.{normalized['param_path']}"
+        elif not normalized.get('param_path') and '=' not in body:
+            # Colon-style positional: component[:subcomponent...]:param:value
+            segments = [s.strip() for s in body.split(':') if s.strip()]
+            if len(segments) >= 3:
+                *path_parts, value = segments
+                normalized['param_path'] = '.'.join(path_parts)
+                normalized['proposed_value'] = value
+
+    if not normalized and body.strip():
+        normalized['raw_text'] = body.strip()
+    return normalized
 
 
 def _nav_param_values_match(claimed, real):
@@ -572,7 +706,7 @@ home_base") or use generate_world_variant to propose a harder obstacle layout.""
         block.text for block in getattr(response, 'content', [])
         if getattr(block, 'type', None) == 'text'
     ) or None
-    conflict_notes = build_conflict_notes(items, analysis_text)
+    conflict_notes = [i['auto_notes'] for i in items if i['auto_verdict'] == 'conflict']
     log_diagnosis(
         backend=backend, model_name=model_name, source=source, prompt_text=prompt,
         analysis_text=analysis_text, items=items, conflict_notes=conflict_notes or None,
@@ -581,16 +715,44 @@ home_base") or use generate_world_variant to propose a harder obstacle layout.""
     return response
 
 
-def build_conflict_notes(items, analysis_text):
-    """Shared by diagnose() (for auto-logging) and every caller that renders a
-    Summary section — merges the two independent sources of 'the AI's own
-    recommendations don't add up' findings: item-vs-item conflicts
-    (_detect_cross_item_conflicts, baked into each item's auto_verdict already) and
-    narrative-vs-item mismatches (detect_narrative_item_mismatch). Returns a plain
-    list, possibly empty — callers wanting None-when-empty (e.g. for JSON storage)
-    do that themselves."""
-    item_conflicts = [i['auto_notes'] for i in items if i['auto_verdict'] == 'conflict']
-    return item_conflicts + detect_narrative_item_mismatch(analysis_text, items)
+def summarize_diagnosis(items):
+    """Code-generated Summary content (2026-07-29, third-round rebuild) — a real
+    tally instead of a single terse audit line. Supersedes build_conflict_notes /
+    detect_narrative_item_mismatch: now that extract_prose_recommendations turns
+    every prose mention into a real, fact-checked item, "mentioned vs. submitted" is
+    just the 'source' field on each item rather than a separate count to compute.
+
+    Returns a list of human-readable lines, always non-empty — callers print/render
+    each line, then append their own fixed closing sentence."""
+    if not items:
+        return ['No recommendations were found in this response — nothing to review.']
+
+    submitted = [i for i in items if i['source'] == 'submitted']
+    extracted = [i for i in items if i['source'] == 'extracted']
+    counts = {'good': 0, 'bad': 0, 'conflict': 0, 'unverified': 0}
+    for i in items:
+        counts[i['auto_verdict']] += 1
+
+    lines = [
+        f"{len(items)} recommendation(s) found — {len(submitted)} formally submitted, "
+        f"{len(extracted)} found only in the written text above (best-effort extraction, "
+        f"not formally submitted).",
+        f"✅ {counts['good']} good · ❌ {counts['bad']} bad · "
+        f"⚠ {counts['conflict']} conflicting · ➖ {counts['unverified']} unverified.",
+    ]
+
+    for item in items:
+        if item['auto_verdict'] == 'conflict':
+            lines.append(item['auto_notes'])
+
+    if extracted:
+        titles = [i['title'] or i['tool_name'] for i in extracted]
+        lines.append(
+            f"⚠ {len(extracted)} of the above were only written in the text, never "
+            f"formally submitted for review: {', '.join(titles)}."
+        )
+
+    return lines
 
 
 def _diagnose_claude(prompt):
@@ -662,21 +824,28 @@ def run_loop():
     print('\n[Recommendations]')
     for i, item in enumerate(items):
         badge = _VERDICT_BADGE[item['auto_verdict']]
-        print(f'  [{i}] {badge} {item["tool_name"]} — {item["auto_verdict"]}')
+        tag = 'submitted' if item['source'] == 'submitted' else 'TEXT ONLY, not submitted'
+        title = item['title'] or item['tool_name']
+        print(f'  [{i}] {badge} {title} — {item["auto_verdict"]} ({tag})')
+        why = item['input'].get('rationale')
+        if why:
+            print(f'      Why: {why}')
         print(f'      {json.dumps(item["input"])}')
         if item['auto_notes']:
             print(f'      {item["auto_notes"]}')
 
     print('\n[Summary]')
-    for note in build_conflict_notes(items, analysis_text):
-        print(f'  {note}')
+    for line in summarize_diagnosis(items):
+        print(f'  {line}')
     print('  Please review proposed actions and provide feedback to project owner.')
 
-    for i, (block, item) in enumerate(zip(
-        (b for b in response.content if b.type == 'tool_use'), items
-    )):
-        tool = block.name
-        inputs = block.input
+    # Only formally SUBMITTED items are safe to approve/apply — extracted items are
+    # a best-effort text parse, not schema-validated, and shouldn't be actioned as if
+    # they went through the real tool-calling path.
+    submitted_items = [item for item in items if item['source'] == 'submitted']
+    for i, item in enumerate(submitted_items):
+        tool = item['tool_name']
+        inputs = item['input']
         print(f"\n[agentic] Recommendation [{i}] ({item['auto_verdict']}): {tool}")
 
         if not human_approval(tool, inputs):

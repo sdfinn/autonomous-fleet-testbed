@@ -43,10 +43,11 @@ def _sample_items():
         {"tool_name": "propose_nav_param_change",
          "input": {"param_path": "controller_server.rotate_to_heading_angular_vel",
                     "current_value": "0.5", "proposed_value": "0.6", "rationale": "r"},
-         "auto_verdict": "good", "auto_notes": None},
+         "auto_verdict": "good", "auto_notes": None, "source": "submitted", "title": None},
         {"tool_name": "propose_mission_plan",
          "input": {"mission_description": "d", "goals": [], "rationale": "r"},
-         "auto_verdict": "unverified", "auto_notes": None},
+         "auto_verdict": "unverified", "auto_notes": None, "source": "extracted",
+         "title": "Create More Challenging Missions"},
     ]
 
 
@@ -183,3 +184,42 @@ def test_log_diagnosis_created_at_is_set(tmp_path):
     row = sqlite3.connect(db).execute(
         "SELECT created_at FROM ai_diagnoses WHERE id = ?", (diagnosis_id,)).fetchone()
     assert row[0] is not None and len(row[0]) > 0
+
+
+def test_log_diagnosis_stores_item_source_and_title(tmp_path):
+    db = str(tmp_path / "t.db")
+    diagnosis_id = log_diagnosis(
+        backend="ollama", model_name="m", source="cli", prompt_text="p",
+        analysis_text="a", items=_sample_items(), db_path=db,
+    )
+    rows = sqlite3.connect(db).execute(
+        "SELECT source, title FROM ai_diagnosis_items WHERE diagnosis_id = ? "
+        "ORDER BY item_index", (diagnosis_id,)).fetchall()
+    assert rows == [
+        ("submitted", None),
+        ("extracted", "Create More Challenging Missions"),
+    ]
+
+
+def test_init_db_adds_source_and_title_columns_to_existing_table(tmp_path):
+    """Additive migration must work on a DB created BEFORE this pair of columns
+    existed — same pattern as telemetry_logger.py's _ensure_run_columns, and for the
+    same reason: this table already had real rows before this addition."""
+    from tools import diagnosis_log
+    db = str(tmp_path / "t.db")
+    conn = sqlite3.connect(db)
+    conn.execute("""
+        CREATE TABLE ai_diagnosis_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, diagnosis_id INTEGER,
+            item_index INTEGER, tool_name TEXT, item_input TEXT,
+            auto_verdict TEXT, auto_notes TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+    diagnosis_log.init_db(db)
+
+    cols = {r[1] for r in sqlite3.connect(db).execute("PRAGMA table_info(ai_diagnosis_items)")}
+    assert "source" in cols
+    assert "title" in cols
