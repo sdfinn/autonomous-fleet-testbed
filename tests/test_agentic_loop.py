@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for tools/agentic_loop.py's diagnose() prompt-building — no real
 Anthropic API calls (client.messages.create is monkeypatched in every test)."""
+import pytest
+
 from tools import agentic_loop
 from tools.telemetry_logger import init_db, log_run
 
@@ -103,3 +105,102 @@ def test_to_ollama_tools_does_not_mutate_the_original_tools_list():
     agentic_loop._to_ollama_tools(agentic_loop.TOOLS)
 
     assert agentic_loop.TOOLS == original
+
+
+class _FakeOllamaFunction:
+    def __init__(self, name, arguments):
+        self.name = name
+        self.arguments = arguments
+
+
+class _FakeOllamaToolCall:
+    def __init__(self, name, arguments):
+        self.function = _FakeOllamaFunction(name, arguments)
+
+
+class _FakeOllamaMessage:
+    def __init__(self, content='', tool_calls=None):
+        self.content = content
+        self.tool_calls = tool_calls or []
+
+
+class _FakeOllamaChatResponse:
+    def __init__(self, message):
+        self.message = message
+
+
+def test_diagnose_ollama_returns_tool_use_block(monkeypatch):
+    fake_call = _FakeOllamaToolCall(
+        'propose_nav_param_change',
+        {'param_path': 'local_costmap.inflation_layer.inflation_radius',
+         'current_value': '0.25', 'proposed_value': '0.35',
+         'rationale': 'collisions trending up'},
+    )
+    fake_response = _FakeOllamaChatResponse(_FakeOllamaMessage(tool_calls=[fake_call]))
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', lambda **kw: fake_response)
+
+    result = agentic_loop._diagnose_ollama('irrelevant prompt text')
+
+    assert len(result.content) == 1
+    block = result.content[0]
+    assert block.type == 'tool_use'
+    assert block.name == 'propose_nav_param_change'
+    assert block.input['proposed_value'] == '0.35'
+
+
+def test_diagnose_ollama_parses_json_string_arguments(monkeypatch):
+    """Some Ollama models/versions may return tool arguments as a JSON string
+    rather than an already-parsed dict — handle both without guessing which."""
+    fake_call = _FakeOllamaToolCall(
+        'propose_nav_param_change',
+        '{"param_path": "x", "proposed_value": "1", "rationale": "r"}',
+    )
+    fake_response = _FakeOllamaChatResponse(_FakeOllamaMessage(tool_calls=[fake_call]))
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', lambda **kw: fake_response)
+
+    result = agentic_loop._diagnose_ollama('irrelevant prompt text')
+
+    assert result.content[0].input['param_path'] == 'x'
+
+
+def test_diagnose_ollama_includes_text_block_when_model_writes_analysis(monkeypatch):
+    fake_call = _FakeOllamaToolCall('propose_mission_plan',
+                                     {'mission_description': 'd', 'goals': [], 'rationale': 'r'})
+    fake_response = _FakeOllamaChatResponse(
+        _FakeOllamaMessage(content='Looking at the drift report...', tool_calls=[fake_call]))
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', lambda **kw: fake_response)
+
+    result = agentic_loop._diagnose_ollama('irrelevant prompt text')
+
+    types = [b.type for b in result.content]
+    assert types == ['text', 'tool_use']
+    assert result.content[0].text == 'Looking at the drift report...'
+
+
+def test_diagnose_ollama_raises_when_no_tool_call_returned(monkeypatch):
+    fake_response = _FakeOllamaChatResponse(
+        _FakeOllamaMessage(content='just some analysis text, no proposal'))
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', lambda **kw: fake_response)
+
+    with pytest.raises(RuntimeError, match='did not propose a tool call'):
+        agentic_loop._diagnose_ollama('irrelevant prompt text')
+
+
+def test_diagnose_ollama_raises_actionable_error_when_unreachable(monkeypatch):
+    def _fake_chat(**kwargs):
+        raise ConnectionRefusedError('[Errno 111] Connection refused')
+
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', _fake_chat)
+
+    with pytest.raises(RuntimeError, match='ollama serve'):
+        agentic_loop._diagnose_ollama('irrelevant prompt text')
+
+
+def test_diagnose_ollama_raises_actionable_error_when_model_not_pulled(monkeypatch):
+    def _fake_chat(**kwargs):
+        raise Exception(f'model "{agentic_loop.OLLAMA_MODEL}" not found, try pulling it first')
+
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', _fake_chat)
+
+    with pytest.raises(RuntimeError, match='ollama pull'):
+        agentic_loop._diagnose_ollama('irrelevant prompt text')

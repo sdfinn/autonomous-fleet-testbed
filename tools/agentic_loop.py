@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import anthropic
@@ -131,6 +132,58 @@ def _to_ollama_tools(tools):
         }
         for t in tools
     ]
+
+
+@dataclass
+class _TextBlock:
+    text: str
+    type: str = 'text'
+
+
+@dataclass
+class _ToolUseBlock:
+    name: str
+    input: dict
+    type: str = 'tool_use'
+
+
+@dataclass
+class _DiagnosisResponse:
+    content: list
+
+
+def _diagnose_ollama(prompt):
+    try:
+        result = ollama.chat(
+            model=OLLAMA_MODEL,
+            messages=[{'role': 'user', 'content': prompt}],
+            tools=_to_ollama_tools(TOOLS),
+        )
+    except Exception as exc:
+        if 'not found' in str(exc).lower():
+            raise RuntimeError(
+                f"Model {OLLAMA_MODEL!r} isn't pulled locally — run "
+                f"`ollama pull {OLLAMA_MODEL}`."
+            ) from exc
+        raise RuntimeError(
+            "Couldn't reach Ollama — is it running? Start it with `ollama serve` "
+            "(or check `systemctl status ollama`), then retry."
+        ) from exc
+
+    blocks = []
+    if result.message.content:
+        blocks.append(_TextBlock(text=result.message.content))
+    for call in (result.message.tool_calls or []):
+        args = call.function.arguments
+        if isinstance(args, str):
+            args = json.loads(args)
+        blocks.append(_ToolUseBlock(name=call.function.name, input=dict(args)))
+
+    if not any(isinstance(b, _ToolUseBlock) for b in blocks):
+        raise RuntimeError(
+            f'Ollama model {OLLAMA_MODEL!r} did not propose a tool call for this prompt.'
+        )
+    return _DiagnosisResponse(content=blocks)
 
 
 def load_latest_run(db_path=FLEET_DB):
