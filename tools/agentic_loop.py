@@ -176,7 +176,13 @@ def _diagnose_ollama(prompt):
     for call in (result.message.tool_calls or []):
         args = call.function.arguments
         if isinstance(args, str):
-            args = json.loads(args)
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f'Ollama model {OLLAMA_MODEL!r} returned malformed tool-call '
+                    f'arguments for {call.function.name!r}: {args!r}'
+                ) from exc
         blocks.append(_ToolUseBlock(name=call.function.name, input=dict(args)))
 
     if not any(isinstance(b, _ToolUseBlock) for b in blocks):

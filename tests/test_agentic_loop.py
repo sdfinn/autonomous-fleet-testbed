@@ -204,3 +204,12 @@ def test_diagnose_ollama_raises_actionable_error_when_model_not_pulled(monkeypat
 
     with pytest.raises(RuntimeError, match='ollama pull'):
         agentic_loop._diagnose_ollama('irrelevant prompt text')
+
+
+def test_diagnose_ollama_raises_actionable_error_on_malformed_json_arguments(monkeypatch):
+    fake_call = _FakeOllamaToolCall('propose_nav_param_change', '{not valid json')
+    fake_response = _FakeOllamaChatResponse(_FakeOllamaMessage(tool_calls=[fake_call]))
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', lambda **kw: fake_response)
+
+    with pytest.raises(RuntimeError, match='malformed tool-call arguments'):
+        agentic_loop._diagnose_ollama('irrelevant prompt text')
