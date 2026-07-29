@@ -153,11 +153,13 @@ class _DiagnosisResponse:
 
 
 def _diagnose_ollama(prompt):
+    ollama_tools = _to_ollama_tools(TOOLS)
+    tools_by_name = {t['name']: t for t in TOOLS}
     try:
         result = ollama.chat(
             model=OLLAMA_MODEL,
             messages=[{'role': 'user', 'content': prompt}],
-            tools=_to_ollama_tools(TOOLS),
+            tools=ollama_tools,
         )
     except Exception as exc:
         if 'not found' in str(exc).lower():
@@ -174,6 +176,12 @@ def _diagnose_ollama(prompt):
     if result.message.content:
         blocks.append(_TextBlock(text=result.message.content))
     for call in (result.message.tool_calls or []):
+        name = call.function.name
+        if name not in tools_by_name:
+            raise RuntimeError(
+                f'Ollama model {OLLAMA_MODEL!r} proposed an unknown tool '
+                f'{name!r} — expected one of {sorted(tools_by_name)}.'
+            )
         args = call.function.arguments
         if isinstance(args, str):
             try:
@@ -181,9 +189,21 @@ def _diagnose_ollama(prompt):
             except json.JSONDecodeError as exc:
                 raise RuntimeError(
                     f'Ollama model {OLLAMA_MODEL!r} returned malformed tool-call '
-                    f'arguments for {call.function.name!r}: {args!r}'
+                    f'arguments for {name!r}: {args!r}'
                 ) from exc
-        blocks.append(_ToolUseBlock(name=call.function.name, input=dict(args)))
+        if not isinstance(args, dict):
+            raise RuntimeError(
+                f'Ollama model {OLLAMA_MODEL!r} returned non-object tool-call '
+                f'arguments for {name!r}: {args!r}'
+            )
+        required = tools_by_name[name]['input_schema'].get('required', [])
+        missing = [key for key in required if key not in args]
+        if missing:
+            raise RuntimeError(
+                f'Ollama model {OLLAMA_MODEL!r} omitted required argument(s) '
+                f'{missing} for tool {name!r}: got {args!r}'
+            )
+        blocks.append(_ToolUseBlock(name=name, input=dict(args)))
 
     if not any(isinstance(b, _ToolUseBlock) for b in blocks):
         raise RuntimeError(

@@ -20,7 +20,21 @@ Claude is working with files under this directory.
   this file (`tests/test_agentic_loop.py`) — safe to import in pytest because
   `anthropic.Anthropic()` doesn't raise without an API key at construction (verified
   empirically), only on an actual `messages.create()` call, which every test
-  monkeypatches.
+  monkeypatches. Gained a local Ollama backend, 2026-07-28 (design:
+  docs/superpowers/specs/2026-07-28-local-llm-diagnosis-design.md) — diagnose()
+  dispatches to _diagnose_claude or _diagnose_ollama via a backend= param or the
+  AGENTIC_BACKEND env var (default 'claude', so behavior is unchanged unless
+  explicitly opted in); OLLAMA_MODEL env var picks the local model (default
+  qwen2.5:14b-instruct). Requires the ollama PyPI package (now in
+  requirements-ci.txt) and a running Ollama daemon for the 'ollama' backend only —
+  the default 'claude' backend's requirements are unchanged.
+- `agentic_validate.py` — 2026-07-28: `python -m tools.agentic_validate` runs a small
+  set of synthetic drift scenarios through both agentic_loop.py backends (Claude and
+  Ollama) and prints both proposals side by side for manual comparison — the canary
+  step before deciding whether to default AGENTIC_BACKEND to 'ollama'. Dev-only, not
+  wired into CI. First real validation run (2026-07-28) showed the local model
+  (qwen2.5:14b-instruct) did not reliably invoke a tool for the full diagnose()
+  prompt — known, open, non-blocking; AGENTIC_BACKEND still defaults to 'claude'.
 - `baseline_monitor.py` — Session 12+: `check_run(run_id)` compares one run against a
   rolling PASS-only baseline (config-driven, `config/drift_config.yaml`), sliced by
   `(runner_type, power_mode, scenario)` — the `scenario` dimension added Session 17
@@ -35,6 +49,16 @@ Claude is working with files under this directory.
   "flagged"; deliberately has no concept of flagged status, that's the caller's job
   to combine. `build_trend_summary(history)` — plain-text per-metric summary (flagged
   count + trending status) fed to `agentic_loop.diagnose()`'s new `trend_context` arg.
+- `fleet_status.py` — 2026-07-28: `python -m tools.fleet_status [--stage
+  sim|hil|real]` prints a plain-text pass/fail + drift summary per scenario, reusing
+  `generate_test_report.load_run_rows()`/`baseline_monitor.check_run()` (no new query
+  logic). Default freshness window is ~30 days (`DEFAULT_STATUS_MAX_AGE_MINUTES`) —
+  deliberately wider than `generate_test_report`'s own 30-minute default, since this
+  tool answers "what's the fleet's last known state" not "this CI run's own result";
+  `--max-age-minutes` overrides it (CI passes `30` to get the tighter behavior back).
+  Wired into three places: standalone CLI, the Claude Code SessionStart hook
+  (`.claude/settings.json`), and a `stage-5-reports-*` CI console-log step
+  (deliberately not `$GITHUB_STEP_SUMMARY` — see the design spec for why).
 - `generate_test_report.py` — Session 12: originally a blanket "last 100 runs" PDF.
   **Rewritten Session 17 Piece 4 (2026-07-21):** `generate_report(runner_type,
   scenarios, ...)` now scopes to one CI stage's own results only — the latest row

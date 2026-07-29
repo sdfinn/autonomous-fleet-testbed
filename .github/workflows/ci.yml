@@ -489,7 +489,7 @@ jobs:
       - name: Fleet status
         run: |
           source ~/fleet-env/bin/activate
-          python -m tools.fleet_status --stage sim
+          python -m tools.fleet_status --stage sim --max-age-minutes 30
 
       - name: Upload PDF report
         id: upload_pdf
@@ -553,7 +553,7 @@ jobs:
       - name: Fleet status
         run: |
           source ~/fleet-env/bin/activate
-          python -m tools.fleet_status --stage hil
+          python -m tools.fleet_status --stage hil --max-age-minutes 30
 
       - name: Upload PDF report
         id: upload_pdf

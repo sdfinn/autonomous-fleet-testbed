@@ -139,7 +139,10 @@ docker buildx build --platform linux/arm64 \
   any export added below it (e.g. `ANTHROPIC_API_KEY` for `tools/agentic_loop.py`) never
   takes effect. Workaround for a non-interactive shell: `eval "$(grep '^export
   ANTHROPIC_API_KEY' ~/.bashrc)"` — targeted, doesn't print the key. Real terminals
-  (interactive) are unaffected and work fine as-is.
+  (interactive) are unaffected and work fine as-is. Two related env-var switches added
+  2026-07-28 in `tools/agentic_loop.py`: `AGENTIC_BACKEND` (default `'claude'`; set to
+  `'ollama'` to use a local model instead) and `OLLAMA_MODEL` (default
+  `'qwen2.5:14b-instruct'`, only consulted when the Ollama backend is selected).
 - `tests/test_ros2_contracts.py` requires a live ROS2 environment — always `--ignore` it in local pytest runs
 - `tests/test_navigation.py` also requires a live ROS2 environment (`import rclpy` at module
   level) plus a running Gazebo/Isaac + Nav2 stack — same treatment as `test_ros2_contracts.py`

@@ -17,6 +17,7 @@ plotly>=5.20
 reportlab>=4.0
 matplotlib>=3.8
 anthropic>=0.25
+ollama>=0.4
 pymupdf>=1.24
 pytest==8.3.2
 pytest-cov>=5.0

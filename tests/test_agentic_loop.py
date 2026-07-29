@@ -215,6 +215,33 @@ def test_diagnose_ollama_raises_actionable_error_on_malformed_json_arguments(mon
         agentic_loop._diagnose_ollama('irrelevant prompt text')
 
 
+def test_diagnose_ollama_raises_actionable_error_on_unknown_tool_name(monkeypatch):
+    fake_call = _FakeOllamaToolCall('not_a_real_tool', {'x': 1})
+    fake_response = _FakeOllamaChatResponse(_FakeOllamaMessage(tool_calls=[fake_call]))
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', lambda **kw: fake_response)
+
+    with pytest.raises(RuntimeError, match='unknown tool'):
+        agentic_loop._diagnose_ollama('irrelevant prompt text')
+
+
+def test_diagnose_ollama_raises_actionable_error_on_non_dict_arguments(monkeypatch):
+    fake_call = _FakeOllamaToolCall('propose_nav_param_change', ['not', 'a', 'dict'])
+    fake_response = _FakeOllamaChatResponse(_FakeOllamaMessage(tool_calls=[fake_call]))
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', lambda **kw: fake_response)
+
+    with pytest.raises(RuntimeError, match='non-object tool-call arguments'):
+        agentic_loop._diagnose_ollama('irrelevant prompt text')
+
+
+def test_diagnose_ollama_raises_actionable_error_on_missing_required_argument(monkeypatch):
+    fake_call = _FakeOllamaToolCall('propose_nav_param_change', {'param_path': 'x'})
+    fake_response = _FakeOllamaChatResponse(_FakeOllamaMessage(tool_calls=[fake_call]))
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', lambda **kw: fake_response)
+
+    with pytest.raises(RuntimeError, match='omitted required argument'):
+        agentic_loop._diagnose_ollama('irrelevant prompt text')
+
+
 def test_diagnose_dispatches_to_ollama_backend_when_requested(monkeypatch, tmp_path):
     db = str(tmp_path / "t.db")
     init_db(db)
