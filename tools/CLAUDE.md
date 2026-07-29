@@ -31,10 +31,15 @@ Claude is working with files under this directory.
 - `agentic_validate.py` — 2026-07-28: `python -m tools.agentic_validate` runs a small
   set of synthetic drift scenarios through both agentic_loop.py backends (Claude and
   Ollama) and prints both proposals side by side for manual comparison — the canary
-  step before deciding whether to default AGENTIC_BACKEND to 'ollama'. Dev-only, not
-  wired into CI. First real validation run (2026-07-28) showed the local model
-  (qwen2.5:14b-instruct) did not reliably invoke a tool for the full diagnose()
-  prompt — known, open, non-blocking; AGENTIC_BACKEND still defaults to 'claude'.
+  step for judging local-model diagnosis quality. Dev-only, not wired into CI. First
+  real validation run (2026-07-28) showed the local model (qwen2.5:14b-instruct) did
+  not reliably invoke a tool for the full diagnose() prompt. **AGENTIC_BACKEND was
+  flipped to default 'ollama' the same session anyway** (Mike's explicit, informed
+  call) — this predicted exactly the live failure hit via the dashboard's "Diagnose
+  with AI" button at session end (`RuntimeError: ... did not propose a tool call`).
+  **Not yet fixed — see Release1Todo.md's "NEXT SESSION — START HERE" block (top of
+  file) for the live traceback, stopgap (`AGENTIC_BACKEND=claude`), and the
+  diagnostic plan.**
 - `baseline_monitor.py` — Session 12+: `check_run(run_id)` compares one run against a
   rolling PASS-only baseline (config-driven, `config/drift_config.yaml`), sliced by
   `(runner_type, power_mode, scenario)` — the `scenario` dimension added Session 17
