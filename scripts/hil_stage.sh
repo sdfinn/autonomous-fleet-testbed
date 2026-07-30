@@ -48,8 +48,13 @@ BALL_REMOVAL_SETTLE_S="${BALL_REMOVAL_SETTLE_S:-3}"
 # machine discovery broke silently (Nav2 came up locally, map_server/amcl activated fine, but
 # were completely invisible from the workstation and vice versa; survived both a soft reboot
 # and a hard power cycle, since WiFi auto-reconnects and CycloneDDS re-picks it every time).
-# Fix: pin CycloneDDS explicitly to enP8p1s0 via ~/cyclonedds-hil.xml on the Jetson (see
-# CLAUDE.md's matching gotcha) — makes this immune to future interface/ifindex changes.
+# Fix: ~/cyclonedds-hil.xml on the Jetson explicitly lists BOTH interfaces with Ethernet
+# given a higher priority (10 vs WiFi's 1 — higher wins, CycloneDDS docs) — Ethernet stays
+# preferred whenever it's up, WiFi remains configured as a genuine fallback if Ethernet is
+# ever disconnected (the untethered-robot scenario), rather than pinning to Ethernet ONLY
+# (an earlier, narrower version of this fix — corrected same day after Mike pointed out
+# untethered operation needs WiFi to still work when Ethernet is unplugged). See CLAUDE.md's
+# matching gotcha.
 JENV='source /opt/ros/jazzy/setup.bash && source ~/autonomous-fleet-testbed/install/setup.bash && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 CYCLONEDDS_URI=file://$HOME/cyclonedds-hil.xml MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1'
 
 case "$POWER_MODE_ID" in

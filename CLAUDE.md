@@ -465,11 +465,17 @@ docker buildx build --platform linux/arm64 \
   happens to have the lower ifindex there, so it was never affected — pure luck, not a
   difference in configuration.) This is exactly why WiFi hadn't broken anything before this
   session: it was never up long enough to matter until today. **Fix:** `~/cyclonedds-hil.xml`
-  on the Jetson pins CycloneDDS explicitly to `enP8p1s0` via `<NetworkInterface
-  name="enP8p1s0"/>`; `scripts/hil_stage.sh`'s `JENV` now exports
-  `CYCLONEDDS_URI=file://$HOME/cyclonedds-hil.xml` for every Jetson-side launch, making this
-  immune to future interface/ifindex changes (a new USB-Ethernet dongle, a different WiFi
-  card, etc.) regardless of enumeration order. **Diagnostic lesson:** `ros2 topic hz` on a
+  on the Jetson lists BOTH interfaces explicitly with an assigned `priority` (higher wins,
+  per CycloneDDS's own docs — default is 0 for a regular interface, 2 for loopback):
+  `enP8p1s0` at `priority="10"`, `wlP1p1s0` at `priority="1"`. Ethernet stays preferred
+  whenever it's up; WiFi remains genuinely available as a fallback if Ethernet is ever
+  disconnected (the untethered-robot scenario this WiFi bring-up exists for in the first
+  place) — a narrower first version of this fix pinned Ethernet ONLY, which would have
+  silently broken untethered operation the same way the original bug broke tethered
+  operation; corrected same day after Mike caught it. `scripts/hil_stage.sh`'s `JENV` now
+  exports `CYCLONEDDS_URI=file://$HOME/cyclonedds-hil.xml` for every Jetson-side launch, so
+  this is immune to future interface/ifindex changes (a new USB-Ethernet dongle, a different
+  WiFi card, etc.) regardless of enumeration order. **Diagnostic lesson:** `ros2 topic hz` on a
   topic the SAME machine also locally publishes (e.g. via its own Gazebo bridge) proves
   nothing about cross-machine delivery — check the topic from the OTHER machine's side, or
   check a topic/node that can only exist on the remote side, to actually test the link.
