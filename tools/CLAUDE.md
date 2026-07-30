@@ -339,6 +339,26 @@ Claude is working with files under this directory.
   worked — CommonMark collapses single newlines in `st.markdown()`, but consecutive
   `- ` list lines render correctly without needing blank lines between them, which is
   why bullets (not just newline-separated sentences) were the actual fix.
+- `vlm_canary.py` — 2026-07-30: the CUDA/on-device-VLM red-ball canary (design:
+  `docs/superpowers/specs/2026-07-30-cuda-canary-vlm-red-ball-design.md`). Fully
+  decoupled, log-only classification of Mission 2's existing red-reaction photo by a
+  small local vision model (`moondream:1.8b` via Ollama, pinned tag) — no pass/fail,
+  zero writes to `runs`/`steps` or `ai_diagnoses`/`ai_diagnosis_items`. Own isolated
+  `vlm_canary_log` table (`init_db`/`log_vlm_canary_result`/`find_vlm_canary_results`,
+  same shape convention as `diagnosis_log.py` below). `classify_photo()`'s prompt is
+  pinned to the literal string `'Describe this image.'` — a more elaborate prompt was
+  live-tested and produced a broken 2-token response from this exact model; don't
+  "improve" it without re-testing against a real photo first. Spawned as a detached
+  subprocess (`python -m tools.vlm_canary <photo> <run_context>`) by `mission2_day.py`
+  — that file imports nothing from here, so a broken import here can't break it.
+  `generate_test_report.py`'s `build_job_summary()` surfaces a result via
+  `find_vlm_canary_results()`, reusing `find_run_photos()`'s already-resolved paths as
+  the join key rather than a second time-window match. **Code complete, all 3 tasks
+  reviewed clean (Approved, no Critical/Important findings) — NOT yet live-verified
+  end-to-end** (implementation plan's Task 5): a HIL day rerun needed to prove this
+  first got derailed by two real, unrelated network regressions (see `CLAUDE.md`'s
+  dated Gotchas) and then a still-open CPU/timing regression — see `Release1Todo.md`'s
+  "NEXT SESSION — START HERE" block for the full state and next steps.
 - `diagnosis_log.py` — 2026-07-29: auto-log for every `agentic_loop.diagnose()` call,
   same `fleet_runs.db`. `init_db()`/`log_diagnosis(**kwargs) -> diagnosis_id` mirror
   `telemetry_logger.py`'s `runs`/`steps` two-table shape: one `ai_diagnoses` row per
