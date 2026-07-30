@@ -355,6 +355,86 @@ def test_build_job_summary_omits_evidence_line_when_not_given(tmp_path):
     assert "Evidence" not in summary
 
 
+# ── 2026-07-30: on-device VLM canary surfacing in the gate-5 report ────────────────────
+
+
+def test_build_job_summary_includes_vlm_canary_answer_when_present(tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    log_run(scenario="mission2_red", steps=5, final_x=0.0, final_y=0.0, result="PASS",
+            step_log=[], db_path=db, runner_type="hil_jetson")
+    from tools.baseline_monitor import check_run
+    from tools.generate_test_report import build_job_summary, load_run_rows
+    from tools.vlm_canary import log_vlm_canary_result
+    rows = load_run_rows("hil_jetson", ["mission2_red"], db_path=db)
+    reports_by_row_id = {row["id"]: check_run(row["id"], db_path=db) for row in rows}
+    any_flagged = any(r.flagged for rs in reports_by_row_id.values() for r in rs)
+
+    log_vlm_canary_result('red', '/tmp/reaction_red_20260730_120000.png',
+                          'moondream:1.8b', answer='a red ball', db_path=db)
+    vlm_canary_by_row_id = {
+        rows[0]["id"]: [{'photo_path': '/tmp/reaction_red_20260730_120000.png',
+                          'model_name': 'moondream:1.8b', 'answer': 'a red ball',
+                          'error': None}]
+    }
+    summary = build_job_summary("hil_jetson", rows, reports_by_row_id, any_flagged,
+                                vlm_canary_by_row_id=vlm_canary_by_row_id)
+    assert "On-device VLM canary" in summary
+    assert "a red ball" in summary
+    assert "informational only, not evaluated" in summary
+
+
+def test_build_job_summary_omits_vlm_canary_section_when_absent(tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    log_run(scenario="mission2_red", steps=5, final_x=0.0, final_y=0.0, result="PASS",
+            step_log=[], db_path=db, runner_type="hil_jetson")
+    from tools.baseline_monitor import check_run
+    from tools.generate_test_report import build_job_summary, load_run_rows
+    rows = load_run_rows("hil_jetson", ["mission2_red"], db_path=db)
+    reports_by_row_id = {row["id"]: check_run(row["id"], db_path=db) for row in rows}
+    any_flagged = any(r.flagged for rs in reports_by_row_id.values() for r in rs)
+    # No vlm_canary_by_row_id passed at all — existing call sites must keep working.
+    summary = build_job_summary("hil_jetson", rows, reports_by_row_id, any_flagged)
+    assert "On-device VLM canary" not in summary
+
+
+def test_generate_report_writes_vlm_canary_line_to_github_step_summary(tmp_path, monkeypatch):
+    """End-to-end: generate_report() itself must call find_run_photos() per row and
+    feed those exact resolved paths into find_vlm_canary_results() — not a fresh,
+    independent time-window match — and the result must reach the real
+    $GITHUB_STEP_SUMMARY output. Mirrors test_generate_report_embeds_matching_photo's
+    established technique for landing a fake photo inside the row's own time window."""
+    summary_file = tmp_path / "step_summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_file))
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission2_red", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="hil_jetson")
+    import sqlite3
+    conn = sqlite3.connect(db)
+    ts = conn.execute("SELECT timestamp FROM runs WHERE id = ?", (run_id,)).fetchone()[0]
+    conn.close()
+    photo_dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
+    photo_name = f"reaction_red_{(photo_dt - timedelta(seconds=5)).strftime('%Y%m%d_%H%M%S')}.png"
+    photo_dir = tmp_path / "photos"
+    photo_dir.mkdir()
+    from PIL import Image as PILImage
+    photo_path = str(photo_dir / photo_name)
+    PILImage.new("RGB", (4, 4), color=(200, 0, 0)).save(photo_path)
+
+    from tools.vlm_canary import log_vlm_canary_result
+    log_vlm_canary_result('red', photo_path, 'moondream:1.8b', answer='a red ball', db_path=db)
+
+    from tools.generate_test_report import generate_report
+    out = str(tmp_path / "report.pdf")
+    generate_report("hil_jetson", ["mission2_red"], db_path=db, output_path=out,
+                    photo_dir=str(photo_dir))
+
+    assert "🔍 On-device VLM canary" in summary_file.read_text()
+    assert "a red ball" in summary_file.read_text()
+
+
 # ── Piece 6: --stage as a declared alternative to --runner-type/--scenario ─────────────
 
 

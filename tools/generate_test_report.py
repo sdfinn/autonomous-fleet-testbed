@@ -23,6 +23,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 from tools.baseline_monitor import check_run  # noqa: E402
 from tools.telemetry_logger import DB_PATH, PHOTO_DIR  # noqa: E402
+from tools.vlm_canary import find_vlm_canary_results  # noqa: E402
 
 REPORT_PATH = os.getenv(
     "REPORT_PATH",
@@ -103,9 +104,16 @@ def find_run_photos(row_timestamp: str, photo_dir: str = PHOTO_DIR,
 
 
 def build_job_summary(runner_type: str, rows: list, reports_by_row_id: dict,
-                       any_flagged: bool, evidence_artifact: str = None) -> str:
+                       any_flagged: bool, evidence_artifact: str = None,
+                       vlm_canary_by_row_id: dict = None) -> str:
     """Markdown for $GITHUB_STEP_SUMMARY — renders directly on the run's summary page,
-    so PASS/FAIL and the drift verdict are visible with zero clicks."""
+    so PASS/FAIL and the drift verdict are visible with zero clicks.
+
+    `vlm_canary_by_row_id` (2026-07-30, on-device VLM canary — see
+    docs/superpowers/specs/2026-07-30-cuda-canary-vlm-red-ball-design.md): optional
+    {row_id: [{'answer', 'error', ...}]} dict from find_vlm_canary_results(). Purely
+    informational — never affects any pass/fail/drift wording above it. Defaults to
+    None so every existing caller keeps working unchanged."""
     lines = [f"## {'⚠ DRIFT DETECTED' if any_flagged else 'Report'} — {runner_type}", ""]
     for row in rows:
         lines.append(f"- **{row['scenario']}**: {row['result']}")
@@ -116,6 +124,11 @@ def build_job_summary(runner_type: str, rows: list, reports_by_row_id: dict,
                     f"  - ⚠ `{r.metric}` is {r.sigma:.1f}σ {word} baseline "
                     f"({r.current:.2f} vs {r.mean:.2f} typical)"
                 )
+        for c in (vlm_canary_by_row_id or {}).get(row["id"], []):
+            text = c.get('answer') or f"(error: {c.get('error')})"
+            lines.append(
+                f"  - 🔍 On-device VLM canary (informational only, not evaluated): {text}"
+            )
     if evidence_artifact:
         lines.append("")
         lines.append(
@@ -133,6 +146,11 @@ def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
 
     reports_by_row_id = {
         row["id"]: check_run(row["id"], db_path=db_path, config_path=config_path)
+        for row in rows
+    }
+    vlm_canary_by_row_id = {
+        row["id"]: find_vlm_canary_results(
+            find_run_photos(row["timestamp"], photo_dir=photo_dir), db_path=db_path)
         for row in rows
     }
     any_flagged = any(
@@ -205,7 +223,8 @@ def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
     if summary_path:
         with open(summary_path, "a") as f:
             f.write(build_job_summary(runner_type, rows, reports_by_row_id, any_flagged,
-                                       evidence_artifact=evidence_artifact))
+                                       evidence_artifact=evidence_artifact,
+                                       vlm_canary_by_row_id=vlm_canary_by_row_id))
 
     return output_path
 
