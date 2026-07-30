@@ -404,6 +404,46 @@ docker buildx build --platform linux/arm64 \
   "the assistant received it in a system-reminder" is NOT evidence the user saw
   anything — verify hook user-visibility by checking for `systemMessage` in its JSON
   output, not by trusting that a hook "fired successfully."
+- **CUDA/Ollama installed on the Jetson, 2026-07-30 (VLM red-ball canary,
+  `docs/superpowers/specs/2026-07-30-cuda-canary-vlm-red-ball-design.md`).** Installed
+  manually by Mike, per plan: `nvidia-jetpack 7.2-b187` (`sudo apt install
+  nvidia-jetpack` — no reflash, L4T apt sources already present from the original
+  OS-only flash), CUDA Toolkit `13.2.1-1` (`nvcc` — real version confirmed:
+  `Cuda compilation tools, release 13.2, V13.2.78`), Ollama `0.32.5` on the Jetson
+  (workstation is `0.32.0` — versions don't need to match). Model pinned:
+  `moondream:1.8b`.
+  **Gotcha 1 — `nvcc` isn't on `PATH` after `nvidia-jetpack` installs**, even though
+  the toolkit itself installed correctly (`dpkg -l | grep cuda-toolkit` shows it real).
+  Fix: `echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc`.
+  **Gotcha 2 — Ollama's install script warns `"Unsupported JetPack version detected.
+  GPU may not be supported"` on JetPack 7.2 — this is a false alarm, not a real
+  problem.** JetPack 7.2 is NEWER than what `install.sh`'s version-detection list
+  currently recognizes (native support tops out at JetPack 6.2), so the script's
+  warning is a version-list gap, not evidence of a broken GPU path. Confirmed via
+  `journalctl -u ollama`: Ollama's runner correctly skips one bundled CUDA library
+  variant (`cuda_v12`, which lacks compiled support for Orin's compute capability
+  8.7) and falls back to a working one (`cuda_v13`) — the real proof is
+  `load_tensors: offloaded 25/25 layers to GPU` and `clip_ctx: CLIP using CUDA0
+  backend` in the log, both present and correct. Don't trust the install-time warning
+  text either way — check `journalctl -u ollama | grep -iE "cuda|gpu|offload"` for
+  the real answer.
+  **Gotcha 3 — the FIRST inference call after a fresh Ollama server start is
+  dramatically slower than every call after it** (~45s vs ~4s, measured live,
+  `moondream:1.8b` on this exact board) — one-time CUDA kernel JIT compilation for
+  Orin's specific compute capability (not precompiled in the bundled library) plus
+  cold model load, not a sustained performance problem. This is why the design spec
+  calls for pre-warming (one throwaway inference call) before any timing-sensitive
+  use — see that spec's "Model choice + pre-warming" section.
+  **Gotcha 4 — the Ollama *server* install (`curl -fsSL https://ollama.com/install.sh
+  | sh`) does NOT install the `ollama` Python client package** — that's a separate,
+  additional `pip3 install ollama` (or `pip3 install --break-system-packages ollama`
+  on this Ubuntu/JetPack userland, which enforces PEP 668's
+  externally-managed-environment restriction) needed on the Jetson's bare-metal
+  system Python for any bare-metal script/tool that does `import ollama` directly
+  (confirmed live: `ModuleNotFoundError: No module named 'ollama'` until this was
+  done). **Container-mode HIL does NOT need this extra step** — `requirements-ci.txt`
+  already pins `ollama>=0.4` (added earlier for `tools/agentic_loop.py`'s Ollama
+  backend), so the arm64 Docker image already has it baked in.
 
 ## See also (moved out of this file by /doctor, 2026-07-27, context-lazy-loading pass)
 - Nav2 launch gotchas (Session 10+) — `src/nav_fleet/CLAUDE.md`
