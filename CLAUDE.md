@@ -479,6 +479,31 @@ docker buildx build --platform linux/arm64 \
   topic the SAME machine also locally publishes (e.g. via its own Gazebo bridge) proves
   nothing about cross-machine delivery — check the topic from the OTHER machine's side, or
   check a topic/node that can only exist on the remote side, to actually test the link.
+- **`ssh mike@jetson.local` stopped resolving the same day as the WiFi bring-up above — a
+  separate bug from the CycloneDDS one, root-caused 2026-07-30.** `avahi-daemon` on the
+  Jetson logged `Host name conflict, retrying with jetson-3` at boot and started
+  advertising as `jetson-3.local` instead of `jetson.local` — confirmed via `journalctl -u
+  avahi-daemon`, not a workstation-side or firewall issue (ruled out: workstation's own
+  `avahi-browse -a -t` showed real mDNS traffic from other devices on WiFi, `ip maddr show`
+  confirmed `224.0.0.251` correctly joined on the Ethernet interface both sides, and
+  `239.255.0.1` — a DIFFERENT multicast group, CycloneDDS's own — was independently proven
+  working on that exact same Ethernet link at that exact same time, ruling out "multicast is
+  blocked on this interface" as a category). **Root cause: a boot-time race, specific to
+  having Ethernet AND WiFi both come up together at avahi's own startup** — the log showed
+  IPv6 privacy/temporary addresses on `wlP1p1s0` churning (registering, withdrawing,
+  re-registering within the same second) exactly while avahi was probing for name
+  uniqueness, triggering a spurious self-conflict. Confirmed by elimination: restarting
+  avahi-daemon *after* boot (interfaces already settled) always claimed `jetson.local`
+  cleanly with zero conflict, every time. **Fix:** `use-ipv6=no` in
+  `/etc/avahi/avahi-daemon.conf`'s `[server]` section on the Jetson — this project doesn't
+  use IPv6 anywhere (SSH, ROS2/DDS are all IPv4), so removing it removes the churn that
+  triggered the boot race. Verified with a full reboot (not just a service restart): clean
+  `jetson.local` claim with zero conflict, both interfaces up together at boot, confirmed
+  both by the journal log (no `Joining mDNS multicast group on interface *.IPv6` lines at
+  all this time, vs. explicit IPv6 joins before the fix) and by a live `ping`/`ssh
+  mike@jetson.local` against the fresh boot. Not committed to git — this is a Jetson
+  OS-level config file, outside the repo; re-provisioning this exact board (or a
+  replacement) needs this step redone manually.
 
 ## See also (moved out of this file by /doctor, 2026-07-27, context-lazy-loading pass)
 - Nav2 launch gotchas (Session 10+) — `src/nav_fleet/CLAUDE.md`
