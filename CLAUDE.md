@@ -504,6 +504,37 @@ docker buildx build --platform linux/arm64 \
   mike@jetson.local` against the fresh boot. Not committed to git — this is a Jetson
   OS-level config file, outside the repo; re-provisioning this exact board (or a
   replacement) needs this step redone manually.
+  **UPDATE 2026-07-30 (same day, next power cycle): recurred with a THIRD, different
+  trigger — the `use-ipv6=no` fix above is confirmed still holding (zero IPv6 multicast
+  joins), so this is additive, not a regression of that fix.** After a full workstation +
+  Jetson power-down/power-up, `ssh mike@jetson.local` failed again
+  (`jetson-2.local` this time). `journalctl -b` (whole system, not just the avahi unit)
+  pinpointed the trigger to the exact millisecond: `systemd-timesyncd[465]: Initial clock
+  synchronization to Thu 2026-07-30 15:33:14...` fires in the SAME event-loop tick as
+  avahi's withdraw-everything/re-register-everything burst that produces `Host name
+  conflict, retrying with jetson-2` — this Jetson has no trustworthy RTC, boots showing a
+  bogus date (`Dec 31`), and only gets its first real NTP fix once WiFi associates
+  (Ethernet's DHCP hadn't even completed yet at the moment of conflict, ruling out
+  "Ethernet coming up" as this trigger, unlike what the previous entry's framing might
+  suggest for a similar-looking symptom). The abrupt `CLOCK_REALTIME` step while avahi is
+  mid-probe corrupts its own timing/scheduling and it loses a race against its own
+  in-flight re-announcement. **Fix: stop avahi from starting until the clock is already
+  synced, rather than reacting after the fact** — `sudo systemctl enable
+  systemd-time-wait-sync.service` (ships with systemd, disabled by default) plus a
+  drop-in override at `/etc/systemd/system/avahi-daemon.service.d/override.conf`
+  (`[Unit]` / `After=systemd-time-wait-sync.service` / `Wants=systemd-time-wait-sync.service`)
+  so `avahi-daemon.service` waits on it. Verified with **three consecutive full reboots**
+  (this project's bar for an intermittent-fix, `feedback_proof_bar_sizing`): zero
+  `Host name conflict` lines in any of the three, `ssh mike@jetson.local` resolved
+  immediately every time with no manual restart, CycloneDDS's `~/cyclonedds-hil.xml`
+  confirmed byte-identical throughout (this fix touches only avahi/systemd, not DDS
+  interface selection). Also not committed to git, same reason as above — two systemd
+  changes to redo on any re-provision: `systemctl enable systemd-time-wait-sync.service`
+  and the avahi-daemon.service.d override file. **Lesson: when the same user-visible
+  symptom recurs after a fix already verified by a full reboot, don't assume the old fix
+  regressed — pull the FULL system journal (not just the one unit) around the exact
+  failure timestamp first. Two unrelated root causes can produce byte-identical log
+  output (`Host name conflict, retrying with jetson-N`).**
 
 ## See also (moved out of this file by /doctor, 2026-07-27, context-lazy-loading pass)
 - Nav2 launch gotchas (Session 10+) — `src/nav_fleet/CLAUDE.md`
