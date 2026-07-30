@@ -535,6 +535,40 @@ docker buildx build --platform linux/arm64 \
   regressed — pull the FULL system journal (not just the one unit) around the exact
   failure timestamp first. Two unrelated root causes can produce byte-identical log
   output (`Host name conflict, retrying with jetson-N`).**
+- **`nvpmodel -m <id>` started demanding an interactive reboot confirmation on
+  2026-07-30, breaking `scripts/hil_stage.sh power-mode` (and therefore every
+  stage-4-hil CI run) even when setting the Jetson to the mode it was ALREADY in** —
+  `NVPM WARN: Golden image context is already created` / `Reboot required for
+  changing to this power mode: 1` / `DO YOU WANT TO REBOOT NOW?`, which a
+  non-interactive SSH/CI invocation answers with EOF, producing `NVPM ERROR: bad
+  input!` and a nonzero exit — `hil_stage.sh`'s `set -euo pipefail` (and CI's lack of
+  `|| true` on this specific step) then aborts the whole job before sync/build/mission
+  ever run, which is why a "failed HIL run" can show almost NO mission logs at all —
+  check `gh api .../jobs/<id> -q '.steps[]'` for per-step conclusions before assuming
+  the mission itself ran. **Two things ruled out before finding the real fix:** (1) a
+  leftover `jetson_clocks` diagnostic (forced CPU clocks to hardware max, MinFreq=
+  MaxFreq=1728000, never restored) was a real, separate, self-inflicted issue — found
+  via `jetson_clocks --show` still showing the stuck state — but a clean `sudo
+  reboot` fixed THAT specific problem while the nvpmodel prompt persisted unchanged,
+  proving it wasn't the (sole) cause; (2) `ollama.service` actively holding a live
+  GPU/CUDA context was a plausible read of "Golden image context" — ruled out by
+  `sudo systemctl stop ollama` then retrying `nvpmodel -m 1`, which showed the
+  identical prompt with Ollama fully stopped. **Real fix: nvpmodel tracks its own
+  internal "confirmed reboot pending" state, separate from live hardware clocks —
+  a GENERIC `sudo reboot` does NOT clear it; only letting nvpmodel drive its OWN
+  confirm-and-reboot cycle does.** Fixed by piping the confirmation directly: `echo
+  yes | ssh ... "sudo -n nvpmodel -m 1"` — nvpmodel printed `NVPM WARN: rebooting..`
+  and rebooted itself; after that reboot, `nvpmodel -m 1` returned cleanly (`rc=0`,
+  no output) twice in a row, non-interactively, matching the behavior every prior
+  session had relied on. Exact trigger not fully certain — most likely the JetPack/
+  CUDA install earlier the same day (`nvidia-jetpack 7.2-b187`) initialized the GPU
+  driver on this board for the first time ever and set this pending-reboot flag as a
+  one-time side effect, needing exactly one nvpmodel-confirmed reboot to clear (apt
+  history shows the install itself never touched `nvidia-l4t-nvpmodel`, the package
+  that actually owns `/usr/sbin/nvpmodel`, ruling out a package-version change as the
+  direct cause). **If this recurs, the fix is the same one-line `echo yes | ssh ...
+  nvpmodel -m <id>` — don't reach for a plain reboot or restart-a-service guess
+  first**, both were tried and ruled out this time.
 
 ## See also (moved out of this file by /doctor, 2026-07-27, context-lazy-loading pass)
 - Nav2 launch gotchas (Session 10+) — `src/nav_fleet/CLAUDE.md`
