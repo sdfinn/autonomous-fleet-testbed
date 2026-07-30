@@ -961,7 +961,7 @@ home_base") or use generate_world_variant to propose a harder obstacle layout.""
 Respond with ONLY a single JSON object (no markdown fences, no other text) in
 exactly this shape:
 {
-  "analysis": "<plain-language explanation of what's flagged and why, for a human reader>",
+  "analysis": "<a markdown bullet list, one '- ' line per flagged metric or issue, each explaining what's flagged and why in plain language for a human reader, lines joined with \\n inside this JSON string — do not merge separate issues into a single paragraph>",
   "recommendations": [
     {
       "tool": "propose_nav_param_change" | "propose_mission_plan" | "generate_world_variant",

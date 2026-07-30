@@ -328,6 +328,17 @@ Claude is working with files under this directory.
   recommendations rendered correctly in the Summary — the first fully clean parse
   on the very first live click of this redesign, vs. 5-of-8 misses under the old
   prose-parsing approach.
+  **Follow-up same day:** Mike flagged that the raw `analysis` text had gone from
+  itemized (old free-text prose often had its own markdown headers/bullets) to one
+  flowing paragraph — a side effect of the JSON envelope's `"analysis": "<plain-
+  language explanation...>"` field description not asking for any structure, not a
+  deliberate choice. Fixed by changing that field's description to ask for a
+  markdown bullet list (`"- "` per flagged metric/issue, `\n`-joined inside the JSON
+  string) — prompt-text-only change, no parsing logic touched, since `analysis` was
+  always displayed via `st.markdown()` as-is. Note: plain `\n` alone would NOT have
+  worked — CommonMark collapses single newlines in `st.markdown()`, but consecutive
+  `- ` list lines render correctly without needing blank lines between them, which is
+  why bullets (not just newline-separated sentences) were the actual fix.
 - `diagnosis_log.py` — 2026-07-29: auto-log for every `agentic_loop.diagnose()` call,
   same `fleet_runs.db`. `init_db()`/`log_diagnosis(**kwargs) -> diagnosis_id` mirror
   `telemetry_logger.py`'s `runs`/`steps` two-table shape: one `ai_diagnoses` row per
