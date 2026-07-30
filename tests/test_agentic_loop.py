@@ -116,6 +116,35 @@ def test_diagnose_prompt_requires_every_recommendation_as_a_tool_call(monkeypatc
     assert "as many tools as you have recommendations" in prompt_text.lower()
 
 
+def test_diagnose_prompt_requests_json_envelope_when_offer_tools_false(monkeypatch, tmp_path):
+    """2026-07-29 JSON-envelope redesign: the offer_tools=False path (dashboard)
+    must ask for a single JSON envelope, not tool calls — the old instruction
+    ('submit it as its own tool call') was already known-stale on this path (see
+    tools/CLAUDE.md's round-4 'honest loose end' note) since no tool-calling option
+    is ever offered here; this closes that gap instead of just working around it."""
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+
+    captured = {}
+
+    def _fake_create(**kwargs):
+        captured["messages"] = kwargs["messages"]
+        return _FakeResponse()
+
+    monkeypatch.setattr(agentic_loop.client.messages, "create", _fake_create)
+
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS",
+                "sim_engine": "gazebo"}
+    agentic_loop.diagnose(run_data, db_path=db, backend='claude', offer_tools=False)
+
+    prompt_text = captured["messages"][0]["content"]
+    assert '"analysis"' in prompt_text
+    assert '"recommendations"' in prompt_text
+    assert "own tool call" not in prompt_text
+
+
 def test_diagnose_auto_logs_a_diagnosis_row(monkeypatch, tmp_path):
     """2026-07-29 design: every diagnose() call auto-logs, no button, no separate
     save action — same lifecycle as telemetry_logger.log_run()."""
@@ -204,6 +233,28 @@ def test_diagnose_logs_ollama_model_name(monkeypatch, tmp_path):
     row = sqlite3.connect(db).execute(
         "SELECT backend, model_name FROM ai_diagnoses ORDER BY id DESC LIMIT 1").fetchone()
     assert row == ('ollama', agentic_loop.OLLAMA_MODEL)
+
+
+def test_diagnose_logs_override_model_name(monkeypatch, tmp_path):
+    db = str(tmp_path / "t.db")
+    init_db(db)
+    run_id = log_run(scenario="mission1", steps=5, final_x=0.0, final_y=0.0,
+                      result="PASS", step_log=[], db_path=db, runner_type="local")
+    captured = {}
+
+    def _fake_diagnose_ollama(prompt, **kw):
+        captured.update(kw)
+        return agentic_loop._DiagnosisResponse(content=[])
+
+    monkeypatch.setattr(agentic_loop, "_diagnose_ollama", _fake_diagnose_ollama)
+
+    run_data = {"id": run_id, "scenario": "mission1", "result": "PASS", "sim_engine": "gazebo"}
+    agentic_loop.diagnose(run_data, db_path=db, backend='ollama', model_name='qwen2.5:32b')
+
+    assert captured['model_name'] == 'qwen2.5:32b'
+    row = sqlite3.connect(db).execute(
+        "SELECT backend, model_name FROM ai_diagnoses ORDER BY id DESC LIMIT 1").fetchone()
+    assert row == ('ollama', 'qwen2.5:32b')
 
 
 def test_diagnose_logs_prose_only_recommendations_as_extracted_items(monkeypatch, tmp_path):
@@ -306,12 +357,21 @@ def test_diagnose_ollama_omits_tools_when_offer_tools_false(monkeypatch):
     """2026-07-29, 4th-round simplification: the dashboard no longer wants the model
     offered any tools at all — plain free text only, no native tool-calling attempt,
     no JSON-fallback retry (nothing to retry from since no tool call was ever
-    possible)."""
+    possible).
+
+    Redesigned same day (JSON-envelope): 'plain free text only' now means a single
+    JSON envelope ({"analysis": ..., "recommendations": [...]}) requested via
+    Ollama's format='json' grammar-constrained decoding — not literally unstructured
+    prose. This replaced best-effort multi-format prose parsing on the dashboard's
+    path after a live comparison across 8 models found 5 of 8 produced a Summary
+    that contradicted the raw text next to it (see
+    docs/local-llm-diagnosis-model-comparison-2026-07-29.md)."""
     captured = {}
 
     def _fake_chat(**kwargs):
         captured.update(kwargs)
-        return type('R', (), {'message': type('M', (), {'content': 'just analysis text'})()})()
+        content = json.dumps({'analysis': 'just analysis text', 'recommendations': []})
+        return type('R', (), {'message': type('M', (), {'content': content})()})()
 
     monkeypatch.setattr(agentic_loop.ollama, 'chat', _fake_chat)
     monkeypatch.setattr(agentic_loop, '_diagnose_ollama_json_fallback',
@@ -321,8 +381,147 @@ def test_diagnose_ollama_omits_tools_when_offer_tools_false(monkeypatch):
     result = agentic_loop._diagnose_ollama('irrelevant prompt', offer_tools=False)
 
     assert 'tools' not in captured
+    assert captured['format'] == 'json'
     assert result.content[0].type == 'text'
     assert result.content[0].text == 'just analysis text'
+    assert result.recommendations == []
+
+
+def test_diagnose_ollama_uses_default_model_when_no_override(monkeypatch):
+    captured = {}
+
+    def _fake_chat(**kwargs):
+        captured.update(kwargs)
+        content = json.dumps({'analysis': 'text', 'recommendations': []})
+        return type('R', (), {'message': type('M', (), {'content': content})()})()
+
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', _fake_chat)
+
+    agentic_loop._diagnose_ollama('irrelevant prompt', offer_tools=False)
+
+    assert captured['model'] == agentic_loop.OLLAMA_MODEL
+
+
+def test_diagnose_ollama_uses_override_model_name(monkeypatch):
+    """2026-07-29: 'Experimental AI' dashboard button — lets a diagnose() call use a
+    different local Ollama model than the configured default, for side-by-side
+    comparison (same pipeline, different model)."""
+    captured = {}
+
+    def _fake_chat(**kwargs):
+        captured.update(kwargs)
+        content = json.dumps({'analysis': 'text', 'recommendations': []})
+        return type('R', (), {'message': type('M', (), {'content': content})()})()
+
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', _fake_chat)
+
+    agentic_loop._diagnose_ollama('irrelevant prompt', offer_tools=False, model_name='qwen2.5:32b')
+
+    assert captured['model'] == 'qwen2.5:32b'
+
+
+def test_parse_json_envelope_response_extracts_analysis_and_recommendations():
+    content = json.dumps({
+        'analysis': 'Position error is flagged.',
+        'recommendations': [
+            {'tool': 'propose_nav_param_change', 'param_path': 'x', 'proposed_value': '1',
+             'rationale': 'r'},
+        ],
+    })
+
+    result = agentic_loop._parse_json_envelope_response(content, 'phi4')
+
+    assert result.content[0].text == 'Position error is flagged.'
+    assert result.recommendations == [
+        {'tool': 'propose_nav_param_change', 'param_path': 'x', 'proposed_value': '1',
+         'rationale': 'r'},
+    ]
+
+
+def test_parse_json_envelope_response_handles_missing_recommendations_key():
+    content = json.dumps({'analysis': 'x'})
+
+    result = agentic_loop._parse_json_envelope_response(content, 'phi4')
+
+    assert result.recommendations == []
+
+
+def test_parse_json_envelope_response_handles_malformed_json_gracefully():
+    """format='json' grammar-constrains the decoder, so this should be rare — but
+    the envelope's SHAPE isn't guaranteed, only its syntax. This path must degrade
+    gracefully (empty analysis/recommendations), never raise — an AI response
+    format problem must never crash the dashboard page."""
+    result = agentic_loop._parse_json_envelope_response('not json at all {{{', 'phi4')
+
+    assert result.content == []
+    assert result.recommendations == []
+
+
+def test_parse_json_envelope_response_ignores_non_dict_items_in_recommendations():
+    content = json.dumps({'analysis': 'x', 'recommendations': ['not a dict', 5, {'tool': 'ok'}]})
+
+    result = agentic_loop._parse_json_envelope_response(content, 'phi4')
+
+    assert result.recommendations == [{'tool': 'ok'}]
+
+
+def test_parse_json_envelope_response_handles_empty_content():
+    result = agentic_loop._parse_json_envelope_response('', 'phi4')
+
+    assert result.content == []
+    assert result.recommendations == []
+
+
+def test_diagnose_ollama_override_model_name_used_with_tools_too(monkeypatch):
+    captured = {}
+    fake_response = type('R', (), {'message': type('M', (), {
+        'content': None, 'tool_calls': [
+            type('C', (), {'function': type('F', (), {
+                'name': 'propose_mission_plan',
+                'arguments': {'mission_description': 'd', 'goals': [], 'rationale': 'r'},
+            })()})()],
+    })()})()
+
+    def _fake_chat(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', _fake_chat)
+
+    agentic_loop._diagnose_ollama('irrelevant prompt', model_name='qwen2.5:32b')
+
+    assert captured['model'] == 'qwen2.5:32b'
+
+
+def test_diagnose_ollama_error_message_reflects_override_model(monkeypatch):
+    def _fake_chat(**kwargs):
+        raise Exception('model "qwen2.5:32b" not found, try pulling it first')
+
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', _fake_chat)
+
+    with pytest.raises(RuntimeError, match='ollama pull qwen2.5:32b'):
+        agentic_loop._diagnose_ollama('irrelevant prompt', offer_tools=False, model_name='qwen2.5:32b')
+
+
+def test_diagnose_ollama_json_fallback_uses_override_model(monkeypatch):
+    """The JSON-fallback retry path (native tool-calling returned nothing) must also
+    use the override model, not silently fall back to the configured default."""
+    captured_models = []
+
+    def _fake_chat(**kwargs):
+        captured_models.append(kwargs.get('model'))
+        if 'format' not in kwargs:
+            return type('R', (), {'message': type('M', (), {
+                'content': 'no tool call here', 'tool_calls': []})()})()
+        return type('R', (), {'message': type('M', (), {
+            'content': '{"tool": "propose_mission_plan", "input": '
+                       '{"mission_description": "d", "goals": [], "rationale": "r"}}'})()})()
+
+    monkeypatch.setattr(agentic_loop.ollama, 'chat', _fake_chat)
+
+    agentic_loop._diagnose_ollama('irrelevant prompt', model_name='qwen2.5:32b')
+
+    assert captured_models == ['qwen2.5:32b', 'qwen2.5:32b']
 
 
 def test_diagnose_ollama_returns_tool_use_block(monkeypatch):
@@ -630,6 +829,46 @@ def test_diagnose_offer_tools_defaults_to_true(monkeypatch, tmp_path):
     agentic_loop.diagnose(run_data, db_path=db, backend="claude")  # offer_tools omitted
 
     assert 'tools' in captured
+
+
+def test_diagnose_claude_parses_json_envelope_when_offer_tools_false(monkeypatch):
+    """2026-07-29 JSON-envelope redesign: Claude has no format='json' equivalent in
+    this simple messages.create() call, so enforcement here is prompt-instruction-
+    only (Claude's own strong instruction-following) — parsed the same way as the
+    Ollama path via _parse_json_envelope_response, same graceful-degradation
+    behavior on a malformed response."""
+    content = json.dumps({
+        'analysis': 'Position error is flagged.',
+        'recommendations': [{'tool': 'propose_mission_plan', 'rationale': 'r'}],
+    })
+    fake_block = type('B', (), {'type': 'text', 'text': content})()
+    fake_response = type('R', (), {'content': [fake_block]})()
+
+    monkeypatch.setattr(agentic_loop.client.messages, 'create', lambda **kw: fake_response)
+
+    result = agentic_loop._diagnose_claude('irrelevant prompt', offer_tools=False)
+
+    assert result.content[0].text == 'Position error is flagged.'
+    assert result.recommendations == [{'tool': 'propose_mission_plan', 'rationale': 'r'}]
+
+
+def test_evaluate_diagnosis_items_includes_structured_recommendations_from_json_envelope():
+    """2026-07-29: evaluate_diagnosis_items (used by diagnose()'s auto-log,
+    regardless of offer_tools) must also pick up recommendations that arrived via
+    the JSON-envelope path (response.recommendations), not just tool_use blocks and
+    prose-extracted items — otherwise the auto-log would show 0 items for every
+    offer_tools=False call even when the model proposed something."""
+    response = agentic_loop._DiagnosisResponse(
+        content=[], recommendations=[
+            {'tool': 'propose_nav_param_change', 'param_path': 'rotate_to_heading_angular_vel',
+             'proposed_value': '0.8', 'rationale': 'r'},
+        ])
+
+    items = agentic_loop.evaluate_diagnosis_items(response)
+
+    assert len(items) == 1
+    assert items[0]['source'] == 'structured'
+    assert items[0]['tool_name'] == 'propose_nav_param_change'
 
 
 def test_evaluate_diagnosis_items_flags_value_mismatch_as_bad():
@@ -1228,7 +1467,7 @@ def test_summarize_diagnosis_includes_conflict_notes():
 
 
 def test_describe_potential_changes_no_matches():
-    lines = agentic_loop.describe_potential_changes('just some general discussion')
+    lines = agentic_loop.describe_potential_changes([])
 
     assert lines == ['No specific changes were identified in the analysis above.']
 
@@ -1240,7 +1479,20 @@ def test_describe_potential_changes_no_text():
 
 
 def test_describe_potential_changes_nav_param_plain_language():
-    lines = agentic_loop.describe_potential_changes(_REAL_KWARGS_STYLE_ANALYSIS_TEXT)
+    """2026-07-29 JSON-envelope redesign: describe_potential_changes now consumes
+    already-structured recommendations from the JSON-envelope response (see
+    _parse_json_envelope_response) instead of best-effort-parsing them out of prose
+    — no more format guessing on this path."""
+    recommendations = [
+        {'tool': 'propose_nav_param_change', 'param_path': 'local_costmap.update_frequency',
+         'proposed_value': '10.0', 'rationale': 'Odom Hz is low.'},
+        {'tool': 'propose_mission_plan', 'mission_description': 'Visit the bedroom then desk.',
+         'rationale': 'Broader coverage.'},
+        {'tool': 'generate_world_variant', 'variant_name': 'harder_world',
+         'rationale': 'More obstacles.'},
+    ]
+
+    lines = agentic_loop.describe_potential_changes(recommendations)
 
     assert len(lines) == 3
     # No tool names, no JSON, no verdicts anywhere in the output.
@@ -1252,25 +1504,42 @@ def test_describe_potential_changes_nav_param_plain_language():
 
 
 def test_describe_potential_changes_includes_title_and_rationale():
-    lines = agentic_loop.describe_potential_changes(_REAL_KWARGS_STYLE_ANALYSIS_TEXT)
+    """The model can optionally state its own 'title' field directly in the JSON
+    envelope now, rather than one being best-effort-guessed from nearby prose."""
+    recommendations = [
+        {'tool': 'propose_nav_param_change', 'title': 'Improve Odometry Frequency',
+         'param_path': 'local_costmap.update_frequency', 'proposed_value': '10.0',
+         'rationale': 'Odom Hz is low.'},
+    ]
+
+    lines = agentic_loop.describe_potential_changes(recommendations)
 
     assert any('Improve Odometry Frequency' in line for line in lines)
     assert any('local_costmap.update_frequency' in line and '10.0' in line for line in lines)
 
 
 def test_describe_potential_changes_mission_and_world_variant_phrasing():
-    lines = agentic_loop.describe_potential_changes(_REAL_KWARGS_STYLE_ANALYSIS_TEXT)
+    recommendations = [
+        {'tool': 'propose_mission_plan', 'mission_description': 'Visit the bedroom then desk.',
+         'rationale': 'Broader coverage.'},
+    ]
+
+    lines = agentic_loop.describe_potential_changes(recommendations)
 
     joined = ' '.join(lines)
     assert 'mission' in joined.lower()
 
 
-def test_describe_potential_changes_falls_back_to_raw_text():
-    lines = agentic_loop.describe_potential_changes(_REAL_COLON_STYLE_ANALYSIS_TEXT)
+def test_describe_potential_changes_shows_a_line_even_for_a_sparse_recommendation():
+    """Existence stays visible even when a recommendation carries almost no
+    detail (the JSON-envelope equivalent of the old prose 'unparseable call still
+    produces a line' guarantee) — no crash, no silently dropped item."""
+    recommendations = [{'tool': 'propose_mission_plan'}]
 
-    # The unparseable propose_mission_plan(home_base hallway_west ...) call still
-    # produces a line — existence stays visible even without clean field extraction.
-    assert len(lines) == 4
+    lines = agentic_loop.describe_potential_changes(recommendations)
+
+    assert len(lines) == 1
+    assert lines[0]
 
 
 def test_normalize_extracted_fields_preserves_unrecognized_keys():
@@ -1305,18 +1574,25 @@ def test_normalize_extracted_fields_removes_raw_keys_once_consumed_by_an_alias()
 def test_describe_potential_changes_no_duplicate_value_in_parentheses():
     """Reproduces the exact live incident: real param_path/proposed_value already
     shown in the main sentence must not ALSO appear in a redundant '(parameter=...,
-    value=...)' parenthetical."""
-    text = '{"tool": "propose_nav_param_change", "parameter": "local_costmap.width", "value": 5}'
+    value=...)' parenthetical. describe_potential_changes still runs recommendation
+    dicts through _normalize_extracted_fields's existing alias/dedup logic (a model
+    that ignores the requested field names and writes 'parameter'/'value' instead of
+    'param_path'/'proposed_value' is still handled), it just no longer needs to find
+    those pairs by regex-scanning prose first."""
+    recommendations = [{'tool': 'propose_nav_param_change',
+                         'parameter': 'local_costmap.width', 'value': 5}]
 
-    lines = agentic_loop.describe_potential_changes(text)
+    lines = agentic_loop.describe_potential_changes(recommendations)
 
     assert lines == ['A parameter change was mentioned: local_costmap.width → 5.']
 
 
 def test_describe_potential_changes_shows_proposed_value_alone_when_param_path_missing():
-    text = ('{"tool": "propose_nav_param_change", "value": 6.0, '
-            '"target": "local_costmap.width"}')
-    lines = agentic_loop.describe_potential_changes(text)
+    recommendations = [{'tool': 'propose_nav_param_change', 'value': 6.0,
+                         'target': 'local_costmap.width'}]  # 'target' isn't a
+    # recognized param_path alias — param_path stays unset, proposed_value aliases
+    # from 'value'.
+    lines = agentic_loop.describe_potential_changes(recommendations)
 
     assert len(lines) == 1
     assert lines[0] != 'A parameter change was mentioned.'  # not the bare/empty case
@@ -1324,9 +1600,9 @@ def test_describe_potential_changes_shows_proposed_value_alone_when_param_path_m
 
 
 def test_describe_potential_changes_shows_unrecognized_fields_instead_of_going_silent():
-    text = ('{"tool": "propose_mission_plan", "destination_sequence": '
-            '["bedroom_goal", "desk"]}')
-    lines = agentic_loop.describe_potential_changes(text)
+    recommendations = [{'tool': 'propose_mission_plan',
+                         'destination_sequence': ['bedroom_goal', 'desk']}]
+    lines = agentic_loop.describe_potential_changes(recommendations)
 
     assert len(lines) == 1
     assert lines[0] != 'A mission plan was mentioned.'

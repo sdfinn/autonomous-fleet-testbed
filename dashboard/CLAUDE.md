@@ -47,7 +47,18 @@ pass) — loads only when Claude is working with files under this directory.
      confirming via direct back-and-forth that this reads as "internal machinery,"
      not something a user needs to see. The button call passes `offer_tools=False`
      (see `tools/CLAUDE.md`'s `agentic_loop.py` entry) — the model is never given
-     tools to call on this specific request at all.
+     tools to call on this specific request at all. **Data source changed 2026-07-29
+     (JSON-envelope redesign):** `describe_potential_changes()` now takes
+     `response.recommendations` (an already-parsed, structured list) instead of the
+     raw analysis text — the dashboard call site is `describe_potential_changes(
+     getattr(response, 'recommendations', []))`, not `describe_potential_changes(
+     analysis_text)`. This followed a live comparison across 8 local models that
+     found 5 of 8 produced a Summary flatly contradicting the raw text next to it
+     under the old best-effort prose-parsing approach — see
+     `docs/local-llm-diagnosis-model-comparison-2026-07-29.md` and
+     `tools/CLAUDE.md`'s `agentic_loop.py` entry for the full redesign. The visible
+     shape of the page (two sections, same headings, same plain-language style) is
+     unchanged — only the reliability of what lands in the Summary changed.
 
   **Rounds 1-3 (superseded, kept here only as history — do not treat as current
   behavior):** round 1 shipped a two-section layout (raw text, then a separate

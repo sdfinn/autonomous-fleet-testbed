@@ -265,10 +265,69 @@ Claude is working with files under this directory.
   recognized format that round — separate, already-known variability, not this
   bug) plus the exact-field-name unit test.
 
-  **Heads-up, not built:** Mike expects to ask for a second "deep dive" dashboard
-  button running the same diagnosis with a more capable model for comparison —
-  nothing here blocks it (`diagnose()` already takes `backend=`, `OLLAMA_MODEL` picks
-  the model), just not exposed as a second button yet.
+  **Built 2026-07-29 (same day as flagged above):** the second "deep dive" dashboard
+  button — `dashboard/app.py`'s "Experimental AI — May take a long time", using
+  `diagnose()`'s existing `model_name=` override, no plumbing changes needed. Led to
+  a full live comparison across 8 local Ollama models (both buttons, same real run)
+  — full table, methodology, and findings in
+  `docs/local-llm-diagnosis-model-comparison-2026-07-29.md`. Headline finding: every
+  model produced a different, mostly-unparseable prose format — 5 of 8 runs left the
+  Summary section flatly contradicting the raw text above it. **Final model pick,
+  both buttons wired accordingly:** `PRIMARY_MODEL` (default "Diagnose with AI") =
+  Phi-4 14B — fast, no fabrications found, best reasoning transparency in its speed
+  class. `EXPERIMENTAL_MODEL` ("Experimental AI") = Llama 3.3 70B — best grounding of
+  the whole comparison, ~4min latency acceptable for a button labeled as a slow
+  deep-dive.
+
+  **JSON-envelope redesign, built same day, directly off the comparison's own
+  evidence.** The `offer_tools=False` path's prompt now asks for exactly one
+  grammar-constrained JSON object instead of free-text prose with embedded
+  recommendations: `{"analysis": "...", "recommendations": [{"tool": ..., "title":
+  ..., "param_path": ..., "proposed_value": ..., "rationale": ..., ...}]}`. Ollama's
+  side uses `format='json'` (the same grammar-constrained decoding mechanism that
+  already fixed the original tool-call bug, see above) via a new `format=` param on
+  `_call_ollama_chat`; Claude's side (no equivalent enforcement in a plain
+  `messages.create()` call) relies on prompt-instruction-following only, parsed the
+  same way. Both funnel through **`_parse_json_envelope_response(content,
+  used_model)`** (new): `json.loads()`, degrading gracefully — never raising — to an
+  empty analysis/empty recommendations on malformed JSON or an unexpected shape,
+  since an AI response format problem must never crash the dashboard page.
+  `_DiagnosisResponse` gained a `recommendations` field (default `[]`, only
+  populated on this path) to carry the parsed list alongside the usual `content`
+  text blocks.
+
+  **`describe_potential_changes()`'s signature changed** from `(analysis_text)` to
+  `(recommendations)` — it now consumes the already-structured list directly instead
+  of best-effort-parsing it out of prose. It still runs each recommendation through
+  `_normalize_extracted_fields` (the existing alias/dedup safety net — a model can
+  still write `"parameter"` instead of `"param_path"` even under a JSON contract, as
+  tonight's comparison showed more than once) — only the unreliable FORMAT-GUESSING
+  step is gone, not the field-name safety net. `_describe_one_change` is unchanged,
+  reused as-is.
+
+  **`extract_prose_recommendations()` and everything under it (the "7 formats" code
+  — balanced-paren/brace scanning, kwargs/colon parsing, title-guessing) is
+  deliberately NOT deleted.** `evaluate_diagnosis_items()` (the CLI's own
+  `offer_tools=True` path, `run_loop()`) still calls it to catch recommendations the
+  model describes in prose but never formally submits as a tool call — a real,
+  separately-motivated capability from Round 3 (see above) that has nothing to do
+  with the dashboard's JSON-envelope path. `evaluate_diagnosis_items()` also gained a
+  third item source, `'structured'`, reading `response.recommendations` when
+  present, so `diagnose()`'s auto-log stays accurate for `offer_tools=False` calls
+  too — without this, the log would show 0 items for every dashboard call even when
+  the model proposed something, since the JSON path's `analysis` text no longer has
+  recommendations embedded in it for prose-extraction to find.
+
+  16 new/changed tests (104 total in `tests/test_agentic_loop.py`), TDD throughout —
+  RED confirmed (16 failures, all expected) before implementing, GREEN after (104
+  passed), full project suite re-run clean (399 passed). Verified live via a running
+  Streamlit instance + Playwright click against `phi4` (the fast button, ~12s): raw
+  analysis text came back clean prose with no embedded JSON (a free side-benefit —
+  the model no longer has anywhere to embed its own "Recommendations" heading inside
+  the analysis text, since recommendations are a separate JSON field now), and all 4
+  recommendations rendered correctly in the Summary — the first fully clean parse
+  on the very first live click of this redesign, vs. 5-of-8 misses under the old
+  prose-parsing approach.
 - `diagnosis_log.py` — 2026-07-29: auto-log for every `agentic_loop.diagnose()` call,
   same `fleet_runs.db`. `init_db()`/`log_diagnosis(**kwargs) -> diagnosis_id` mirror
   `telemetry_logger.py`'s `runs`/`steps` two-table shape: one `ai_diagnoses` row per

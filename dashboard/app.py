@@ -11,6 +11,7 @@ tools.goal_zones instead of a hardcoded rectangle (CR-12).
 import os
 import sqlite3
 import sys
+import time
 
 import pandas as pd
 import plotly.express as px
@@ -346,10 +347,68 @@ with tab5:
             '(a local Ollama model by default, or Claude) for a proposed diagnosis. '
             'Logs this diagnosis automatically for future review — applies nothing.'
         )
-        if st.button('Diagnose with AI'):
-            from tools.agentic_loop import describe_potential_changes, diagnose  # local
-            # import: avoid constructing anthropic.Anthropic() (module-level in
-            # agentic_loop.py) unless this button is actually clicked.
+        # 2026-07-29: second "Experimental AI" button, same pipeline, different
+        # Ollama model — for side-by-side comparison of response quality AND
+        # response time (Mike's explicit ask). PRIMARY_MODEL/EXPERIMENTAL_MODEL
+        # are the only things that change between the two buttons; everything
+        # else (offer_tools=False, describe_potential_changes(), rendering) is
+        # 100% shared code, not duplicated, so the two paths can't drift out of
+        # sync with each other. Landed here 2026-07-29 after a full live
+        # comparison across 8 local models (see
+        # docs/local-llm-diagnosis-model-comparison-2026-07-29.md for the full
+        # table, methodology, and decision writeup) — PRIMARY_MODEL went
+        # qwen2.5:14b-instruct -> gemma2:27b -> phi4; EXPERIMENTAL_MODEL went
+        # qwen2.5:32b -> llama3.3:70b -> llama3.1:8b -> gemma3:12b ->
+        # gemma3:27b -> llama3.3:70b -> gemma2:27b (2026-07-29, Mike's
+        # explicit call after the JSON-envelope redesign landed — swapped off
+        # Llama 3.3 70B's ~4min latency and thinner-under-JSON-constraint
+        # output, discussed live, in favor of Gemma 2 27B's still-strong
+        # grounding at a fraction of the time, ~45s in the original
+        # comparison).
+        PRIMARY_MODEL = 'phi4'
+        EXPERIMENTAL_MODEL = 'gemma2:27b'
+
+        def _render_diagnosis_result(response, model_label, elapsed_seconds):
+            from tools.agentic_loop import describe_potential_changes  # local import,
+            # same reasoning as the diagnose() import below.
+            analysis_text = '\n'.join(
+                block.text for block in response.content if block.type == 'text') or None
+
+            st.markdown(f'#### Results — `{model_label}` ({elapsed_seconds:.1f}s)')
+
+            # Distinct heading from the model's own — the model tends to write its
+            # own "Metrics Analysis"/"Recommendations" headings inside this same
+            # text, which looked like an accidental duplicate otherwise.
+            st.markdown("##### Model's Written Analysis (raw text)")
+            if analysis_text:
+                st.caption(
+                    'Shown once, unedited. Explanatory only — never programmatically '
+                    'trusted or acted on. Recommendations are requested separately as '
+                    'structured data (see Summary below), not extracted from this text.'
+                )
+                st.markdown(analysis_text)
+            else:
+                st.caption('(model gave no free-text analysis this time)')
+
+            # Plain-language only, 2026-07-29 (Mike's explicit call): no tool
+            # names, no JSON, no good/bad/unverified/conflict badges. Redesigned
+            # same day (JSON-envelope): recommendations now come from the response's
+            # own structured `recommendations` field, not best-effort-parsed out of
+            # the text above — see tools/agentic_loop.describe_potential_changes.
+            st.markdown('##### Summary')
+            for line in describe_potential_changes(getattr(response, 'recommendations', [])):
+                st.markdown(f'- {line}')
+
+        button_col1, button_col2 = st.columns(2)
+        with button_col1:
+            diagnose_clicked = st.button('Diagnose with AI')
+        with button_col2:
+            experimental_clicked = st.button('Experimental AI — May take a long time')
+
+        if diagnose_clicked or experimental_clicked:
+            from tools.agentic_loop import diagnose  # local import: avoid constructing
+            # anthropic.Anthropic() (module-level in agentic_loop.py) unless a button
+            # is actually clicked.
             visible_ids = [rid for rid in history if rid in _runs_by_id.index]
             if not visible_ids:
                 st.info('No runs in the current view to diagnose.')
@@ -360,34 +419,23 @@ with tab5:
                 latest_row = _runs_by_id.loc[latest_run_id]
                 run_data = latest_row.to_dict()
                 run_data['id'] = latest_run_id
-                with st.spinner('Asking the model...'):
+
+                model_name = EXPERIMENTAL_MODEL if experimental_clicked else PRIMARY_MODEL
+                model_label = model_name
+                spinner_text = ('Asking the experimental model — this can take '
+                                 'several minutes...' if experimental_clicked
+                                 else 'Asking the model...')
+
+                with st.spinner(spinner_text):
+                    start = time.perf_counter()
                     # offer_tools=False (2026-07-29, 4th-round simplification, Mike's
                     # explicit call): the dashboard doesn't offer the model any tools
                     # at all — plain free text only, no tool-calling concept anywhere
                     # in this page. The CLI (tools/agentic_loop.py's run_loop()) is a
                     # separate, untouched call path that still uses tools normally.
                     response = diagnose(run_data, db_path=DB_PATH, trend_context=trend_context,
-                                         source='dashboard', offer_tools=False)  # auto-logs
-                    analysis_text = '\n'.join(
-                        block.text for block in response.content if block.type == 'text') or None
+                                         source='dashboard', offer_tools=False,
+                                         model_name=model_name)  # auto-logs
+                    elapsed = time.perf_counter() - start
 
-                # Distinct heading from the model's own — the model tends to write its
-                # own "Metrics Analysis"/"Recommendations" headings inside this same
-                # text, which looked like an accidental duplicate otherwise.
-                st.markdown("#### Model's Written Analysis (raw text)")
-                if analysis_text:
-                    st.caption(
-                        'Shown once, unedited. Explanatory only — never programmatically '
-                        'trusted or acted on; anything actionable in it is extracted into '
-                        'the Summary section below.'
-                    )
-                    st.markdown(analysis_text)
-                else:
-                    st.caption('(model gave no free-text analysis this time)')
-
-                # Plain-language only, 2026-07-29 (Mike's explicit call): no tool
-                # names, no JSON, no good/bad/unverified/conflict badges — just what
-                # the pattern-matching step noticed in the text above, in sentences.
-                st.markdown('#### Summary')
-                for line in describe_potential_changes(analysis_text):
-                    st.markdown(f'- {line}')
+                _render_diagnosis_result(response, model_label, elapsed)

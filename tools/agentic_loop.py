@@ -6,7 +6,7 @@ import os
 import re
 import sqlite3
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import anthropic
@@ -152,6 +152,10 @@ class _ToolUseBlock:
 @dataclass
 class _DiagnosisResponse:
     content: list
+    # Populated only by the offer_tools=False JSON-envelope path (2026-07-29) — see
+    # _parse_json_envelope_response. Empty for the offer_tools=True tool-calling
+    # path, which reports recommendations via content's tool_use blocks instead.
+    recommendations: list = field(default_factory=list)
 
 
 def _validate_ollama_tool_proposal(name, args, tools_by_name):
@@ -177,7 +181,7 @@ def _validate_ollama_tool_proposal(name, args, tools_by_name):
         )
 
 
-def _diagnose_ollama_json_fallback(prompt, tools_by_name):
+def _diagnose_ollama_json_fallback(prompt, tools_by_name, model=None):
     """Root cause (confirmed 2026-07-29 by direct reproduction against the live
     model): qwen2.5:14b-instruct reliably invokes a tool via Ollama's native
     tool-calling for short prompts, but silently degrades to free-text-only analysis
@@ -187,7 +191,13 @@ def _diagnose_ollama_json_fallback(prompt, tools_by_name):
     decoder (format='json') holds up where native tool-calling silently drops. This
     is the 'Approach C' fallback parked in the 2026-07-28 design spec, built now that
     the validation harness (indirectly) and this live failure have shown native
-    tool-calling is unreliable for this model/prompt combination."""
+    tool-calling is unreliable for this model/prompt combination.
+
+    `model` (2026-07-29, model-comparison feature): overrides OLLAMA_MODEL for this
+    call — must match whatever model _diagnose_ollama's caller used, not silently
+    fall back to the default, or error messages would misreport which model failed.
+    """
+    used_model = model or OLLAMA_MODEL
     schema_text = json.dumps(
         {name: t['input_schema'] for name, t in tools_by_name.items()}, indent=2
     )
@@ -202,13 +212,13 @@ Tool schemas:
 
     try:
         result = ollama.chat(
-            model=OLLAMA_MODEL,
+            model=used_model,
             messages=[{'role': 'user', 'content': fallback_prompt}],
             format='json',
         )
     except Exception as exc:
         raise RuntimeError(
-            f'Ollama model {OLLAMA_MODEL!r} did not propose a tool call for this '
+            f'Ollama model {used_model!r} did not propose a tool call for this '
             f'prompt (native tool-calling returned no proposal, and the JSON-prompted '
             f'fallback failed to reach Ollama: {exc}).'
         ) from exc
@@ -217,7 +227,7 @@ Tool schemas:
         parsed = json.loads(result.message.content)
     except (json.JSONDecodeError, TypeError) as exc:
         raise RuntimeError(
-            f'Ollama model {OLLAMA_MODEL!r} did not propose a tool call for this '
+            f'Ollama model {used_model!r} did not propose a tool call for this '
             f'prompt (native tool-calling returned no proposal, and the JSON-prompted '
             f'fallback returned non-JSON content: {result.message.content!r}).'
         ) from exc
@@ -226,26 +236,34 @@ Tool schemas:
     args = parsed.get('input') if isinstance(parsed, dict) else None
     if name is None:
         raise RuntimeError(
-            f'Ollama model {OLLAMA_MODEL!r} did not propose a tool call for this '
+            f'Ollama model {used_model!r} did not propose a tool call for this '
             f'prompt (JSON-prompted fallback response had no "tool" key: {parsed!r}).'
         )
     _validate_ollama_tool_proposal(name, args, tools_by_name)
     return _ToolUseBlock(name=name, input=dict(args))
 
 
-def _call_ollama_chat(prompt, tools=None):
+def _call_ollama_chat(prompt, tools=None, model=None, format=None):
     """Shared connection-error handling for both the tools=True and offer_tools=False
-    paths through _diagnose_ollama — avoids duplicating the try/except."""
-    kwargs = dict(model=OLLAMA_MODEL, messages=[{'role': 'user', 'content': prompt}])
+    paths through _diagnose_ollama — avoids duplicating the try/except. `model`
+    (2026-07-29, model-comparison feature) overrides OLLAMA_MODEL for this call —
+    lets a caller (e.g. the dashboard's "Experimental AI" button) run the exact same
+    diagnose() pipeline against a different local model. `format` (2026-07-29,
+    JSON-envelope redesign) passes through to Ollama's grammar-constrained decoding
+    (e.g. format='json') — used by the offer_tools=False path below."""
+    used_model = model or OLLAMA_MODEL
+    kwargs = dict(model=used_model, messages=[{'role': 'user', 'content': prompt}])
     if tools is not None:
         kwargs['tools'] = tools
+    if format is not None:
+        kwargs['format'] = format
     try:
         return ollama.chat(**kwargs)
     except Exception as exc:
         if 'not found' in str(exc).lower():
             raise RuntimeError(
-                f"Model {OLLAMA_MODEL!r} isn't pulled locally — run "
-                f"`ollama pull {OLLAMA_MODEL}`."
+                f"Model {used_model!r} isn't pulled locally — run "
+                f"`ollama pull {used_model}`."
             ) from exc
         raise RuntimeError(
             "Couldn't reach Ollama — is it running? Start it with `ollama serve` "
@@ -253,20 +271,57 @@ def _call_ollama_chat(prompt, tools=None):
         ) from exc
 
 
-def _diagnose_ollama(prompt, offer_tools=True):
+def _parse_json_envelope_response(content, used_model):
+    """Parses the offer_tools=False JSON-envelope contract
+    ({"analysis": "...", "recommendations": [...]}) — 2026-07-29 redesign,
+    replacing best-effort multi-format prose parsing on this specific path after a
+    live comparison across 8 local models found 5 of 8 produced a dashboard Summary
+    that flatly contradicted the raw text next to it (see
+    docs/local-llm-diagnosis-model-comparison-2026-07-29.md). Ollama's format='json'
+    grammar-constrains the DECODER, guaranteeing syntactically valid JSON, but not
+    that the model followed our specific envelope SHAPE — this still degrades
+    gracefully (empty analysis/recommendations) rather than raising on a shape
+    mismatch or outright parse failure, since an AI response format problem must
+    never crash the dashboard page. `used_model` is accepted for signature symmetry
+    with the rest of this module's model-aware helpers; not currently used in an
+    error message since this path never raises.
+    """
+    del used_model  # not used — kept for symmetry/future error messages
+    try:
+        parsed = json.loads(content) if content else {}
+    except json.JSONDecodeError:
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+
+    analysis = parsed.get('analysis')
+    if not isinstance(analysis, str) or not analysis:
+        analysis = None
+
+    recommendations = parsed.get('recommendations')
+    if not isinstance(recommendations, list):
+        recommendations = []
+    recommendations = [r for r in recommendations if isinstance(r, dict)]
+
+    content_blocks = [_TextBlock(text=analysis)] if analysis else []
+    return _DiagnosisResponse(content=content_blocks, recommendations=recommendations)
+
+
+def _diagnose_ollama(prompt, offer_tools=True, model_name=None):
+    used_model = model_name or OLLAMA_MODEL
     if not offer_tools:
-        # 2026-07-29, 4th-round simplification: the dashboard doesn't want the model
-        # offered any tools at all — plain free text only. No native tool-calling
-        # attempt means no possibility of a tool call, so the JSON-fallback retry
-        # (which only exists to rescue a failed tool-calling attempt) doesn't apply
-        # here either — there's nothing to retry from.
-        result = _call_ollama_chat(prompt)
-        text = result.message.content or ''
-        return _DiagnosisResponse(content=[_TextBlock(text=text)] if text else [])
+        # 2026-07-29 JSON-envelope redesign: the dashboard still doesn't want the
+        # model offered any TOOLS (native tool-calling), but "plain free text only"
+        # is replaced by a single grammar-constrained JSON envelope — see
+        # _parse_json_envelope_response. No native tool-calling attempt means no
+        # possibility of a tool call, so the JSON-fallback retry (which only exists
+        # to rescue a failed tool-calling attempt) still doesn't apply here.
+        result = _call_ollama_chat(prompt, model=model_name, format='json')
+        return _parse_json_envelope_response(result.message.content or '', used_model)
 
     ollama_tools = _to_ollama_tools(TOOLS)
     tools_by_name = {t['name']: t for t in TOOLS}
-    result = _call_ollama_chat(prompt, tools=ollama_tools)
+    result = _call_ollama_chat(prompt, tools=ollama_tools, model=model_name)
 
     blocks = []
     if result.message.content:
@@ -275,7 +330,7 @@ def _diagnose_ollama(prompt, offer_tools=True):
         name = call.function.name
         if name not in tools_by_name:
             raise RuntimeError(
-                f'Ollama model {OLLAMA_MODEL!r} proposed an unknown tool '
+                f'Ollama model {used_model!r} proposed an unknown tool '
                 f'{name!r} — expected one of {sorted(tools_by_name)}.'
             )
         args = call.function.arguments
@@ -284,25 +339,25 @@ def _diagnose_ollama(prompt, offer_tools=True):
                 args = json.loads(args)
             except json.JSONDecodeError as exc:
                 raise RuntimeError(
-                    f'Ollama model {OLLAMA_MODEL!r} returned malformed tool-call '
+                    f'Ollama model {used_model!r} returned malformed tool-call '
                     f'arguments for {name!r}: {args!r}'
                 ) from exc
         if not isinstance(args, dict):
             raise RuntimeError(
-                f'Ollama model {OLLAMA_MODEL!r} returned non-object tool-call '
+                f'Ollama model {used_model!r} returned non-object tool-call '
                 f'arguments for {name!r}: {args!r}'
             )
         required = tools_by_name[name]['input_schema'].get('required', [])
         missing = [key for key in required if key not in args]
         if missing:
             raise RuntimeError(
-                f'Ollama model {OLLAMA_MODEL!r} omitted required argument(s) '
+                f'Ollama model {used_model!r} omitted required argument(s) '
                 f'{missing} for tool {name!r}: got {args!r}'
             )
         blocks.append(_ToolUseBlock(name=name, input=dict(args)))
 
     if not any(isinstance(b, _ToolUseBlock) for b in blocks):
-        blocks.append(_diagnose_ollama_json_fallback(prompt, tools_by_name))
+        blocks.append(_diagnose_ollama_json_fallback(prompt, tools_by_name, model=model_name))
     return _DiagnosisResponse(content=blocks)
 
 
@@ -381,6 +436,21 @@ def evaluate_diagnosis_items(response, nav2_params_text=None):
         evaluated = _evaluate_one_item(block.name, block.input, nav2_params_text)
         evaluated['source'] = 'submitted'
         evaluated['title'] = None
+        items.append(evaluated)
+
+    # 2026-07-29 JSON-envelope redesign: recommendations that arrived via the
+    # offer_tools=False JSON-envelope path (response.recommendations — see
+    # _parse_json_envelope_response) — a third source alongside real tool_use
+    # blocks and best-effort prose extraction below. Without this, diagnose()'s
+    # auto-log would show 0 items for every offer_tools=False call even when the
+    # model proposed something, since that path's analysis text no longer has
+    # recommendations embedded in it for extract_prose_recommendations to find.
+    for structured in getattr(response, 'recommendations', None) or []:
+        tool_name = structured.get('tool')
+        inputs = {k: v for k, v in structured.items() if k != 'tool'}
+        evaluated = _evaluate_one_item(tool_name, inputs, nav2_params_text)
+        evaluated['source'] = 'structured'
+        evaluated['title'] = structured.get('title')
         items.append(evaluated)
 
     analysis_text = '\n'.join(
@@ -557,21 +627,42 @@ def extract_prose_recommendations(analysis_text):
     return [item for _, item in matches]
 
 
-def describe_potential_changes(analysis_text):
-    """Plain-language dashboard summary (2026-07-29, 4th-round simplification —
-    Mike's explicit ask). Reuses extract_prose_recommendations()'s proven detection/
-    parsing, but the OUTPUT here is prose sentences only: no tool names, no JSON, no
-    good/bad/unverified/conflict verdicts, no submitted-vs-extracted distinction.
-    This is deliberately the DASHBOARD's own path — the CLI's evaluate_diagnosis_
-    items()/summarize_diagnosis() (badges, fact-checking, the whole tool-call
-    concept) are untouched and keep working exactly as before for run_loop().
+def describe_potential_changes(recommendations):
+    """Plain-language dashboard summary. OUTPUT is prose sentences only: no tool
+    names, no JSON, no good/bad/unverified/conflict verdicts, no submitted-vs-
+    extracted distinction. This is deliberately the DASHBOARD's own path — the
+    CLI's evaluate_diagnosis_items()/summarize_diagnosis() (badges, fact-checking,
+    the whole tool-call concept) are untouched and keep working exactly as before
+    for run_loop().
+
+    Redesigned 2026-07-29 (JSON-envelope): `recommendations` is now the ALREADY-
+    STRUCTURED list from the offer_tools=False JSON-envelope response
+    (response.recommendations — see _parse_json_envelope_response), not a raw
+    analysis_text string to best-effort-parse. extract_prose_recommendations()'s
+    regex/brace-scanning multi-format parsing is no longer used on this path — a
+    live comparison across 8 local models found 5 of 8 produced a Summary that
+    flatly contradicted the raw text next to it under the old prose-parsing
+    approach (see docs/local-llm-diagnosis-model-comparison-2026-07-29.md). Still
+    runs each recommendation's fields through _normalize_extracted_fields — the
+    same alias/dedup safety net extract_prose_recommendations always used — since a
+    model can still ignore the requested field names (e.g. write "parameter"
+    instead of "param_path") even under a JSON-envelope contract; only the
+    unreliable FORMAT-GUESSING step (finding the recommendation at all, inside free
+    text) is gone, not the field-name safety net.
 
     Returns a list of plain sentences, always non-empty.
     """
-    found = extract_prose_recommendations(analysis_text)
-    if not found:
+    if not recommendations:
         return ['No specific changes were identified in the analysis above.']
-    return [_describe_one_change(item) for item in found]
+
+    items = []
+    for rec in recommendations:
+        tool_name = rec.get('tool')
+        title = rec.get('title')
+        raw_pairs = {k: v for k, v in rec.items() if k not in ('tool', 'title')}
+        normalized = _normalize_extracted_fields(tool_name, raw_pairs, '')
+        items.append({'tool_name': tool_name, 'input': normalized, 'title': title})
+    return [_describe_one_change(item) for item in items]
 
 
 _CHANGE_KIND_PHRASE = {
@@ -769,7 +860,7 @@ def _nav_param_values_match(claimed, real):
 
 
 def diagnose(run_data, db_path=FLEET_DB, trend_context=None, backend=None, source='cli',
-             offer_tools=True):
+             offer_tools=True, model_name=None):
     """Call the configured backend (Ollama by default, or Claude — see backend=/
     AGENTIC_BACKEND) with telemetry + drift context; get structured diagnosis and
     proposed action.
@@ -781,6 +872,12 @@ def diagnose(run_data, db_path=FLEET_DB, trend_context=None, backend=None, sourc
     plain free text only, no tool-calling concept, no submitted/verified distinction.
     When False, no tools= is sent to the model at all (see _diagnose_claude/_diagnose_
     ollama) — there is no possibility of a tool_use block in the response.
+
+    `model_name` (2026-07-29, model-comparison feature): overrides OLLAMA_MODEL for
+    this call only — the dashboard's "Experimental AI" button uses this to run the
+    SAME pipeline against a different local model (e.g. qwen2.5:32b instead of the
+    configured qwen2.5:14b-instruct default), for side-by-side comparison. Ignored
+    for backend='claude' (Claude's model isn't swappable this way).
 
     Auto-logs the call to tools.diagnosis_log (2026-07-29 design) — system-driven,
     happens every time, no separate save action, same lifecycle as
@@ -835,7 +932,10 @@ one run):
     prompt += f"""
 Available named locations in this environment (use these in mission plans):
 {locations_str}
+"""
 
+    if offer_tools:
+        prompt += """
 Respond in two clearly separate parts:
 
 1. Metrics Analysis (prose): briefly explain what's flagged and why, in plain language.
@@ -851,14 +951,42 @@ it isn't submitted as its own tool call, it will not be reviewed. If nothing is 
 use propose_mission_plan with semantic location names to create a more challenging
 multi-waypoint mission (e.g. "visit the bedroom goal, then the desk, then return to
 home_base") or use generate_world_variant to propose a harder obstacle layout."""
+    else:
+        # 2026-07-29 JSON-envelope redesign: no tools are ever offered on this path
+        # (dashboard), so asking for "a tool call" (the offer_tools=True instruction
+        # above) was already known-stale here — this asks for exactly what's
+        # actually possible instead: one grammar-constrained JSON object, parsed by
+        # _parse_json_envelope_response.
+        prompt += """
+Respond with ONLY a single JSON object (no markdown fences, no other text) in
+exactly this shape:
+{
+  "analysis": "<plain-language explanation of what's flagged and why, for a human reader>",
+  "recommendations": [
+    {
+      "tool": "propose_nav_param_change" | "propose_mission_plan" | "generate_world_variant",
+      "title": "<optional short human-readable label for this recommendation>",
+      "param_path": "<dot-separated param key — propose_nav_param_change only>",
+      "current_value": "<optional — propose_nav_param_change only>",
+      "proposed_value": "<propose_nav_param_change only>",
+      "mission_description": "<propose_mission_plan only>",
+      "variant_name": "<generate_world_variant only>",
+      "rationale": "<required for every recommendation — why you're suggesting it>"
+    }
+  ]
+}
+"recommendations" may be an empty list if you truly have nothing to suggest. If
+nothing is flagged, suggest a "propose_mission_plan" using semantic location names
+for a more challenging multi-waypoint mission, or a "generate_world_variant" for a
+harder obstacle layout."""
 
     backend = backend or os.environ.get('AGENTIC_BACKEND', 'ollama')
     if backend == 'claude':
         response = _diagnose_claude(prompt, offer_tools=offer_tools)
-        model_name = 'claude-sonnet-5'
+        used_model_name = 'claude-sonnet-5'
     elif backend == 'ollama':
-        response = _diagnose_ollama(prompt, offer_tools=offer_tools)
-        model_name = OLLAMA_MODEL
+        response = _diagnose_ollama(prompt, offer_tools=offer_tools, model_name=model_name)
+        used_model_name = model_name or OLLAMA_MODEL
     else:
         raise ValueError(f"unknown AGENTIC_BACKEND {backend!r} — expected 'claude' or 'ollama'")
 
@@ -869,7 +997,7 @@ home_base") or use generate_world_variant to propose a harder obstacle layout.""
     ) or None
     conflict_notes = [i['auto_notes'] for i in items if i['auto_verdict'] == 'conflict']
     log_diagnosis(
-        backend=backend, model_name=model_name, source=source, prompt_text=prompt,
+        backend=backend, model_name=used_model_name, source=source, prompt_text=prompt,
         analysis_text=analysis_text, items=items, conflict_notes=conflict_notes or None,
         run_id=run_data.get('id'), db_path=db_path,
     )
@@ -924,7 +1052,15 @@ def _diagnose_claude(prompt, offer_tools=True):
     )
     if offer_tools:
         kwargs['tools'] = TOOLS
-    return client.messages.create(**kwargs)
+        return client.messages.create(**kwargs)
+
+    # 2026-07-29 JSON-envelope redesign: no format='json' equivalent available in
+    # this simple messages.create() call, so enforcement here is prompt-instruction-
+    # only (Claude's own strong instruction-following) rather than Ollama's
+    # grammar-constrained decoding — same graceful-degradation parsing either way.
+    response = client.messages.create(**kwargs)
+    text = ''.join(block.text for block in response.content if block.type == 'text')
+    return _parse_json_envelope_response(text, 'claude-sonnet-5')
 
 
 def apply_world_variant(layout, name):
