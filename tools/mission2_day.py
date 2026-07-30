@@ -51,6 +51,7 @@ import pathlib
 import re
 import signal
 import subprocess
+import sys
 import threading
 import time
 
@@ -635,6 +636,30 @@ def _judge_and_log_leg(name, leg, ball_xy, gt_log, ref_photos_from_prev=None):
     return ok
 
 
+def _maybe_spawn_vlm_canary(name, leg):
+    """2026-07-30 CUDA/VLM canary (docs/superpowers/specs/
+    2026-07-30-cuda-canary-vlm-red-ball-design.md): fully decoupled, fire-and-forget
+    classification of a red-reaction photo by a small on-device vision model. Spawns
+    tools/vlm_canary.py by module name only (no import of it here) and never waits on
+    the result — a broken/missing Ollama install can only ever fail INSIDE that
+    detached process, never here. Any failure even STARTING the subprocess (e.g. a
+    bad interpreter path) is caught and logged as a local warning, never raised, so
+    it can't affect this leg's judging/telemetry."""
+    if not any(e['color'] == 'red' for e in leg['reaction_events']):
+        return
+    for photo_path in leg['photos']:
+        if 'reaction_red' not in photo_path:
+            continue
+        try:
+            subprocess.Popen(
+                [sys.executable, '-m', 'tools.vlm_canary', photo_path, name],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            log.warning(f'vlm canary: could not spawn probe for {photo_path}: {exc}')
+
+
 def run_day(executor, ball_ops, ball_xy, hold_s):
     """S17 Piece 9: ONE continuous mission execution, 3 separately-judged/logged
     legs (Mike's explicit design, 2026-07-24) — no scenario-named functions, no
@@ -682,6 +707,7 @@ def run_day(executor, ball_ops, ball_xy, hold_s):
     results = {}
     for name, leg in zip(names, legs):
         results[name] = _judge_and_log_leg(name, leg, ball_xy, gt_log)
+        _maybe_spawn_vlm_canary(name, leg)
     log.info('\n=== SUMMARY ===')
     for name in names:
         log.info(f'  {name:8s}: {"PASS" if results[name] else "FAIL"}')

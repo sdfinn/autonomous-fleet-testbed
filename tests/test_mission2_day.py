@@ -767,3 +767,74 @@ def test_run_day_waits_before_stopping_the_gt_thread(monkeypatch):
     sleep_idx = finally_src.index('time.sleep(2.5)')
     stop_idx = finally_src.index('stop_evt.set()')
     assert sleep_idx < stop_idx                              # sleep happens BEFORE stop_evt.set()
+
+
+def test_maybe_spawn_vlm_canary_spawns_detached_process_on_red_reaction(monkeypatch):
+    captured = {}
+
+    def fake_popen(cmd, **kwargs):
+        captured['cmd'] = cmd
+        captured['kwargs'] = kwargs
+        return None
+    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', fake_popen)
+
+    leg = _leg(photos=['/tmp/red_reaction_red_20260730_120000.png'],
+               reaction_events=[{'color': 'red', 'reaction': 'photo_then_stop',
+                                 'truth_xy': None}])
+    mission2_day_module._maybe_spawn_vlm_canary('red', leg)
+
+    assert captured['cmd'][:3] == [mission2_day_module.sys.executable, '-m', 'tools.vlm_canary']
+    assert captured['cmd'][3] == '/tmp/red_reaction_red_20260730_120000.png'
+    assert captured['cmd'][4] == 'red'
+    assert captured['kwargs']['start_new_session'] is True
+
+
+def test_maybe_spawn_vlm_canary_does_nothing_without_a_red_reaction(monkeypatch):
+    def _boom(cmd, **kwargs):
+        raise AssertionError('must not spawn when there was no red reaction')
+    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', _boom)
+
+    leg = _leg(photos=['/tmp/mission2_marker_20260730_120000.png'], reaction_events=[])
+    mission2_day_module._maybe_spawn_vlm_canary('no_ball', leg)  # must not raise
+
+
+def test_maybe_spawn_vlm_canary_ignores_yellow_reactions(monkeypatch):
+    def _boom(cmd, **kwargs):
+        raise AssertionError('must not spawn for a yellow-only reaction')
+    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', _boom)
+
+    leg = _leg(photos=['/tmp/yellow_reaction_yellow_20260730_120000.png'],
+               reaction_events=[{'color': 'yellow', 'reaction': 'photo_then_home',
+                                 'truth_xy': None}])
+    mission2_day_module._maybe_spawn_vlm_canary('yellow', leg)  # must not raise
+
+
+def test_maybe_spawn_vlm_canary_logs_warning_on_spawn_failure_without_raising(monkeypatch):
+    def _boom(cmd, **kwargs):
+        raise OSError('no such file or directory')
+    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', _boom)
+
+    leg = _leg(photos=['/tmp/red_reaction_red_20260730_120000.png'],
+               reaction_events=[{'color': 'red', 'reaction': 'photo_then_stop',
+                                 'truth_xy': None}])
+    mission2_day_module._maybe_spawn_vlm_canary('red', leg)  # must not raise
+
+
+def test_run_day_calls_maybe_spawn_vlm_canary_once_per_leg(monkeypatch):
+    """Integration check: run_day() itself wires the hook in, for every leg —
+    doesn't assert on judging/telemetry, which the existing run_day tests already
+    cover; monkeypatches _judge_and_log_leg exactly like
+    test_run_day_operator_mode_never_starts_the_choreography_thread does."""
+    calls = []
+    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg', lambda *a, **k: True)
+    monkeypatch.setattr(mission2_day_module, '_maybe_spawn_vlm_canary',
+                        lambda name, leg: calls.append(name))
+    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+
+    class FakeExecutor:
+        def run_day(self):
+            return [_leg(), _leg(), _leg()]
+
+    ok = run_day(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
+    assert ok is True
+    assert calls == ['no_ball', 'yellow', 'red']
