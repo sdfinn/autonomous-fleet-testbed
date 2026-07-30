@@ -40,7 +40,17 @@ BALL_REMOVAL_SETTLE_S="${BALL_REMOVAL_SETTLE_S:-3}"
 # MAGICK_THREAD_LIMIT/OMP: GraphicsMagick (nav2 map_server's image loader) SIGSEGVs on the
 # Jetson's ARM build under threading — killed Nav2 twice on 2026-07-18 (once mid-day during
 # lifecycle respawn-recovery, once at startup). Single-threading it is the known workaround.
-JENV='source /opt/ros/jazzy/setup.bash && source ~/autonomous-fleet-testbed/install/setup.bash && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1'
+# CYCLONEDDS_URI (2026-07-30): CycloneDDS's default interface auto-selection picks the first
+# viable multicast-capable interface by ifindex, not necessarily the one that reaches the
+# workstation. Confirmed live via `ip maddr show`: once the Jetson's WiFi (wlP1p1s0, ifindex 2)
+# came up, CycloneDDS joined its discovery multicast group (239.255.0.1) on WiFi instead of
+# Ethernet (enP8p1s0, ifindex 5) — the workstation is only reachable via Ethernet, so cross-
+# machine discovery broke silently (Nav2 came up locally, map_server/amcl activated fine, but
+# were completely invisible from the workstation and vice versa; survived both a soft reboot
+# and a hard power cycle, since WiFi auto-reconnects and CycloneDDS re-picks it every time).
+# Fix: pin CycloneDDS explicitly to enP8p1s0 via ~/cyclonedds-hil.xml on the Jetson (see
+# CLAUDE.md's matching gotcha) — makes this immune to future interface/ifindex changes.
+JENV='source /opt/ros/jazzy/setup.bash && source ~/autonomous-fleet-testbed/install/setup.bash && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 CYCLONEDDS_URI=file://$HOME/cyclonedds-hil.xml MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1'
 
 case "$POWER_MODE_ID" in
   0) POWER_MODE_LABEL=15W ;;

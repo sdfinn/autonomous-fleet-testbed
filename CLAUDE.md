@@ -444,6 +444,35 @@ docker buildx build --platform linux/arm64 \
   done). **Container-mode HIL does NOT need this extra step** — `requirements-ci.txt`
   already pins `ollama>=0.4` (added earlier for `tools/agentic_loop.py`'s Ollama
   backend), so the arm64 Docker image already has it baked in.
+- **Connecting a second network interface (WiFi) on the Jetson broke HIL's cross-machine
+  ROS2 discovery entirely — root-caused 2026-07-30, same session as the CUDA/Ollama install
+  above, but a separate, unrelated bug.** After enabling the Jetson's WiFi (`wlP1p1s0`,
+  connected to a real home network for testing before the robot's arrival), `scripts/
+  hil_stage.sh run` started reliably failing: Nav2 came up fine locally on the Jetson
+  (`map_server`/`amcl` activated, bonded, "Managed nodes are active" all logged normally),
+  but was **completely invisible from the workstation** (`ros2 node list` showed zero
+  Jetson-side nodes) and vice versa (the Jetson received zero data on topics the workstation
+  publishes — confirmed with `ros2 topic hz /robot_001/scan` timing out with no output at
+  all). `local_costmap` looped forever on "Timed out waiting for transform from
+  base_footprint to map". Survived a full soft reboot AND a hard power cycle identically —
+  ruled out as a transient/stale-process issue. Root cause, found via `ip maddr show` (no
+  `tcpdump` needed): CycloneDDS's default interface auto-selection picks the first viable
+  multicast-capable interface by **ifindex**, not necessarily the one that actually reaches
+  the other machine. On the Jetson, WiFi's ifindex (2) is lower than Ethernet's (5) — likely
+  because the WiFi driver probes before the Ethernet controller at boot — so CycloneDDS
+  joined its discovery multicast group (`239.255.0.1`) on `wlP1p1s0` instead of `enP8p1s0`,
+  the only interface that actually reaches the workstation. (The workstation's own Ethernet
+  happens to have the lower ifindex there, so it was never affected — pure luck, not a
+  difference in configuration.) This is exactly why WiFi hadn't broken anything before this
+  session: it was never up long enough to matter until today. **Fix:** `~/cyclonedds-hil.xml`
+  on the Jetson pins CycloneDDS explicitly to `enP8p1s0` via `<NetworkInterface
+  name="enP8p1s0"/>`; `scripts/hil_stage.sh`'s `JENV` now exports
+  `CYCLONEDDS_URI=file://$HOME/cyclonedds-hil.xml` for every Jetson-side launch, making this
+  immune to future interface/ifindex changes (a new USB-Ethernet dongle, a different WiFi
+  card, etc.) regardless of enumeration order. **Diagnostic lesson:** `ros2 topic hz` on a
+  topic the SAME machine also locally publishes (e.g. via its own Gazebo bridge) proves
+  nothing about cross-machine delivery — check the topic from the OTHER machine's side, or
+  check a topic/node that can only exist on the remote side, to actually test the link.
 
 ## See also (moved out of this file by /doctor, 2026-07-27, context-lazy-loading pass)
 - Nav2 launch gotchas (Session 10+) — `src/nav_fleet/CLAUDE.md`
