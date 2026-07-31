@@ -22,7 +22,11 @@ concurrency:
 jobs:
   changes:
     # Detects whether this push touches anything that actually affects the arm64 Docker image
-    # (see Dockerfile — it only ever COPYs Dockerfile itself, requirements-ci.txt, src/, and tools/).
+    # (see Dockerfile — it only ever COPYs Dockerfile itself, requirements-ci.txt, src/, and tools/)
+    # OR the HIL orchestration itself (scripts/** — hil_stage.sh, regen_cyclonedds_config.sh,
+    # etc. — added 2026-07-31 after a hil_stage.sh-only push silently skipped the entire
+    # arm64+HIL chain via this same filter, so a CycloneDDS interface-selection fix went
+    # unverified for a full push/report cycle before anyone noticed it never actually ran).
     # A docs-only push (BLUEPRINT.md, Release1Todo.md, CLAUDE.md, etc.) has no reason to pay
     # stage-3-arm64's build cost at all (it's skipped outright via the `if:` below) — or the
     # ~15 min stage-4-hil now inherits by needing stage-3-arm64 (2026-07-10 renumber; HIL
@@ -46,6 +50,7 @@ jobs:
               - 'requirements-ci.txt'
               - 'src/**'
               - 'tools/**'
+              - 'scripts/**'
               - '.github/workflows/ci.yml'
 
   stage-0-requirements:
