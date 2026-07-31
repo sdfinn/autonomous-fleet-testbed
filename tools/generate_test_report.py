@@ -211,6 +211,13 @@ def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
         else:
             story.append(Paragraph("No metrics available for comparison.",
                                     styles["Normal"]))
+        for c in vlm_canary_by_row_id.get(row["id"], []):
+            text = c.get('answer') or f"(error: {c.get('error')})"
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(
+                f"\U0001f50d On-device VLM canary (informational only, not evaluated): {text}",
+                ParagraphStyle("VlmCanary", parent=styles["Normal"], textColor=colors.grey),
+            ))
         for photo_path in find_run_photos(row["timestamp"], photo_dir=photo_dir):
             story.append(Spacer(1, 8))
             story.append(RLImage(photo_path, width=300, height=225))
@@ -218,6 +225,15 @@ def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
 
     doc.build(story)
     print(f"Report saved to {output_path}")
+
+    # Plain console output, not just $GITHUB_STEP_SUMMARY (build_job_summary below
+    # already includes this) — the Summary tab has a confirmed platform bug showing
+    # stale/wrong-job content (see stage-5-reports-sim's "Fleet status" step comment
+    # in ci.yml), so this is the reliable place to actually see it in Actions output.
+    for row in rows:
+        for c in vlm_canary_by_row_id.get(row["id"], []):
+            text = c.get('answer') or f"(error: {c.get('error')})"
+            print(f"VLM canary [{row['scenario']}]: {text}")
 
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:

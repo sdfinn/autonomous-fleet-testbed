@@ -41,6 +41,22 @@ def init_db(db_path: str = DB_PATH):
     conn.close()
 
 
+def warm_up(model_name: str = DEFAULT_MODEL) -> None:
+    """Throwaway, text-only inference call to force the model into memory before the
+    real canary call happens later in the mission — turns a ~45s cold model load into
+    the mission's own call paying only the ~4s warm cost instead (CLAUDE.md's Ollama
+    Gotcha 3). No image needed: model load happens on the first call regardless of
+    whether it carries an image. Best-effort and silent — a failed warm-up (Ollama not
+    running yet, model not pulled) just means the real canary call later pays the
+    cold-start cost instead; never raises, never logged as a canary result (this isn't
+    a mission-linked classification, just a performance nudge)."""
+    try:
+        ollama.chat(model=model_name,
+                    messages=[{'role': 'user', 'content': 'Say hello in one word.'}])
+    except Exception:
+        pass
+
+
 def classify_photo(photo_path: str, model_name: str = DEFAULT_MODEL) -> str:
     """Asks the model a plain, open-ended question about the photo. Raises
     RuntimeError on any Ollama-side failure (unreachable daemon, model not pulled) —
@@ -120,8 +136,12 @@ def find_vlm_canary_results(photo_paths, db_path: str = DB_PATH) -> list:
 
 
 def main():
+    if len(sys.argv) == 2 and sys.argv[1] == '--warm':
+        warm_up()
+        return
     if len(sys.argv) != 3:
-        print("usage: python -m tools.vlm_canary <photo_path> <run_context>",
+        print("usage: python -m tools.vlm_canary <photo_path> <run_context>\n"
+              "       python -m tools.vlm_canary --warm",
               file=sys.stderr)
         sys.exit(1)
     photo_path, run_context = sys.argv[1], sys.argv[2]

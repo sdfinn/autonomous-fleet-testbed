@@ -640,6 +640,27 @@ def _judge_and_log_leg(name, leg, ball_xy, gt_log, ref_photos_from_prev=None):
     return ok
 
 
+def _spawn_vlm_warmup():
+    """Fire-and-forget throwaway inference call, spawned once per mission2_day.py
+    invocation — sim (InProcessExecutor) or HIL (JetsonExecutor) alike, since the VLM
+    canary always classifies workstation-side regardless of executor (
+    _maybe_spawn_vlm_canary runs after executor.run_day() returns control to THIS
+    process either way, using an already-local photo path). Originally a manual,
+    per-day practice (`ollama run moondream:1.8b "..."` by hand before a HIL/sim day,
+    2026-07-30 design spec) — automated here since CI has no human to run it. Never
+    waits, never raises — matches _maybe_spawn_vlm_canary's own decoupling contract;
+    a failed warm-up just costs the real canary call its own cold-start penalty
+    later, nothing more."""
+    try:
+        subprocess.Popen(
+            [sys.executable, '-m', 'tools.vlm_canary', '--warm'],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception as exc:
+        log.warning(f'vlm canary warm-up: could not spawn probe: {exc}')
+
+
 def _maybe_spawn_vlm_canary(name, leg):
     """2026-07-30 CUDA/VLM canary (docs/superpowers/specs/
     2026-07-30-cuda-canary-vlm-red-ball-design.md): fully decoupled, fire-and-forget
@@ -745,6 +766,7 @@ def main():
         git_sha=git_sha(), executor=args.executor,
         runner_type=os.environ.get('RUNNER_TYPE'), power_mode=POWER_MODE_LABEL,
         hil_image=os.environ.get('HIL_IMAGE')))
+    _spawn_vlm_warmup()
 
     hil = args.executor == 'jetson'
     no_launch = args.no_launch or hil

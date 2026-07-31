@@ -769,6 +769,32 @@ def test_run_day_waits_before_stopping_the_gt_thread(monkeypatch):
     assert sleep_idx < stop_idx                              # sleep happens BEFORE stop_evt.set()
 
 
+def test_spawn_vlm_warmup_spawns_detached_warm_process(monkeypatch):
+    captured = {}
+
+    def fake_popen(cmd, **kwargs):
+        captured['cmd'] = cmd
+        captured['kwargs'] = kwargs
+        return None
+    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', fake_popen)
+
+    mission2_day_module._spawn_vlm_warmup()
+
+    assert captured['cmd'] == [mission2_day_module.sys.executable, '-m',
+                                'tools.vlm_canary', '--warm']
+    assert captured['kwargs']['start_new_session'] is True
+    assert captured['kwargs']['stdout'] == mission2_day_module.subprocess.DEVNULL
+    assert captured['kwargs']['stderr'] == mission2_day_module.subprocess.DEVNULL
+
+
+def test_spawn_vlm_warmup_logs_warning_on_spawn_failure_without_raising(monkeypatch):
+    def _boom(cmd, **kwargs):
+        raise OSError('no such file or directory')
+    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', _boom)
+
+    mission2_day_module._spawn_vlm_warmup()  # must not raise
+
+
 def test_maybe_spawn_vlm_canary_spawns_detached_process_on_red_reaction(monkeypatch):
     captured = {}
 

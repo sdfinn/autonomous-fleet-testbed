@@ -10,7 +10,7 @@ import pytest
 
 import tools.vlm_canary as vlm_canary_module
 from tools.vlm_canary import (DEFAULT_MODEL, classify_photo, find_vlm_canary_results,
-                               init_db, log_vlm_canary_result, main)
+                               init_db, log_vlm_canary_result, main, warm_up)
 
 
 def test_classify_photo_returns_model_answer(monkeypatch):
@@ -116,3 +116,61 @@ def test_main_logs_error_on_failure_without_raising(monkeypatch, tmp_path):
     conn.close()
     assert row[0] is None
     assert 'ollama serve' in row[1]
+
+
+def test_warm_up_calls_ollama_with_no_image(monkeypatch):
+    calls = []
+
+    def fake_chat(model, messages):
+        calls.append((model, messages))
+        return SimpleNamespace(message=SimpleNamespace(content='hello'))
+    monkeypatch.setattr(vlm_canary_module.ollama, 'chat', fake_chat)
+
+    warm_up()
+
+    assert len(calls) == 1
+    model, messages = calls[0]
+    assert model == DEFAULT_MODEL
+    assert 'images' not in messages[0]
+
+
+def test_warm_up_swallows_any_failure(monkeypatch):
+    def fake_chat(model, messages):
+        raise ConnectionError("Connection refused")
+    monkeypatch.setattr(vlm_canary_module.ollama, 'chat', fake_chat)
+
+    warm_up()  # must not raise
+
+
+def test_warm_up_never_writes_a_canary_log_row(monkeypatch, tmp_path):
+    # Warm-up is a performance nudge, not a mission-linked classification — it must
+    # never appear in vlm_canary_log (find_vlm_canary_results() would have nothing
+    # sane to join a warm-up row against anyway, since it has no real photo_path).
+    db = str(tmp_path / "t.db")
+    monkeypatch.setattr(vlm_canary_module, 'DB_PATH', db)
+
+    def fake_chat(model, messages):
+        return SimpleNamespace(message=SimpleNamespace(content='hello'))
+    monkeypatch.setattr(vlm_canary_module.ollama, 'chat', fake_chat)
+
+    warm_up()
+
+    init_db(db)
+    conn = sqlite3.connect(db)
+    count = conn.execute("SELECT COUNT(*) FROM vlm_canary_log").fetchone()[0]
+    conn.close()
+    assert count == 0
+
+
+def test_main_dispatches_warm_flag_without_photo_args(monkeypatch):
+    calls = []
+
+    def fake_chat(model, messages):
+        calls.append((model, messages))
+        return SimpleNamespace(message=SimpleNamespace(content='hello'))
+    monkeypatch.setattr(vlm_canary_module.ollama, 'chat', fake_chat)
+    monkeypatch.setattr(sys, 'argv', ['vlm_canary', '--warm'])
+
+    main()  # must not raise / must not require photo_path+run_context argv
+
+    assert len(calls) == 1

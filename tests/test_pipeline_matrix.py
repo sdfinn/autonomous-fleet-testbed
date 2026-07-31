@@ -32,7 +32,8 @@ def test_real_config_declares_sim_stage_matching_ci():
     runner_type, scenarios = load_stage("sim")
 
     assert runner_type == "local"
-    assert scenarios == ["bedroom_nav", "mission1"]
+    assert scenarios == ["bedroom_nav", "mission1", "mission2_no_ball",
+                          "mission2_yellow", "mission2_red"]
 
 
 def test_real_config_declares_hil_stage_matching_ci():
