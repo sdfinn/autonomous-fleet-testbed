@@ -14,7 +14,7 @@
 
 sim:
   runner_type: local
-  scenarios: [bedroom_nav, mission1]
+  scenarios: [bedroom_nav, mission1, mission2_no_ball, mission2_yellow, mission2_red]
 
 hil:
   runner_type: hil_jetson

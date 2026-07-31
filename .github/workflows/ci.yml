@@ -272,12 +272,15 @@ jobs:
         # ran on the real Jetson in stage-4-hil. --no-launch reuses the stack the
         # "Launch Gazebo + Nav2" step above already brought up, matching how
         # JetsonExecutor also implies no-launch (hil_stage.sh owns the HIL stack).
-        # FLEET_TELEMETRY=off: this run's point is exercising the canary path, not
-        # seeding a local+mission2_* drift baseline pipeline_matrix.yaml doesn't
-        # define (mission2_* scenarios are scoped to runner_type=hil_jetson there).
+        # Telemetry runs normally here (no FLEET_TELEMETRY=off) — mission2_* is now
+        # declared under pipeline_matrix.yaml's sim stage (runner_type=local), and
+        # tests/test_mission2.py's own per-scenario tests already write real
+        # local+mission2_* history (70+ rows each), so this feeds a real, already-
+        # populated drift baseline rather than starting a fresh empty one. This also
+        # gives stage-5-reports-sim a real `runs` row to join the VLM canary result
+        # against via find_run_photos()/find_vlm_canary_results().
         env:
           STATE_DIR: /tmp/stage2_mission2_day
-          FLEET_TELEMETRY: 'off'
         run: |
           source /opt/ros/jazzy/setup.bash
           source install/setup.bash
@@ -387,7 +390,7 @@ jobs:
       - name: Pull the stage-3 arm64 image onto the Jetson (phase 2 — mission runs in-container)
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | \
-            ssh -o BatchMode=yes ${JETSON_USER}@${JETSON_IP} \
+            ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JETSON_USER}@${JETSON_IP} \
               "docker login ghcr.io -u ${{ github.actor }} --password-stdin && docker pull ${HIL_IMAGE}"
 
       - name: Build x86 workspace
@@ -423,7 +426,7 @@ jobs:
           # way, twice. clean_state wipes stale copies at stack-up, so anything fetched here
           # belongs to this run (or survived on the Jetson from a run whose evidence we want
           # anyway — per-run names keep them apart). Best-effort: never fail the job.
-          scp -o BatchMode=yes ${JETSON_USER}@${JETSON_IP}:/tmp/nav2_hil_*.log /tmp/hil_stage/ || true
+          scp -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JETSON_USER}@${JETSON_IP}:/tmp/nav2_hil_*.log /tmp/hil_stage/ || true
           ls -la /tmp/hil_stage/nav2_hil_*.log 2>/dev/null || echo "no Jetson nav2 logs fetched"
 
       - name: Upload mission evidence artifact
@@ -452,7 +455,7 @@ jobs:
         if: always()
         run: |
           REPO="${HIL_IMAGE%:*}"
-          ssh -o BatchMode=yes ${JETSON_USER}@${JETSON_IP} bash -s -- "$REPO" <<'REMOTE' || true
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JETSON_USER}@${JETSON_IP} bash -s -- "$REPO" <<'REMOTE' || true
             repo="$1"
             docker images "$repo" --format '{{.ID}};{{.Tag}};{{.CreatedAt}}' \
               | grep -v ';latest;' \

@@ -204,6 +204,7 @@ class JetsonExecutor(MissionExecutor):
         # one from `git rev-parse`.
         proc = subprocess.run(
             ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
+             '-o', 'StrictHostKeyChecking=accept-new',
              f'{JETSON_USER}@{self.ip}',
              f'docker image inspect {self.image} >/dev/null 2>&1'],
             capture_output=True, text=True)
@@ -239,6 +240,7 @@ class JetsonExecutor(MissionExecutor):
         # the normal teardown/evidence-upload steps can still run via `if: always()`.
         proc = subprocess.run(
             ['timeout', '1080', 'ssh', '-o', 'BatchMode=yes',
+             '-o', 'StrictHostKeyChecking=accept-new',
              f'{JETSON_USER}@{self.ip}', cmd],
             capture_output=True, text=True)
         log.info(f'[timing] ssh returned for the day at {time.time():.3f} '
@@ -276,6 +278,7 @@ class JetsonExecutor(MissionExecutor):
             remote_path = self._remote_photo_path(rel)
             rc = subprocess.run(
                 ['scp', '-o', 'BatchMode=yes',
+                 '-o', 'StrictHostKeyChecking=accept-new',
                  f'{JETSON_USER}@{self.ip}:{remote_path}', str(dest)],
                 capture_output=True, text=True).returncode
             if rc == 0:
@@ -312,6 +315,7 @@ class JetsonExecutor(MissionExecutor):
             dest = FAILURE_BAG_DIR / base
             rc = subprocess.run(
                 ['scp', '-r', '-o', 'BatchMode=yes',
+                 '-o', 'StrictHostKeyChecking=accept-new',
                  f'{JETSON_USER}@{self.ip}:autonomous-fleet-testbed/{rel}', str(dest)],
                 capture_output=True, text=True).returncode
             if rc != 0:

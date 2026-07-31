@@ -64,7 +64,7 @@ case "$POWER_MODE_ID" in
   *) echo "FATAL: unknown POWER_MODE_ID=$POWER_MODE_ID" >&2; exit 1 ;;
 esac
 
-jssh() { ssh -o ConnectTimeout=10 -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}" "$@"; }
+jssh() { ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${JETSON_USER}@${JETSON_IP}" "$@"; }
 
 require_ip() {
   [ -n "${JETSON_IP:-}" ] || { echo "FATAL: JETSON_IP not set (run discover first)" >&2; exit 1; }
@@ -111,7 +111,7 @@ discover() {
     ip=$(ip neigh show dev enp6s0 | awk '$1 ~ /^10\.42\.0\./ && /lladdr/ {print $1; exit}' || true)
   fi
   [ -n "$ip" ] || { echo "FATAL: cannot discover Jetson IP (mDNS and ip-neigh both empty — is it powered on and cabled?)" >&2; exit 1; }
-  ssh -o ConnectTimeout=10 -o BatchMode=yes "${JETSON_USER}@${ip}" true \
+  ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${JETSON_USER}@${ip}" true \
     || { echo "FATAL: SSH to ${JETSON_USER}@${ip} failed" >&2; exit 1; }
   echo "$ip"
 }
@@ -249,7 +249,7 @@ reset_home() {
   local rc=0 attempt
   for attempt in 1 2 3; do
     rc=0
-    timeout 180 ssh -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}" \
+    timeout 180 ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${JETSON_USER}@${JETSON_IP}" \
       "$JENV && cd ${JETSON_REPO} && RUNNER_TYPE=hil_jetson POWER_MODE=${POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner go_home" \
       2>&1 | tee "$STATE_DIR/reset_home.out" || rc=$?
     [ "$rc" -eq 0 ] && break
