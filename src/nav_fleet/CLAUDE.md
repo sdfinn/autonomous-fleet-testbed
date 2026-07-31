@@ -156,8 +156,7 @@ Claude is working with files under this directory.
   — GitHub Actions' job-summary feature has no public API at all (`gh api
   .../check-runs/<id>` returns `output.summary: null` always; the Summary tab is a
   JS-rendered SPA with nothing in the raw HTML). **Verify report/drift content against
-  the telemetry DB or the downloaded PDF artifact instead of the Summary page.** Full
-  investigation: Release1Todo.md Session 17 Piece 8. Both `stage-5-reports-*` jobs now
+  the telemetry DB or the downloaded PDF artifact instead of the Summary page.** Both `stage-5-reports-*` jobs now
   print a direct one-click link to their own PDF artifact in their summary (2026-07-25)
   — still downloads as a zip (a GitHub Actions platform constraint, no way around it
   short of moving off the standard artifacts system entirely, e.g. GitHub Pages/
@@ -215,12 +214,10 @@ Claude is working with files under this directory.
   from post-hoc `GroundTruthLog` lookups instead of live point-in-time polls.
   **Measured result: 0.0000s leg-to-leg loop overhead**, confirmed 3x independently
   (x86 in-process, Jetson bare-metal, Jetson container) — down from the ~17.6s Jetson
-  inter-scenario gap this piece targeted (see Release1Todo.md Piece 9 for the full
-  investigation, the scrapped persistent-service/DDS-RPC first direction, and the
+  inter-scenario gap this piece targeted (the scrapped persistent-service/DDS-RPC first direction, and the
   design conversation).
   **Two real bugs found live during GUI-watched verification, both fixed the same
-  session (neither anticipated by the plan) — see Release1Todo.md Piece 9 for full
-  detail:** (1) a premature yellow→red ball swap — the second retreat-wait armed a
+  session (neither anticipated by the plan):** (1) a premature yellow→red ball swap — the second retreat-wait armed a
   fresh `RetreatDetector` immediately after placing yellow, while leg 1's OWN return
   was still in progress, getting fooled by leftover leg-1 descent into firing almost
   instantly; fixed with a new `OutboundDetector` (mirrors `RetreatDetector` — tracks

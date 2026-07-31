@@ -20,8 +20,7 @@ Claude is working with files under this directory.
   this file (`tests/test_agentic_loop.py`) — safe to import in pytest because
   `anthropic.Anthropic()` doesn't raise without an API key at construction (verified
   empirically), only on an actual `messages.create()` call, which every test
-  monkeypatches. Gained a local Ollama backend, 2026-07-28 (design:
-  docs/superpowers/specs/2026-07-28-local-llm-diagnosis-design.md) — diagnose()
+  monkeypatches. Gained a local Ollama backend, 2026-07-28 — diagnose()
   dispatches to _diagnose_claude or _diagnose_ollama via a backend= param or the
   AGENTIC_BACKEND env var (default 'ollama' as of 2026-07-28); OLLAMA_MODEL env var
   picks the local model (default qwen2.5:14b-instruct). Requires the ollama PyPI
@@ -35,12 +34,9 @@ Claude is working with files under this directory.
   `format='json'` structured-output contract (schemas described in the prompt text)
   when native tool-calling returns nothing — the JSON-constrained decoder holds up
   where native tool-calling silently drops. Verified against the real dashboard UI
-  (Playwright-driven click on "Diagnose with AI"), not just mocked tests — see
-  Release1Todo.md's resolved START HERE entry for the full verification trail.
+  (Playwright-driven click on "Diagnose with AI"), not just mocked tests.
   **Quality gap found 2026-07-29 (first real trend-view diagnosis against live drift
-  data), fully redesigned the same day — see
-  docs/superpowers/specs/2026-07-29-ai-diagnosis-items-and-feedback-design.md for the
-  full history (three scope corrections in one session, each captured there).** The
+  data), fully redesigned the same day (three scope corrections in one session).** The
   local model's free-text narrative fabricated a config file that doesn't exist
   anywhere in this repo (`robot_description.yaml`, `scan_period`) and recommended
   reversing a deliberately-tuned, already-validated fix (`rotate_to_heading_angular_vel`,
@@ -339,8 +335,7 @@ Claude is working with files under this directory.
   worked — CommonMark collapses single newlines in `st.markdown()`, but consecutive
   `- ` list lines render correctly without needing blank lines between them, which is
   why bullets (not just newline-separated sentences) were the actual fix.
-- `vlm_canary.py` — 2026-07-30: the CUDA/on-device-VLM red-ball canary (design:
-  `docs/superpowers/specs/2026-07-30-cuda-canary-vlm-red-ball-design.md`). Fully
+- `vlm_canary.py` — 2026-07-30: the CUDA/on-device-VLM red-ball canary. Fully
   decoupled, log-only classification of Mission 2's existing red-reaction photo by a
   small local vision model (`moondream:1.8b` via Ollama, pinned tag) — no pass/fail,
   zero writes to `runs`/`steps` or `ai_diagnoses`/`ai_diagnosis_items`. Own isolated
@@ -357,8 +352,7 @@ Claude is working with files under this directory.
   reviewed clean (Approved, no Critical/Important findings) — NOT yet live-verified
   end-to-end** (implementation plan's Task 5): a HIL day rerun needed to prove this
   first got derailed by two real, unrelated network regressions (see `CLAUDE.md`'s
-  dated Gotchas) and then a still-open CPU/timing regression — see `Release1Todo.md`'s
-  "NEXT SESSION — START HERE" block for the full state and next steps.
+  dated Gotchas) and then a still-open CPU/timing regression.
 - `diagnosis_log.py` — 2026-07-29: auto-log for every `agentic_loop.diagnose()` call,
   same `fleet_runs.db`. `init_db()`/`log_diagnosis(**kwargs) -> diagnosis_id` mirror
   `telemetry_logger.py`'s `runs`/`steps` two-table shape: one `ai_diagnoses` row per
@@ -380,8 +374,7 @@ Claude is working with files under this directory.
   flipped to default 'ollama' the same session anyway** (Mike's explicit, informed
   call) — this predicted exactly the live failure hit via the dashboard's "Diagnose
   with AI" button at session end (`RuntimeError: ... did not propose a tool call`).
-  **Fixed 2026-07-29** — see the `agentic_loop.py` entry above and
-  Release1Todo.md's resolved START HERE entry.
+  **Fixed 2026-07-29** — see the `agentic_loop.py` entry above.
 - `baseline_monitor.py` — Session 12+: `check_run(run_id)` compares one run against a
   rolling PASS-only baseline (config-driven, `config/drift_config.yaml`), sliced by
   `(runner_type, power_mode, scenario)` — the `scenario` dimension added Session 17

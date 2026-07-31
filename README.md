@@ -8,6 +8,13 @@ arm64 build, and a hardware-in-the-loop stage on a real Jetson — with telemetr
 photo evidence, and statistical drift detection on the results. Sim-first: bugs are
 flushed on a workstation in seconds, not on a robot in the field.
 
+**Lineage:** this project is a ground-up rebuild of an earlier prototype
+(`autonomous-nav-test-pipeline`) that proved the same navigate → detect → react
+mission pattern using NVIDIA Isaac Sim 5.1 on Windows/WSL2. This version moves to a
+fully Linux-native stack (Gazebo Harmonic + ROS2 Jazzy) with a real 6-stage CI/CD
+pipeline and genuine hardware-in-the-loop testing on a Jetson Orin Nano — not just
+simulation.
+
 | The simulated world (a real, measured bedroom) | What the robot saw (CI run, real Jetson) |
 |---|---|
 | ![Gazebo bedroom world](docs/img/gazebo_bedroom_world.png) | ![Mission 2 red-ball reaction photo](docs/img/mission2_reaction_red.png) |
@@ -26,9 +33,11 @@ flowchart TD
     S4 -.-> S6["Stage 6\nreal-robot deploy\n(future)"]
 ```
 
-Full clickable version — every stage and node explained with the real commands behind
-it: [`docs/architecture.html`](docs/architecture.html) *(open locally in a browser;
-GitHub renders it as source)*.
+![Full architecture diagram](docs/img/architecture_overview.png)
+
+Every stage and node above is clickable in the full interactive version —
+[`docs/architecture.html`](docs/architecture.html) *(open locally in a browser;
+GitHub renders it as source, so the screenshot above is the fallback preview)*.
 
 ## Quickstart (everything already installed)
 
@@ -120,9 +129,11 @@ physical, shared machines.
   Orin Nano: [`docs/runbooks/JetsonInstallSession14.md`](docs/runbooks/JetsonInstallSession14.md)
 - **Mission 1 HIL runbook (manual procedure + first real run)** —
   [`docs/runbooks/Mission1HILSession15.md`](docs/runbooks/Mission1HILSession15.md)
-- **Roadmap and session plans** — [`Release1Todo.md`](Release1Todo.md) (living doc)
-- **Strategy background + decisions log** — [`BLUEPRINT.md`](BLUEPRINT.md)
 - **Gazebo viewer cheatsheet** — [`GazeboCommands.md`](GazeboCommands.md)
+
+**What's next:** the lessons from this project are seeding a follow-on effort
+(working name `synthetic-fleet`) that drops the physical-hardware tether entirely to
+explore large-scale synthetic fleet simulation and sim-to-real transfer.
 
 ## Repo map
 

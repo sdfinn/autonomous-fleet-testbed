@@ -26,9 +26,8 @@ pass) — loads only when Claude is working with files under this directory.
   populated DB plus a deliberately-flagged synthetic-DB check (a guaranteed outlier,
   confirmed to render as a red point outside the shaded bands — proving the flagged
   path, not just the clean one) and a live GUI pass.
-  **AI Diagnosis section rebuilt across FOUR rounds, 2026-07-29** (design:
-  docs/superpowers/specs/2026-07-29-ai-diagnosis-items-and-feedback-design.md — full
-  scope-correction history there). No longer "read-only" in the strictest sense — the
+  **AI Diagnosis section rebuilt across FOUR rounds, 2026-07-29**
+  (multiple scope corrections along the way). No longer "read-only" in the strictest sense — the
   button calls `diagnose(..., source='dashboard')`, which auto-logs to
   `tools.diagnosis_log`'s tables every click (system-driven, no separate save button
   — see that module's own CLAUDE.md entry); caption updated to say so plainly instead

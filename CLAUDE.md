@@ -2,22 +2,13 @@
 
 ## Project
 Open-source CI/CD-native fleet simulation testing framework for autonomous robots.
-**Release1Todo.md is THE go-to doc** (Mike, 2026-07-18): session plans AND the roadmap —
-its **Session 20 section (end of file) is the LIVING working plan for releases R2–R5**,
-including the four Standing Disciplines (10x check; coaching contract; LLM-leverage
-ramp; demo-first — a release without its shipped demo is not done). Execute sessions
-from it; code from .superpowers/sdd/ specs.
+Session plans and the release roadmap are tracked in internal planning docs (not part
+of this public snapshot); this file captures the durable technical context and
+gotchas that survive across sessions.
 **Releases relabeled 2026-07-17: numbers now = execution order.** The agentic &
 alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean today's
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
-BLUEPRINT.md holds strategy background + the decisions log (change history), synced
-copy of the roadmap; Release1Todo.md leads.
-`LearningLog.md` (repo root) = Mike's teach-back/curriculum record — append each
-session's 3–5 new concepts (coaching contract, Standing Discipline #2); at session
-start, check it for pending teach-backs.
-robotics_cicd_10x_blueprint.md is reference-only source dialogue, not for coding —
-re-read at every release kickoff (standing).
 
 ## Development workflow — tier 1 first
 
@@ -35,7 +26,7 @@ ros2 launch nav_fleet sim_launch.py    # Session 09+ — Gazebo + Nav2 locally
 ```
 
 x86 is not the robot's target OS but finds 90% of bugs at ~1s build vs 23 min QEMU.
-Commit to CI only when the x86 pipeline is clean. See BLUEPRINT.md "Tiered development loop."
+Commit to CI only when the x86 pipeline is clean.
 
 ## Environment
 - Ubuntu 24.04 bare metal (dual boot with Windows 11)
@@ -96,16 +87,10 @@ docker buildx build --platform linux/arm64 \
 - `GazeboCommands.md` — Gazebo viewer navigation cheat sheet
 - `docs/runbooks/Mission1HILSession15.md` — Session 15 Mission 1 hardware-in-the-loop runbook (Jetson +
   Gazebo terminal procedure) and the first real HIL run's Results (2026-07-11, PASS)
-- `RealRobotStartup.md` — the real-robot bring-up runbook (2026-07-28), extracted from
-  `Release1Todo.md`'s Session 18 into its own living doc (same class of exception as
-  `JetsonInstallSession14.md` — one of only two living runbooks outside
-  `Release1Todo.md`, deliberately not sprawl). Part A = one-time setup (driver
-  bring-up, SLAM map, `robot_launch.py`); Part B = the repeatable day-to-day loop,
-  including the physical Jetson swap required to get back into HIL mode (confirmed
-  single-Jetson deployment, no dedicated CI runner).
-- `docs/superpowers/specs/` — dated design specs from `/superpowers:brainstorming` sessions
-  (e.g. `2026-07-10-session15-gazebo-hil-mission1-design.md`) — read before continuing any
-  session that has one; it's the source of truth over any summary in `Release1Todo.md`
+- `RealRobotStartup.md` — the real-robot bring-up runbook. Part A = one-time setup
+  (driver bring-up, SLAM map, `robot_launch.py`); Part B = the repeatable day-to-day
+  loop, including the physical Jetson swap required to get back into HIL mode
+  (confirmed single-Jetson deployment, no dedicated CI runner).
 - **`/home/mike/BC/isaac_project`** (outside this repo, not migrated) — has more reference
   material than what was pulled into this project. Notably `src/behavior_controller.py`
   (HSV color-threshold ball detection — proven, hardware-validated, zero training data) and
@@ -159,8 +144,8 @@ docker buildx build --platform linux/arm64 \
   not stale.** Session 10 added `test_navigation.py`, but 2 of its 3 test function names never
   matched `requirements/traceability.yaml`'s placeholder names (fixed in Session 11/12: BR-01/
   BR-10 → `test_navigation_succeeds`, BR-02 → `test_no_collision`). BR-03 (recovery behavior)
-  has no test at all — recovery is genuinely broken (see "Recovery behaviors" in
-  `Release1Todo.md` Session 19+), so this isn't a naming fix, it's a real missing capability.
+  has no test at all — recovery is genuinely broken, so this isn't a naming fix, it's a
+  real missing capability.
   Remove `continue-on-error` only once BR-03 has an actual test. Until then: this gate silently
   went from "intentionally red" to "actually blocking every downstream CI stage" once someone
   removed `continue-on-error` without the underlying gaps being fixed — check `gh run list`
@@ -297,9 +282,9 @@ docker buildx build --platform linux/arm64 \
      "Received request to clear entirely the global/local costmap" line right at goal
      start; worth checking whether that clear-and-rebuild has a real settle cost that
      grows after the first goal.
-  Piece 7 (Release1Todo.md) tracks this as confirmed-but-unroot-caused — do not mark it
-  done until an actual fix (not just a diagnosis) lands.
-  **UPDATE 2026-07-24 (Piece 9, Release1Todo.md): likely explained, under a different
+  This is tracked as confirmed-but-not-root-caused — do not mark it done until an
+  actual fix (not just a diagnosis) lands.
+  **UPDATE 2026-07-24: likely explained, under a different
   framing, not the one this entry originally used.** A much deeper live investigation
   (jetson_clocks, DEBUG-level Nav2 logging, live cmd_vel watching, x86-vs-Jetson A/B)
   found TWO separate real things, neither of which is "motion won't start": (1) an
@@ -360,8 +345,8 @@ docker buildx build --platform linux/arm64 \
   real and easy to miss.
 - **When a live GUI-watched observation contradicts an already-computed timing number,
   re-derive the number from the SAME event the observer is describing before arguing
-  with the observation.** The costliest mistake in Piece 9 (Release1Todo.md,
-  2026-07-24): an intra-goal delay (`goal accepted` → `goal result received`, ~18-29s,
+  with the observation.** The costliest mistake in this investigation
+  (2026-07-24): an intra-goal delay (`goal accepted` → `goal result received`, ~18-29s,
   confirmed identical on x86 and Jetson) was conflated with the inter-scenario gap Mike
   was actually describing (`goal result received` → next scenario's dispatch) — which
   turned out to be ~40x different between platforms (~0.4s x86 vs. ~17.6s Jetson) and
@@ -404,8 +389,7 @@ docker buildx build --platform linux/arm64 \
   "the assistant received it in a system-reminder" is NOT evidence the user saw
   anything — verify hook user-visibility by checking for `systemMessage` in its JSON
   output, not by trusting that a hook "fired successfully."
-- **CUDA/Ollama installed on the Jetson, 2026-07-30 (VLM red-ball canary,
-  `docs/superpowers/specs/2026-07-30-cuda-canary-vlm-red-ball-design.md`).** Installed
+- **CUDA/Ollama installed on the Jetson, 2026-07-30 (VLM red-ball canary).** Installed
   manually by Mike, per plan: `nvidia-jetpack 7.2-b187` (`sudo apt install
   nvidia-jetpack` — no reflash, L4T apt sources already present from the original
   OS-only flash), CUDA Toolkit `13.2.1-1` (`nvcc` — real version confirmed:
