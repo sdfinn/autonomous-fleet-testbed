@@ -265,6 +265,37 @@ jobs:
           python -m pytest tests/test_navigation.py tests/test_mission_run.py \
             tests/test_mission2.py tests/test_nav_runner.py -v --timeout=300
 
+      - name: Run Mission 2 day (in-process — VLM canary x86 coverage)
+        # tools/mission2_day.py's run_day() (not just the older per-scenario tests
+        # above) is the only place _maybe_spawn_vlm_canary() lives — without this
+        # step the VLM/Ollama canary path had zero x86 CI coverage and only ever
+        # ran on the real Jetson in stage-4-hil. --no-launch reuses the stack the
+        # "Launch Gazebo + Nav2" step above already brought up, matching how
+        # JetsonExecutor also implies no-launch (hil_stage.sh owns the HIL stack).
+        # FLEET_TELEMETRY=off: this run's point is exercising the canary path, not
+        # seeding a local+mission2_* drift baseline pipeline_matrix.yaml doesn't
+        # define (mission2_* scenarios are scoped to runner_type=hil_jetson there).
+        env:
+          STATE_DIR: /tmp/stage2_mission2_day
+          FLEET_TELEMETRY: 'off'
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          source ~/fleet-env/bin/activate
+          python -m tools.mission2_day --executor inprocess --no-launch
+
+      - name: Show mission2_day log tail on failure
+        if: failure()
+        run: tail -n 80 /tmp/stage2_mission2_day/mission2_day.log 2>/dev/null || true
+
+      - name: Upload mission2_day log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage2-mission2-day-log-${{ github.run_number }}
+          path: /tmp/stage2_mission2_day/mission2_day.log
+          if-no-files-found: warn
+
       - name: Record Gazebo timing
         if: always()
         run: |
