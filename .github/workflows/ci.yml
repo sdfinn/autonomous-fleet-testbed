@@ -10,6 +10,11 @@ on:
 # workstation + ONE Jetson sharing DDS domain 0 — concurrent runs destroy each other
 # (the PR-close + push-to-main pair fired by merging PR #4 both went red this way).
 # Queue, never overlap, never cancel: a queued run waits for the machines.
+#
+# 2026-07-30: repo went public today after a git-filter-repo history rewrite (internal
+# planning docs purged from every commit). The rewrite's own push had identical tree
+# content, so the paths-filter below correctly skipped stages 3-4 — this comment forces
+# a real full-pipeline run to confirm everything still works end-to-end post-rewrite.
 concurrency:
   group: fleet-ci-shared-hardware
   cancel-in-progress: false
