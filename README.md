@@ -1,6 +1,7 @@
 # autonomous-fleet-testbed
 
 ![CI](https://github.com/sdfinn/autonomous-fleet-testbed/actions/workflows/ci.yml/badge.svg)
+![License: Apache 2.0](https://img.shields.io/github/license/sdfinn/autonomous-fleet-testbed)
 
 A CI/CD-native simulation testing framework for autonomous robots. Every push runs a
 robot through requirements gates, simulated navigation missions in Gazebo, a native
