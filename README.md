@@ -15,6 +15,15 @@ fully Linux-native stack (Gazebo Harmonic + ROS2 Jazzy) with a real 6-stage CI/C
 pipeline and genuine hardware-in-the-loop testing on a Jetson Orin Nano — not just
 simulation.
 
+**Roadmap:** the next release adds more autonomy and perception, and introduces a
+second robot for real multi-robot coordination testing.
+
+**What's next:** the lessons from this project are seeding a follow-on effort
+(working name `synthetic-fleet`) that drops the physical-hardware tether entirely to
+explore large-scale synthetic fleet simulation and sim-to-real transfer — likely
+returning to NVIDIA's Isaac Sim/Isaac Lab ecosystem, whose GPU-parallelized,
+tensor-native training interface fits large-scale RL work in a way Gazebo doesn't.
+
 | The simulated world (a real, measured bedroom) | What the robot saw (CI run, real Jetson) |
 |---|---|
 | ![Gazebo bedroom world](docs/img/gazebo_bedroom_world.png) | ![Mission 2 red-ball reaction photo](docs/img/mission2_reaction_red.png) |
@@ -38,6 +47,26 @@ flowchart TD
 Every stage and node above is clickable in the full interactive version —
 [`docs/architecture.html`](docs/architecture.html) *(open locally in a browser;
 GitHub renders it as source, so the screenshot above is the fallback preview)*.
+
+## Hardware-in-the-loop
+
+This isn't a simulation-only demo. Every push to `main` runs Stage 4: Gazebo keeps
+simulating the world on the x86 workstation, but Nav2 — localization, planning, and
+control — runs on a real, physical Jetson Orin Nano, exchanging live ROS2/DDS traffic
+over the network between two machines. The robot's camera-based ball-color detector
+watches the feed and triggers real reactive navigation: photograph and return home on
+yellow, photograph and stop on red. Every run captures photo evidence and telemetry
+(SQLite), with statistical drift detection flagging any run that regresses against a
+rolling baseline.
+
+It's proven on every push, not a one-off recording — the CI badge at the top reflects
+a pipeline that runs against a real robot, not a mock.
+
+**Want to build the hardware tier yourself?**
+- **Flash, provision, and register a Jetson Orin Nano** —
+  [`docs/runbooks/JetsonInstallSession14.md`](docs/runbooks/JetsonInstallSession14.md)
+- **First real HIL run (manual procedure)** —
+  [`docs/runbooks/Mission1HILSession15.md`](docs/runbooks/Mission1HILSession15.md)
 
 ## Quickstart (everything already installed)
 
@@ -70,7 +99,7 @@ To watch the sim, open the viewer alongside the headless server: `gz sim -g`.
 ## Setup from scratch (one Ubuntu machine, no robot needed)
 
 The entire sim pipeline runs on a single Ubuntu workstation. The Jetson/HIL tier is
-optional extra hardware — see "Going further".
+optional extra hardware — see "Hardware-in-the-loop" above.
 
 1. **Ubuntu 24.04** (bare metal recommended; the sim renders headless without a GPU,
    a discrete GPU just makes it faster).
@@ -122,18 +151,6 @@ SSH for the HIL stage. **Stages 0–1 run on GitHub-hosted runners**, so a fork 
 the requirements gate and quality gate working with zero setup; stages 2–5 need the
 hardware. Runs are serialized via a concurrency group because the runners are
 physical, shared machines.
-
-## Going further
-
-- **Jetson / hardware-in-the-loop tier** — flash, provision, and register a Jetson
-  Orin Nano: [`docs/runbooks/JetsonInstallSession14.md`](docs/runbooks/JetsonInstallSession14.md)
-- **Mission 1 HIL runbook (manual procedure + first real run)** —
-  [`docs/runbooks/Mission1HILSession15.md`](docs/runbooks/Mission1HILSession15.md)
-- **Gazebo viewer cheatsheet** — [`GazeboCommands.md`](GazeboCommands.md)
-
-**What's next:** the lessons from this project are seeding a follow-on effort
-(working name `synthetic-fleet`) that drops the physical-hardware tether entirely to
-explore large-scale synthetic fleet simulation and sim-to-real transfer.
 
 ## Repo map
 
