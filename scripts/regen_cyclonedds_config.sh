@@ -2,47 +2,73 @@
 # Copyright 2026 Mike
 # SPDX-License-Identifier: Apache-2.0
 #
-# Regenerates ~/cyclonedds-hil.xml based on which network interface(s) are actually
-# UP right now on the Jetson — Ethernet (enP8p1s0) preferred when up, WiFi (wlP1p1s0)
-# used as a fallback when it isn't. Run ON THE JETSON (hil_stage.sh's nav2_up() calls
-# this over SSH, every HIL day, before Nav2 launches).
+# Regenerates ~/cyclonedds-hil.xml (or $CYCLONEDDS_CONFIG_PATH) from THIS machine's
+# real current link state — Ethernet preferred over WiFi, whichever physical
+# interface is actually up right now. Runs unmodified on both the Jetson
+# (hil_stage.sh's nav2_up(), over SSH, every HIL day, before Nav2 launches) and the
+# workstation (sim_up(), before the Gazebo/bridge launch) — auto-detects physical vs
+# virtual interfaces instead of hardcoding names per machine, since the two
+# machines' real interface names differ (enP8p1s0/wlP1p1s0 vs enp6s0/wlp5s0).
 #
-# Why this exists (2026-07-31, confirmed live): CycloneDDS's <NetworkInterface> list
-# requires EVERY listed entry to correspond to a currently-up interface — a statically
-# listed DOWN interface makes CycloneDDS hard-fail ("enP8p1s0: does not match an
-# available interface"), not gracefully skip to the next-priority one. A static file
-# listing both interfaces therefore breaks whichever one happens to be down at boot
-# time, regardless of declared priority. This script never lists an interface that
-# isn't actually up at generation time, so it's correct however the Jetson happens to
-# be connected when it boots — no manual step needed either way.
+# Why this exists (2026-07-31, confirmed live, same day, same failure CLASS on both
+# machines):
+#   - On the Jetson: CycloneDDS's <NetworkInterface> list requires EVERY listed entry
+#     to correspond to a currently-up interface — a statically listed DOWN interface
+#     makes it hard-fail ("enP8p1s0: does not match an available interface"), not
+#     gracefully fall back to the next-priority one. A static file listing both
+#     interfaces therefore breaks whichever one happens to be down at boot time,
+#     regardless of declared priority.
+#   - On the workstation: sim_up() set NO CycloneDDS config at all, relying on
+#     CycloneDDS's own default auto-selection — which picked `docker0` (a virtual
+#     Docker bridge on an unrelated 172.17.0.0/16 subnet) over the real WiFi
+#     interface, so the workstation's Gazebo/bridge topics never reached the Jetson
+#     at all, even though both machines were mutually pingable (Jetson's own local
+#     nodes came up fine in that same run — only cross-machine discovery was dark).
+# This script never lists a down interface, and never lists a virtual one (no
+# /sys/class/net/<iface>/device symlink — the standard way to tell a real NIC apart
+# from a virtual bridge/veth/loopback on Linux), so it's correct on either machine,
+# however it's connected, with no manual step or per-machine interface name list to
+# maintain.
 set -euo pipefail
 
-CONFIG_PATH="$HOME/cyclonedds-hil.xml"
-ETH_IFACE="enP8p1s0"
-WIFI_IFACE="wlP1p1s0"
+CONFIG_PATH="${CYCLONEDDS_CONFIG_PATH:-$HOME/cyclonedds-hil.xml}"
+
+is_physical() {
+  [ -e "/sys/class/net/$1/device" ]
+}
 
 iface_state() {
   # /sys/class/net/<iface>/operstate is the real, reliable link state ("up"/"down") —
   # not `ip link`'s administrative UP flag, which stays "UP" even with no cable
-  # plugged in (that's exactly what caused this bug in the first place).
+  # plugged in (that's exactly what caused the Jetson-side bug in the first place).
   cat "/sys/class/net/$1/operstate" 2>/dev/null || echo "down"
 }
 
-eth_state=$(iface_state "$ETH_IFACE")
-wifi_state=$(iface_state "$WIFI_IFACE")
+# Ethernet-named interfaces (en*/eth*) get priority 10, WiFi-named (wl*) get priority 1
+# — the standard systemd predictable-network-interface-naming convention holds on
+# both machines, so this needs no per-machine interface name list. An unrecognized
+# but genuinely physical, up interface still gets included (priority 5) rather than
+# silently dropped.
+priority_for() {
+  case "$1" in
+    en*|eth*) echo 10 ;;
+    wl*)      echo 1 ;;
+    *)        echo 5 ;;
+  esac
+}
 
 interfaces=""
-if [ "$eth_state" = "up" ]; then
-  interfaces="${interfaces}    <NetworkInterface name=\"${ETH_IFACE}\" priority=\"10\"/>
+for iface_path in /sys/class/net/*; do
+  iface="$(basename "$iface_path")"
+  [ "$iface" = "lo" ] && continue
+  is_physical "$iface" || continue
+  [ "$(iface_state "$iface")" = "up" ] || continue
+  interfaces="${interfaces}    <NetworkInterface name=\"${iface}\" priority=\"$(priority_for "$iface")\"/>
 "
-fi
-if [ "$wifi_state" = "up" ]; then
-  interfaces="${interfaces}    <NetworkInterface name=\"${WIFI_IFACE}\" priority=\"1\"/>
-"
-fi
+done
 
 if [ -z "$interfaces" ]; then
-  echo "FATAL: neither ${ETH_IFACE} nor ${WIFI_IFACE} is up — no viable network interface" >&2
+  echo "FATAL: no physical, currently-up network interface found" >&2
   exit 1
 fi
 
@@ -58,5 +84,5 @@ ${interfaces}      </Interfaces>
 </CycloneDDS>
 EOF
 
-echo "cyclonedds-hil.xml regenerated (eth=${eth_state}, wifi=${wifi_state}):"
+echo "cyclonedds-hil.xml regenerated at ${CONFIG_PATH}:"
 cat "$CONFIG_PATH"

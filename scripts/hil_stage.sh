@@ -147,7 +147,16 @@ sim_up() {
   source /opt/ros/jazzy/setup.bash
   source install/setup.bash
   set -u
-  export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0
+  # Regenerate this machine's OWN cyclonedds config from its real current link state
+  # (2026-07-31) — sim_up() previously set no CycloneDDS config at all, so CycloneDDS's
+  # default auto-selection picked docker0 (a virtual Docker bridge on an unrelated
+  # subnet) over the real WiFi interface, silently keeping every Gazebo/bridge topic
+  # from ever reaching the Jetson even though the machines could ping each other fine.
+  # Same script nav2_up() already runs on the Jetson side — auto-detects physical vs
+  # virtual interfaces, so it needs no per-machine interface name list.
+  bash scripts/regen_cyclonedds_config.sh
+  export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 \
+    CYCLONEDDS_URI="file://$HOME/cyclonedds-hil.xml"
   # setsid: own process group, so teardown's kill -INT -<pid> signals the whole launch tree.
   setsid ros2 launch src/nav_fleet/launch/sim_only_launch.py > "$SIM_LOG" 2>&1 &
   local deadline=$((SECONDS + 60))
