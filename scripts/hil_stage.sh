@@ -166,6 +166,13 @@ sim_up() {
 nav2_up() {
   echo '=== [nav2-up] launching Nav2 on the Jetson (budget 120s) ==='
   require_ip
+  # Regenerate cyclonedds-hil.xml from the Jetson's REAL current link state before
+  # every launch (2026-07-31) — a statically listed DOWN interface makes CycloneDDS
+  # hard-fail outright ("X: does not match an available interface"), not gracefully
+  # fall back to the next-priority one (confirmed live). This makes Nav2 come up
+  # correctly whichever interface the Jetson happens to be connected through at boot,
+  # with no manual step ever needed either way.
+  jssh "cd ${JETSON_REPO} && bash scripts/regen_cyclonedds_config.sh"
   # The (...) subshell + < /dev/null are BOTH required, or the local ssh call blocks
   # forever and nav2_up never reaches its polling loop:
   #  - bash's `&` binds to the ENTIRE preceding &&-list, so without the parens the
