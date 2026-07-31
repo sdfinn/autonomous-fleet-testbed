@@ -359,9 +359,14 @@ jobs:
       RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
       ROS_DOMAIN_ID: "0"
       JETSON_USER: mike
-      POWER_MODE_ID: "0"          # 15W — the HIL mission runs at the rover's deployment
-                                  # power budget (Mike, 2026-07-14); builds run at 25W
-                                  # (explicit override below); restored to 25W at the end.
+      POWER_MODE_ID: "1"          # 25W always (Mike, 2026-07-31) — HIL is wall-powered, no
+                                  # battery budget to test against; the real robot's own
+                                  # short (<30min) field experiments also stay at 25W, so
+                                  # this is deployment power now, not just build power.
+                                  # Was 15W-during-mission/25W-during-build; that switch is
+                                  # exactly what tripped nvpmodel's stuck reboot-confirmation
+                                  # bug (CLAUDE.md Gotchas) — removing the switch removes an
+                                  # entire class of CI failure, not just a wording change.
       STATE_DIR: /tmp/hil_stage
       # phase 2 (Task 12): the day orchestrator runs mission2 inside the arm64 image stage-3
       # built, consuming the arm64→HIL pipeline edge (see tools/mission2_day.JetsonExecutor).
@@ -381,8 +386,8 @@ jobs:
           echo "JETSON_IP=${JETSON_IP}" >> $GITHUB_ENV
           echo "Jetson at ${JETSON_IP}"
 
-      - name: Jetson to 25W for the build (build fast, test at deployment power)
-        run: POWER_MODE_ID=1 scripts/hil_stage.sh power-mode
+      - name: Jetson to 25W (explicit set — safety net in case a prior session left it elsewhere)
+        run: scripts/hil_stage.sh power-mode
 
       - name: Sync + build the commit under test on the Jetson
         run: scripts/hil_stage.sh sync ${{ github.sha }}
@@ -397,9 +402,6 @@ jobs:
         run: |
           source /opt/ros/jazzy/setup.bash
           colcon build --symlink-install
-
-      - name: Jetson to 15W — the mission runs at deployment power, recorded in telemetry
-        run: scripts/hil_stage.sh power-mode
 
       - name: Record start time
         run: echo "HIL_START=$(date +%s)" >> $GITHUB_ENV
@@ -429,6 +431,18 @@ jobs:
           scp -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JETSON_USER}@${JETSON_IP}:/tmp/nav2_hil_*.log /tmp/hil_stage/ || true
           ls -la /tmp/hil_stage/nav2_hil_*.log 2>/dev/null || echo "no Jetson nav2 logs fetched"
 
+      - name: Ingest on-Jetson VLM canary result (real on-device inference, 2026-07-31)
+        # JetsonExecutor spawns the actual classification ON THE JETSON (its own Ollama/
+        # CUDA install — the whole point of an "on-device" canary), fire-and-forget, so
+        # it may still be running when the mission itself finishes. Placed as late as
+        # possible (after the Nav2 log fetch above) to give it the most wall-clock time
+        # before this best-effort pull-back. Missing result = not run yet / no red
+        # reaction today / Ollama not installed — never fails the job.
+        if: always()
+        run: |
+          source ~/fleet-env/bin/activate
+          python -m tools.mission2_day --ingest-vlm-canary
+
       - name: Upload mission evidence artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -440,6 +454,7 @@ jobs:
             /tmp/hil_stage/mission2_day.log
             /tmp/hil_stage/day.out
             /tmp/hil_stage/nav2_hil_*.log
+            /tmp/hil_stage/vlm_canary_last_result.json
             reports/photos/*.png
             reports/failure_bags/**
           if-no-files-found: warn
@@ -479,7 +494,7 @@ jobs:
 
       - name: Restore Jetson to 25W (its steady-state runner mode)
         if: always()
-        run: POWER_MODE_ID=1 scripts/hil_stage.sh power-mode || true
+        run: scripts/hil_stage.sh power-mode || true
 
   # Split into -sim and -hw (2026-07-10) so Gazebo's drift/report recording doesn't wait on
   # the slower arm64+hardware path — was one job needing the hardware-path job only, so a

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for tools/vlm_canary.py (2026-07-30 design spec) — the fully decoupled,
 log-only on-device VLM classification of Mission 2's red-ball reaction photo."""
+import json
 import sqlite3
 import sys
 from types import SimpleNamespace
@@ -174,3 +175,60 @@ def test_main_dispatches_warm_flag_without_photo_args(monkeypatch):
     main()  # must not raise / must not require photo_path+run_context argv
 
     assert len(calls) == 1
+
+
+def test_main_writes_result_summary_json_on_success(monkeypatch, tmp_path):
+    db = str(tmp_path / "t.db")
+    monkeypatch.setattr(vlm_canary_module, 'DB_PATH', db)
+
+    def fake_chat(model, messages):
+        return SimpleNamespace(message=SimpleNamespace(content='a red ball'))
+    monkeypatch.setattr(vlm_canary_module.ollama, 'chat', fake_chat)
+    monkeypatch.setattr(sys, 'argv', ['vlm_canary', '/tmp/fake.png', 'red'])
+
+    main()
+
+    summary_path = tmp_path / 'vlm_canary_last_result.json'
+    assert summary_path.exists()
+    payload = json.loads(summary_path.read_text())
+    assert payload == {
+        'run_context': 'red', 'photo_path': '/tmp/fake.png',
+        'model_name': DEFAULT_MODEL, 'answer': 'a red ball', 'error': None,
+    }
+
+
+def test_main_writes_result_summary_json_on_failure(monkeypatch, tmp_path):
+    db = str(tmp_path / "t.db")
+    monkeypatch.setattr(vlm_canary_module, 'DB_PATH', db)
+
+    def fake_chat(model, messages):
+        raise ConnectionError("Connection refused")
+    monkeypatch.setattr(vlm_canary_module.ollama, 'chat', fake_chat)
+    monkeypatch.setattr(sys, 'argv', ['vlm_canary', '/tmp/fake.png', 'red'])
+
+    main()
+
+    payload = json.loads((tmp_path / 'vlm_canary_last_result.json').read_text())
+    assert payload['answer'] is None
+    assert 'ollama serve' in payload['error']
+
+
+def test_result_summary_overwrites_on_each_call(monkeypatch, tmp_path):
+    """At most one red reaction per HIL/sim day — 'last' is deliberately unambiguous,
+    a fresh call should replace, not append to, the previous result."""
+    db = str(tmp_path / "t.db")
+    monkeypatch.setattr(vlm_canary_module, 'DB_PATH', db)
+    answers = iter(['first answer', 'second answer'])
+
+    def fake_chat(model, messages):
+        return SimpleNamespace(message=SimpleNamespace(content=next(answers)))
+    monkeypatch.setattr(vlm_canary_module.ollama, 'chat', fake_chat)
+
+    monkeypatch.setattr(sys, 'argv', ['vlm_canary', '/tmp/a.png', 'red'])
+    main()
+    monkeypatch.setattr(sys, 'argv', ['vlm_canary', '/tmp/b.png', 'red'])
+    main()
+
+    payload = json.loads((tmp_path / 'vlm_canary_last_result.json').read_text())
+    assert payload['answer'] == 'second answer'
+    assert payload['photo_path'] == '/tmp/b.png'

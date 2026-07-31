@@ -230,3 +230,33 @@ def test_home_pair_similarity_and_judge(tmp_path):
     # Missing photo -> None -> a clean fail, never a crash.
     assert home_pair_similarity([], [str(same)]) is None
     assert any('missing' in f for f in judge_home_pair(None))
+
+
+def test_log_variant_row_passes_photos_as_json_to_log_run(monkeypatch):
+    """2026-07-31: this leg's own photo list is now forwarded (JSON-encoded) to
+    log_run() so generate_test_report.py can show each row's REAL photos instead of
+    a time-window guess that cross-contaminates rows logged within the same second
+    (mission2's 3 legs, judged in one tight loop, always share an identical
+    timestamp). log_run/log_variant_row bind db_path at function-definition time
+    (not per-call), so this mocks log_run itself rather than touching a real DB —
+    see tools/vlm_canary.py's own comment on the identical binding trap."""
+    import json
+
+    from tools import mission2_harness
+    captured = {}
+    monkeypatch.setattr(mission2_harness, 'log_run', lambda **kw: captured.update(kw))
+
+    mission2_harness.log_variant_row('red', None, ok=True, runner=None,
+                                      photos=['/tmp/a.png', '/tmp/reaction_red.png'])
+
+    assert json.loads(captured['photos']) == ['/tmp/a.png', '/tmp/reaction_red.png']
+
+
+def test_log_variant_row_photos_null_when_not_given(monkeypatch):
+    from tools import mission2_harness
+    captured = {}
+    monkeypatch.setattr(mission2_harness, 'log_run', lambda **kw: captured.update(kw))
+
+    mission2_harness.log_variant_row('no_ball', None, ok=True, runner=None)
+
+    assert captured['photos'] is None

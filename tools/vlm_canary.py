@@ -12,6 +12,8 @@ after a red-reaction photo is already saved — this process is never awaited by
 caller, so any failure here (Ollama not running, model not pulled) can only ever land
 in this module's own log row, never propagate to the mission.
 """
+import json
+import os
 import sqlite3
 import sys
 import time
@@ -21,6 +23,29 @@ import ollama
 from tools.telemetry_logger import DB_PATH
 
 DEFAULT_MODEL = 'moondream:1.8b'
+
+
+def _result_summary_path(db_path: str = DB_PATH) -> str:
+    """Alongside the sqlite DB — a small, single-result JSON snapshot of the LAST
+    classify_photo() call, overwritten each time (at most one red reaction per HIL/sim
+    day, so 'last' is unambiguous). Exists so a caller running this ON THE JETSON
+    (mission2_day.py's JetsonExecutor, 2026-07-31) can have the WORKSTATION pull back
+    just this one small file over SCP afterward, instead of merging a whole remote
+    sqlite DB — the Jetson's own local vlm_canary_log write above is invisible to
+    every report/dashboard tool, which all read the workstation's copy."""
+    return os.path.join(os.path.dirname(db_path), 'vlm_canary_last_result.json')
+
+
+def _write_result_summary(run_context, photo_path, model_name, answer=None, error=None):
+    """Best-effort; a failure here never matters — the sqlite row above is already the
+    source of truth on THIS machine, this file only exists for a remote puller."""
+    payload = {'run_context': run_context, 'photo_path': photo_path,
+               'model_name': model_name, 'answer': answer, 'error': error}
+    try:
+        with open(_result_summary_path(DB_PATH), 'w') as f:
+            json.dump(payload, f)
+    except OSError:
+        pass
 
 
 def init_db(db_path: str = DB_PATH):
@@ -157,9 +182,11 @@ def main():
         answer = classify_photo(photo_path)
         log_vlm_canary_result(run_context, photo_path, DEFAULT_MODEL, answer=answer,
                               db_path=DB_PATH)
+        _write_result_summary(run_context, photo_path, DEFAULT_MODEL, answer=answer)
     except Exception as exc:
         log_vlm_canary_result(run_context, photo_path, DEFAULT_MODEL, error=str(exc),
                               db_path=DB_PATH)
+        _write_result_summary(run_context, photo_path, DEFAULT_MODEL, error=str(exc))
 
 
 if __name__ == '__main__':

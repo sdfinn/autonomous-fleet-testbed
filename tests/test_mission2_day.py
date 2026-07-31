@@ -421,6 +421,208 @@ def test_pull_photos_from_paths_empty_list_makes_no_scp_call(monkeypatch, tmp_pa
     assert ex._pull_photos_from_paths([]) == []
 
 
+# ── On-device VLM canary — classifies ON THE JETSON itself (2026-07-31) ─────────────────────
+def test_jetson_executor_spawns_own_vlm_canary_flag_is_true():
+    assert JetsonExecutor.spawns_own_vlm_canary is True
+
+
+def test_spawn_vlm_warmup_on_jetson_dispatches_ssh_command(monkeypatch):
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured['cmd'] = cmd
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    ex.spawn_vlm_warmup()
+
+    assert captured['cmd'][:2] == ['ssh', '-o']
+    assert 'mike@10.42.0.217' in captured['cmd']
+    assert 'python3 -m tools.vlm_canary --warm' in captured['cmd'][-1]
+    assert 'nohup' in captured['cmd'][-1]
+
+
+def test_spawn_vlm_warmup_on_jetson_logs_warning_on_failure_without_raising(monkeypatch):
+    def _boom(*a, **k):
+        raise OSError('no such file or directory')
+    monkeypatch.setattr(subprocess, 'run', _boom)
+
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    ex.spawn_vlm_warmup()  # must not raise
+
+
+def test_spawn_vlm_canary_on_jetson_dispatches_ssh_with_remote_path(monkeypatch):
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured['cmd'] = cmd
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    leg = _leg(photos=['/home/mike/fleet-ci-data/photos/mission2_reaction_red_1.png'],
+               reaction_events=[{'color': 'red', 'reaction': 'photo_then_stop',
+                                 'truth_xy': None}])
+    ex._spawn_vlm_canary_on_jetson(leg)
+
+    assert 'mike@10.42.0.217' in captured['cmd']
+    remote_cmd = captured['cmd'][-1]
+    assert 'python3 -m tools.vlm_canary' in remote_cmd
+    assert '/home/mike/fleet-ci-data/photos/mission2_reaction_red_1.png red' in remote_cmd
+    assert 'nohup' in remote_cmd
+
+
+def test_spawn_vlm_canary_on_jetson_translates_container_path(monkeypatch):
+    monkeypatch.setenv('HIL_CONTAINER', '1')
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+                        lambda self: None)
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured['cmd'] = cmd
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    leg = _leg(photos=['/root/fleet-ci-data/photos/mission2_reaction_red_1.png'],
+               reaction_events=[{'color': 'red', 'reaction': 'photo_then_stop',
+                                 'truth_xy': None}])
+    ex._spawn_vlm_canary_on_jetson(leg)
+
+    assert '~/fleet-ci-data/photos/mission2_reaction_red_1.png red' in captured['cmd'][-1]
+
+
+def test_spawn_vlm_canary_on_jetson_does_nothing_without_a_red_reaction(monkeypatch):
+    def _boom(*a, **k):
+        raise AssertionError('must not spawn when there was no red reaction')
+    monkeypatch.setattr(subprocess, 'run', _boom)
+
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    leg = _leg(photos=['/home/mike/fleet-ci-data/photos/mission2_marker_1.png'],
+               reaction_events=[])
+    ex._spawn_vlm_canary_on_jetson(leg)  # must not raise
+
+
+def test_spawn_vlm_canary_on_jetson_logs_warning_on_failure_without_raising(monkeypatch):
+    def _boom(*a, **k):
+        raise OSError('no such file or directory')
+    monkeypatch.setattr(subprocess, 'run', _boom)
+
+    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    leg = _leg(photos=['/home/mike/fleet-ci-data/photos/mission2_reaction_red_1.png'],
+               reaction_events=[{'color': 'red', 'reaction': 'photo_then_stop',
+                                 'truth_xy': None}])
+    ex._spawn_vlm_canary_on_jetson(leg)  # must not raise
+
+
+def test_run_day_spawns_canary_on_jetson_before_pulling_photos_back(monkeypatch, tmp_path):
+    """The on-Jetson spawn must see the ORIGINAL remote path — it has to fire before
+    _pull_photos_from_paths overwrites leg['photos'] with workstation-local copies."""
+    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    legs = [_leg(reaction_events=[{'color': 'red', 'reaction': 'photo_then_stop',
+                                   'truth_xy': None}],
+                 photos=['/home/mike/fleet-ci-data/photos/mission2_reaction_red_1.png'])]
+    seen_paths = []
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == 'timeout':
+            return subprocess.CompletedProcess(cmd, returncode=0,
+                                                stdout=_day_result_stdout(legs), stderr='')
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
+
+    def fake_spawn(self, leg):
+        seen_paths.extend(leg['photos'])
+
+    def fake_pull(self, paths):
+        return ['local/pulled.png' for _ in paths]
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_spawn_vlm_canary_on_jetson',
+                        fake_spawn)
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_pull_photos_from_paths',
+                        fake_pull)
+    ex = JetsonExecutor('10.42.0.217', str(tmp_path))
+
+    result = ex.run_day()
+
+    assert seen_paths == ['/home/mike/fleet-ci-data/photos/mission2_reaction_red_1.png']
+    assert result[0]['photos'] == ['local/pulled.png']
+
+
+def test_run_day_skips_workstation_side_canary_for_jetson_executor(monkeypatch):
+    """The top-level run_day() must not ALSO spawn a workstation-side canary for a
+    Jetson-executed leg — JetsonExecutor already classified it, on-device, itself."""
+    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg', lambda *a, **k: True)
+    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+
+    def _boom(*a, **k):
+        raise AssertionError('workstation-side canary must not fire for a Jetson executor')
+    monkeypatch.setattr(mission2_day_module, '_maybe_spawn_vlm_canary', _boom)
+
+    class FakeJetsonExecutor:
+        spawns_own_vlm_canary = True
+
+        def run_day(self):
+            return [_leg(), _leg(), _leg()]
+
+    ok = run_day(FakeJetsonExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
+    assert ok is True
+
+
+# ── Ingest the on-Jetson canary result back into the workstation's real DB (2026-07-31) ─────
+def test_ingest_vlm_canary_from_jetson_logs_result_with_local_photo_path(
+        monkeypatch, tmp_path):
+    import json as _json
+    import sqlite3
+
+    from tools.mission2_day import ingest_vlm_canary_from_jetson
+    db = str(tmp_path / "t.db")
+    local_red_photo = tmp_path / "mission2_reaction_red_20260731_080109.png"
+    local_red_photo.write_bytes(b'fake png bytes')
+    remote_json_local_copy = tmp_path / 'vlm_canary_last_result.json'
+
+    def fake_scp(cmd, **kwargs):
+        # Simulate a successful scp by writing the file scp would have pulled back.
+        remote_json_local_copy.write_text(_json.dumps({
+            'run_context': 'red',
+            'photo_path': '/home/mike/fleet-ci-data/photos/mission2_reaction_red_x.png',
+            'model_name': 'moondream:1.8b', 'answer': 'a red ball', 'error': None,
+        }))
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
+    monkeypatch.setattr(subprocess, 'run', fake_scp)
+
+    ingest_vlm_canary_from_jetson('192.168.1.86', state_dir=str(tmp_path), db_path=db)
+
+    conn = sqlite3.connect(db)
+    row = conn.execute(
+        "SELECT run_context, photo_path, answer FROM vlm_canary_log").fetchone()
+    conn.close()
+    # photo_path must be the WORKSTATION-local path (matched by basename in state_dir),
+    # NOT the Jetson-side path the JSON reported — that path is meaningless here and
+    # would never match generate_test_report.py's `photos` column join.
+    assert row == ('red', str(local_red_photo), 'a red ball')
+
+
+def test_ingest_vlm_canary_from_jetson_no_op_when_scp_fails(monkeypatch, tmp_path):
+    """No result yet (still running, no red reaction today, Ollama not installed) is
+    not an error — must not raise, must not write anything."""
+    import os
+
+    from tools.mission2_day import ingest_vlm_canary_from_jetson
+    db = str(tmp_path / "t.db")
+
+    def fake_scp(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, returncode=1, stdout='', stderr='no such file')
+    monkeypatch.setattr(subprocess, 'run', fake_scp)
+
+    ingest_vlm_canary_from_jetson('192.168.1.86', state_dir=str(tmp_path), db_path=db)
+
+    assert not os.path.exists(db)  # log_vlm_canary_result (and its init_db) never ran
+
+
 # ── Failure-bag scp (unaffected by the Piece 9 rewrite — still a log-text regex scrape) ─────
 def test_pull_failure_bags_scps_the_directory_recursively(monkeypatch, tmp_path):
     """S17 Piece 3: a 'failure bag kept: <path>' log line must scp -r the whole bag
@@ -574,8 +776,8 @@ def test_judge_and_log_leg_routes_to_the_right_judge(monkeypatch, name, judge_na
         monkeypatch.setattr(mission2_day_module, fn_name, _make(fn_name))
     logged = []
     monkeypatch.setattr(mission2_day_module, 'log_variant_row',
-                        lambda variant, seed, ok, runner=None, home_photo_similarity=None:
-                        logged.append((variant, ok)))
+                        lambda variant, seed, ok, runner=None, home_photo_similarity=None,
+                               photos=None: logged.append((variant, ok)))
 
     ok = mission2_day_module._judge_and_log_leg(name, leg, (1.2, 3.9), gt_log)
 
@@ -591,8 +793,8 @@ def test_judge_and_log_leg_ok_false_when_judge_reports_fails(monkeypatch):
                         lambda *a, **k: ['some failure'])
     logged = []
     monkeypatch.setattr(mission2_day_module, 'log_variant_row',
-                        lambda variant, seed, ok, runner=None, home_photo_similarity=None:
-                        logged.append(ok))
+                        lambda variant, seed, ok, runner=None, home_photo_similarity=None,
+                               photos=None: logged.append(ok))
 
     ok = mission2_day_module._judge_and_log_leg('no_ball', leg, (1.2, 3.9), gt_log)
 
@@ -628,6 +830,8 @@ def test_run_day_operator_mode_never_starts_the_choreography_thread(monkeypatch)
     monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
+        spawns_own_vlm_canary = False
+
         def run_day(self):
             return [_leg(), _leg(), _leg()]
 
@@ -665,6 +869,8 @@ def test_run_day_operator_mode_populates_ground_truth_log(monkeypatch):
     monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg', fake_judge)
 
     class FakeExecutor:
+        spawns_own_vlm_canary = False
+
         def run_day(self):
             return [_leg(), _leg(), _leg()]
 
@@ -708,6 +914,8 @@ def test_run_day_gz_mode_starts_and_joins_the_choreography_thread(monkeypatch):
     monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
+        spawns_own_vlm_canary = False
+
         def run_day(self):
             return [_leg(), _leg(), _leg()]
 
@@ -724,6 +932,8 @@ def test_run_day_judges_all_three_legs_in_declared_order(monkeypatch):
     monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
+        spawns_own_vlm_canary = False
+
         def run_day(self):
             return [_leg(), _leg(), _leg()]
 
@@ -739,6 +949,8 @@ def test_run_day_returns_false_if_any_leg_fails(monkeypatch):
     monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
+        spawns_own_vlm_canary = False
+
         def run_day(self):
             return [_leg(), _leg(), _leg()]
 
@@ -858,6 +1070,8 @@ def test_run_day_calls_maybe_spawn_vlm_canary_once_per_leg(monkeypatch):
     monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
+        spawns_own_vlm_canary = False
+
         def run_day(self):
             return [_leg(), _leg(), _leg()]
 

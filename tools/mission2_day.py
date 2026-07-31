@@ -89,7 +89,7 @@ JENV = ('source /opt/ros/jazzy/setup.bash && '
         'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 '
         'MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1')
 STATE_DIR = os.environ.get('STATE_DIR', '/tmp/hil_stage')
-POWER_MODE_LABEL = os.environ.get('POWER_MODE', '15W')
+POWER_MODE_LABEL = os.environ.get('POWER_MODE', '25W')
 
 # Orphan-sweep pattern (CLAUDE.md Gotchas): every process a Gazebo+Nav2 launch spawns that
 # would poison the next run's DDS domain if it lingered. Kept in sync with ci.yml stage-2
@@ -147,6 +147,13 @@ class OperatorBallOps(BallOps):
 
 # ── Mission execution (WHERE) ─────────────────────────────────────────────────────────────
 class MissionExecutor:
+    #: Whether this executor spawns its OWN VLM canary internally (JetsonExecutor,
+    #: 2026-07-31: classifies ON THE JETSON, using its own Ollama install — the actual
+    #: point of an "on-device" canary). When True, run_day() (module-level) skips its
+    #: own workstation-side _maybe_spawn_vlm_canary() call for this executor, so the
+    #: same red-reaction photo isn't classified twice by two different machines.
+    spawns_own_vlm_canary = False
+
     def run_day(self):
         """Run the WHOLE day (3 legs: no_ball, yellow, red) in one call and return the 3
         leg dicts MissionRunner.run_mission2_day() produces (t_start/t_end/ok/checklist/
@@ -182,6 +189,8 @@ class JetsonExecutor(MissionExecutor):
     comes from the workstation-side GroundTruthLog run_day() (top-level function) collects
     for the whole call — not from anything this class does. Photos are scp'd back to
     reports/photos/ AND STATE_DIR."""
+
+    spawns_own_vlm_canary = True
 
     def __init__(self, jetson_ip, state_dir):
         if not jetson_ip:
@@ -253,8 +262,58 @@ class JetsonExecutor(MissionExecutor):
         self._pull_failure_bags(log_text)  # before result parsing — succeeds even on crash
         results = self._parse_day_result(log_text)
         for leg in results:
+            # Must fire BEFORE _pull_photos_from_paths overwrites leg['photos'] with
+            # workstation-local copies below — this needs the ORIGINAL Jetson-side path.
+            self._spawn_vlm_canary_on_jetson(leg)
             leg['photos'] = self._pull_photos_from_paths(leg['photos'])
         return results
+
+    def spawn_vlm_warmup(self):
+        """Fire-and-forget throwaway inference call, run ON THE JETSON's own Ollama
+        install — a separate daemon/model cache from the workstation's, so the
+        workstation-side warm_up() (fired unconditionally for InProcessExecutor) doesn't
+        cover it. This is the actual point of the on-device canary (2026-07-30 design
+        spec): proving inference works on the real target hardware, not proxied through
+        the workstation's own GPU. Detached via a backgrounded subshell over SSH
+        (mirrors hil_stage.sh's own nav2-launch backgrounding idiom) so the SSH call
+        itself returns immediately. Best-effort: never raises."""
+        cmd = (f'cd {JETSON_REPO} && (nohup python3 -m tools.vlm_canary --warm '
+               f'> /dev/null 2>&1 < /dev/null &)')
+        try:
+            subprocess.run(
+                ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
+                 '-o', 'StrictHostKeyChecking=accept-new',
+                 f'{JETSON_USER}@{self.ip}', cmd],
+                capture_output=True, text=True, timeout=15)
+        except Exception as exc:
+            log.warning(f'vlm canary warm-up (on-Jetson): could not spawn probe: {exc}')
+
+    def _spawn_vlm_canary_on_jetson(self, leg):
+        """The real on-device classification (2026-07-31) — spawned ON THE JETSON using
+        its own Ollama/CUDA install, using the ORIGINAL remote photo path (via
+        _remote_photo_path, the same translation _pull_photos_from_paths already relies
+        on for bare-metal vs container mode). Mirrors _maybe_spawn_vlm_canary's own
+        red-reaction filter exactly — hardcodes run_context='red' rather than threading
+        a leg name through, since that filter can only ever match the 'red' variant
+        (hil_variant_names()'s fixed declared shape: only the red leg ever carries a
+        'red' reaction_event). Fire-and-forget over SSH; never waited on, any failure
+        stays on the Jetson's own side, never affects this leg's judging/telemetry."""
+        if not any(e['color'] == 'red' for e in leg['reaction_events']):
+            return
+        for rel in leg['photos']:
+            if 'reaction_red' not in rel:
+                continue
+            remote_path = self._remote_photo_path(rel)
+            cmd = (f'cd {JETSON_REPO} && (nohup python3 -m tools.vlm_canary '
+                   f'{remote_path} red > /dev/null 2>&1 < /dev/null &)')
+            try:
+                subprocess.run(
+                    ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
+                     '-o', 'StrictHostKeyChecking=accept-new',
+                     f'{JETSON_USER}@{self.ip}', cmd],
+                    capture_output=True, text=True, timeout=15)
+            except Exception as exc:
+                log.warning(f'vlm canary (on-Jetson): could not spawn probe for {rel}: {exc}')
 
     def _parse_day_result(self, log_text):
         import json
@@ -633,7 +692,8 @@ def _judge_and_log_leg(name, leg, ball_xy, gt_log, ref_photos_from_prev=None):
                           home_arrival_photos=[p for p in leg['photos']
                                                if 'mission2_home_arrival' in p])
     ok = not fails
-    log_variant_row(name, None, ok=ok, runner=None, home_photo_similarity=sim)
+    log_variant_row(name, None, ok=ok, runner=None, home_photo_similarity=sim,
+                     photos=leg['photos'])
     log.info(f'  {name}: home_photo_similarity = {sim}')
     _print_checklist([tuple(row) for row in leg['checklist']],
                      f"{name} {'PASS' if ok else 'FAIL'}", fails)
@@ -685,6 +745,50 @@ def _maybe_spawn_vlm_canary(name, leg):
             log.warning(f'vlm canary: could not spawn probe for {photo_path}: {exc}')
 
 
+def ingest_vlm_canary_from_jetson(jetson_ip, state_dir=None, db_path=None):
+    """Pull back the Jetson's own on-device VLM canary result (written by
+    `python3 -m tools.vlm_canary --warm`/`<photo> <ctx>`, run directly ON the Jetson —
+    see JetsonExecutor._spawn_vlm_canary_on_jetson, 2026-07-31) and log it into the
+    WORKSTATION's real fleet_runs.db, so find_vlm_canary_results() can actually find
+    it — the on-Jetson process writes into ITS OWN local fleet_runs.db, invisible to
+    every report/dashboard tool, which all read the workstation's copy. Best-effort: a
+    missing result (canary still running, no red reaction today, Ollama not
+    installed) is not an error, just nothing to ingest yet — never raises.
+
+    photo_path is deliberately NOT trusted from the Jetson's own JSON (a Jetson-side
+    absolute path, meaningless on the workstation) — reuses whichever workstation-
+    local reaction_red photo _pull_photos_from_paths already copied into state_dir for
+    this exact day, so find_vlm_canary_results()'s exact-path join actually works
+    against generate_test_report.py's own `photos` column (2026-07-31 fix, same day)."""
+    import json as _json
+
+    from tools.telemetry_logger import DB_PATH as _DB_PATH
+    from tools.vlm_canary import DEFAULT_MODEL, log_vlm_canary_result
+    state_dir = state_dir or STATE_DIR
+    db_path = db_path or _DB_PATH
+
+    remote_json = '~/fleet-ci-data/vlm_canary_last_result.json'
+    local_json = os.path.join(state_dir, 'vlm_canary_last_result.json')
+    rc = subprocess.run(
+        ['scp', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new',
+         f'{JETSON_USER}@{jetson_ip}:{remote_json}', local_json],
+        capture_output=True, text=True).returncode
+    if rc != 0:
+        log.info('vlm canary (on-Jetson): no result file to ingest yet '
+                 '(not run, still running, or no red reaction today)')
+        return
+
+    with open(local_json) as f:
+        payload = _json.load(f)
+    matches = sorted(pathlib.Path(state_dir).glob('mission2_reaction_red_*.png'))
+    local_photo_path = str(matches[-1]) if matches else payload.get('photo_path')
+    log_vlm_canary_result(
+        payload.get('run_context', 'red'), local_photo_path,
+        payload.get('model_name', DEFAULT_MODEL),
+        answer=payload.get('answer'), error=payload.get('error'), db_path=db_path)
+    log.info(f'vlm canary (on-Jetson): ingested result for {local_photo_path}')
+
+
 def run_day(executor, ball_ops, ball_xy, hold_s):
     """S17 Piece 9: ONE continuous mission execution, 3 separately-judged/logged
     legs (Mike's explicit design, 2026-07-24) — no scenario-named functions, no
@@ -732,7 +836,11 @@ def run_day(executor, ball_ops, ball_xy, hold_s):
     results = {}
     for name, leg in zip(names, legs):
         results[name] = _judge_and_log_leg(name, leg, ball_xy, gt_log)
-        _maybe_spawn_vlm_canary(name, leg)
+        # JetsonExecutor spawns its OWN on-device canary internally (run_day() above,
+        # before photos get pulled back) — skip the workstation-side spawn so the same
+        # red-reaction photo isn't classified twice by two different machines.
+        if not executor.spawns_own_vlm_canary:
+            _maybe_spawn_vlm_canary(name, leg)
     log.info('\n=== SUMMARY ===')
     for name in names:
         log.info(f'  {name:8s}: {"PASS" if results[name] else "FAIL"}')
@@ -758,15 +866,24 @@ def main():
                         help='assume the stack is already up (do not launch/teardown it). '
                              'Implied by --executor jetson (hil_stage.sh owns the HIL stack).')
     parser.add_argument('--log', default='/tmp/mission2_day_sim.log')
+    parser.add_argument('--ingest-vlm-canary', action='store_true',
+                        help='pull back and log the Jetson\'s own on-device VLM canary '
+                             'result (JetsonExecutor spawns it directly on the Jetson) — '
+                             'run as a SEPARATE, later CI step (ci.yml), after the mission '
+                             'has had time to finish the background classification. Ignores '
+                             'every other flag; reads JETSON_IP from the environment.')
     args = parser.parse_args()
 
     pathlib.Path(STATE_DIR).mkdir(parents=True, exist_ok=True)
     configure(log_file=os.path.join(STATE_DIR, 'mission2_day.log'))
+
+    if args.ingest_vlm_canary:
+        ingest_vlm_canary_from_jetson(os.environ.get('JETSON_IP'))
+        return
     log.info(build_env_manifest(
         git_sha=git_sha(), executor=args.executor,
         runner_type=os.environ.get('RUNNER_TYPE'), power_mode=POWER_MODE_LABEL,
         hil_image=os.environ.get('HIL_IMAGE')))
-    _spawn_vlm_warmup()
 
     hil = args.executor == 'jetson'
     no_launch = args.no_launch or hil
@@ -783,7 +900,9 @@ def main():
             proc = launch_stack(args.log)
         if hil:
             executor = JetsonExecutor(os.environ.get('JETSON_IP'), STATE_DIR)
+            executor.spawn_vlm_warmup()
         else:
+            _spawn_vlm_warmup()
             import rclpy as _rclpy
             rclpy = _rclpy
             from nav_fleet.mission_runner import MissionRunner

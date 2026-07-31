@@ -4,6 +4,7 @@
 own scenarios — not a rolling window of the last N runs. Historical trend views live
 in the Piece 5 dashboard, not here."""
 import argparse
+import json
 import os
 import sqlite3
 import sys
@@ -103,6 +104,21 @@ def find_run_photos(row_timestamp: str, photo_dir: str = PHOTO_DIR,
     return [path for _, path in matches]
 
 
+def _row_photos(row: dict, photo_dir: str = PHOTO_DIR) -> list:
+    """This row's own photos: the exact list logged at judging time (the `photos`
+    telemetry column, 2026-07-31) when present, falling back to find_run_photos()'s
+    ±180s time-window heuristic for rows/scenarios that don't populate it yet
+    (bedroom_nav/mission1). The exact column exists because the time-window heuristic
+    cross-contaminates rows logged within the same second of each other — e.g.
+    mission2's 3 legs, judged in one tight loop, always share an identical
+    %Y-%m-%dT%H:%M:%S timestamp, so every leg's section showed every OTHER leg's
+    photos (and VLM canary text) too."""
+    stored = row.get("photos")
+    if stored:
+        return json.loads(stored)
+    return find_run_photos(row["timestamp"], photo_dir=photo_dir)
+
+
 def build_job_summary(runner_type: str, rows: list, reports_by_row_id: dict,
                        any_flagged: bool, evidence_artifact: str = None,
                        vlm_canary_by_row_id: dict = None) -> str:
@@ -149,8 +165,8 @@ def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
         for row in rows
     }
     vlm_canary_by_row_id = {
-        row["id"]: find_vlm_canary_results(
-            find_run_photos(row["timestamp"], photo_dir=photo_dir), db_path=db_path)
+        row["id"]: find_vlm_canary_results(_row_photos(row, photo_dir=photo_dir),
+                                            db_path=db_path)
         for row in rows
     }
     any_flagged = any(
@@ -218,7 +234,7 @@ def generate_report(runner_type: str, scenarios: list, db_path: str = DB_PATH,
                 f"\U0001f50d On-device VLM canary (informational only, not evaluated): {text}",
                 ParagraphStyle("VlmCanary", parent=styles["Normal"], textColor=colors.grey),
             ))
-        for photo_path in find_run_photos(row["timestamp"], photo_dir=photo_dir):
+        for photo_path in _row_photos(row, photo_dir=photo_dir):
             story.append(Spacer(1, 8))
             story.append(RLImage(photo_path, width=300, height=225))
         story.append(Spacer(1, 16))

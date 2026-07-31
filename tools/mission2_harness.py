@@ -433,11 +433,15 @@ def _reaction_events_with_truth(log_text, color, reaction_xy):
     return events
 
 
-def log_variant_row(variant, seed, ok, runner=None, home_photo_similarity=None):
+def log_variant_row(variant, seed, ok, runner=None, home_photo_similarity=None,
+                     photos=None):
     """One telemetry row per judged variant run — the row's result is the JUDGED verdict
     (ground-truth honest), which may be stricter than the mission's self-report.
     home_photo_similarity (Task 13 §3) is the return-fidelity score for nominal/yellow (None
-    for red and off-sim), trended by baseline_monitor as drift-detection material."""
+    for red and off-sim), trended by baseline_monitor as drift-detection material.
+    photos (2026-07-31): this leg's OWN exact photo list, JSON-encoded — lets
+    generate_test_report.py show each row's real photos instead of a time-window guess
+    that cross-contaminates rows logged within the same second (see RUNS_COLUMNS)."""
     nav = getattr(runner, 'nav', None)
     log_run(
         scenario=f'mission2_{variant}',
@@ -454,6 +458,7 @@ def log_variant_row(variant, seed, ok, runner=None, home_photo_similarity=None):
         power_mode=os.environ.get('POWER_MODE'),
         seed=seed,
         home_photo_similarity=home_photo_similarity,
+        photos=json.dumps(photos) if photos else None,
     )
 
 

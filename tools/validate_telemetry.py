@@ -76,6 +76,10 @@ class RunsModel(DataFrameModel):
     failure_reason: Series[str] = pa.Field(
         isin=["goal_rejected", "nav_timeout", "no_camera_frame", "crash", "startup_crash"],
         nullable=True)
+    # photos (2026-07-31): this row's own photo list, JSON-encoded — free-form (no isin
+    # enum, unlike power_mode/failure_reason above), just a plain nullable string;
+    # NULL on rows/scenarios that don't populate it (bedroom_nav/mission1).
+    photos: Series[str] = pa.Field(nullable=True)
 
 
 RUNS_SCHEMA = RunsModel.to_schema()

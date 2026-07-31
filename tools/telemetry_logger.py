@@ -45,6 +45,14 @@ RUNS_COLUMNS = {
     # Failure taxonomy (S17 Piece 3): why a FAIL row failed, not just that it did.
     # NULL on PASS rows and on rows logged before this column existed.
     "failure_reason": "TEXT",
+    # This row's OWN photos (JSON-encoded list), 2026-07-31 — generate_test_report.py's
+    # find_run_photos() matches by a ±180s time window around a row's timestamp, which
+    # cross-contaminates rows logged within the same second of each other (e.g. mission2's
+    # 3 legs, judged in one tight loop with no meaningful delay — confirmed all sharing one
+    # identical %Y-%m-%dT%H:%M:%S timestamp, so each leg's PDF section showed every OTHER
+    # leg's photos/VLM-canary text too). NULL on rows/scenarios that don't populate it
+    # (bedroom_nav/mission1) — those keep using the time-window fallback, unaffected.
+    "photos": "TEXT",
 }
 
 
