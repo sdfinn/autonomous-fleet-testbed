@@ -361,12 +361,19 @@ jobs:
       JETSON_USER: mike
       POWER_MODE_ID: "1"          # 25W always (Mike, 2026-07-31) — HIL is wall-powered, no
                                   # battery budget to test against; the real robot's own
-                                  # short (<30min) field experiments also stay at 25W, so
-                                  # this is deployment power now, not just build power.
-                                  # Was 15W-during-mission/25W-during-build; that switch is
-                                  # exactly what tripped nvpmodel's stuck reboot-confirmation
-                                  # bug (CLAUDE.md Gotchas) — removing the switch removes an
-                                  # entire class of CI failure, not just a wording change.
+                                  # short (<30min) field experiments also stay at 25W too, so
+                                  # this is real deployment power now, not just build power.
+                                  # CI never calls `nvpmodel -m` at all any more (2026-07-31,
+                                  # second pass) — the Jetson is set to 25W once, by hand,
+                                  # outside CI, and left alone permanently; this var is now
+                                  # only real_power_mode_label()'s fallback label if its own
+                                  # live `nvpmodel -q` (read-only, no reboot risk) ever fails.
+                                  # The earlier fix here still called `nvpmodel -m` as a
+                                  # "safety net" step even though the target mode never
+                                  # changed — that SET call is exactly what still tripped
+                                  # nvpmodel's stuck reboot-confirmation bug (CLAUDE.md
+                                  # Gotchas); removing the calls, not just picking a number,
+                                  # is what actually removes the failure class.
       STATE_DIR: /tmp/hil_stage
       # phase 2 (Task 12): the day orchestrator runs mission2 inside the arm64 image stage-3
       # built, consuming the arm64→HIL pipeline edge (see tools/mission2_day.JetsonExecutor).
@@ -385,9 +392,6 @@ jobs:
           JETSON_IP=$(scripts/hil_stage.sh discover)
           echo "JETSON_IP=${JETSON_IP}" >> $GITHUB_ENV
           echo "Jetson at ${JETSON_IP}"
-
-      - name: Jetson to 25W (explicit set — safety net in case a prior session left it elsewhere)
-        run: scripts/hil_stage.sh power-mode
 
       - name: Sync + build the commit under test on the Jetson
         run: scripts/hil_stage.sh sync ${{ github.sha }}
@@ -440,8 +444,14 @@ jobs:
         # reaction today / Ollama not installed — never fails the job.
         if: always()
         run: |
+          source /opt/ros/jazzy/setup.bash
+          # install/setup.bash may not exist if an earlier step in this job's cascade
+          # was itself skipped (e.g. nvpmodel blocked everything upstream) — `|| true`
+          # here (not relying on set -e's exact && short-circuit semantics) guarantees
+          # this line never aborts the step either way.
+          [ -f install/setup.bash ] && source install/setup.bash || true
           source ~/fleet-env/bin/activate
-          python -m tools.mission2_day --ingest-vlm-canary
+          python -m tools.mission2_day --ingest-vlm-canary || true
 
       - name: Upload mission evidence artifact
         if: always()
@@ -491,10 +501,6 @@ jobs:
       - name: Restore Jetson checkout to main
         if: always()
         run: scripts/hil_stage.sh restore-checkout || true
-
-      - name: Restore Jetson to 25W (its steady-state runner mode)
-        if: always()
-        run: scripts/hil_stage.sh power-mode || true
 
   # Split into -sim and -hw (2026-07-10) so Gazebo's drift/report recording doesn't wait on
   # the slower arm64+hardware path — was one job needing the hardware-path job only, so a
