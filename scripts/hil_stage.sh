@@ -55,6 +55,21 @@ BALL_REMOVAL_SETTLE_S="${BALL_REMOVAL_SETTLE_S:-3}"
 # (an earlier, narrower version of this fix — corrected same day after Mike pointed out
 # untethered operation needs WiFi to still work when Ethernet is unplugged). See CLAUDE.md's
 # matching gotcha.
+#
+# UPDATE (2026-07-31): this file is now REGENERATED fresh, from real link state, before
+# every launch — see scripts/regen_cyclonedds_config.sh, called by both nav2_up() (Jetson)
+# and sim_up() (workstation). Two more real bugs found the same day, same failure class:
+# (1) a statically-listed DOWN interface makes CycloneDDS hard-fail outright ("X: does not
+# match an available interface"), not gracefully skip to the next-priority one — so the
+# static file above broke the moment Ethernet was actually unplugged, regardless of
+# priority; (2) sim_up() had NO CycloneDDS config at all, so its own default auto-selection
+# picked docker0 (a virtual bridge on an unrelated subnet) over the workstation's real WiFi
+# interface. Even with both fixed, cross-machine DDS discovery over WiFi ALONE still didn't
+# work in live testing (Nav2's local_costmap never received the workstation's `map`
+# transform) — leading theory is WiFi AP/client isolation or multicast filtering on the
+# router, not investigated further. Recommendation: use Ethernet for HIL day-to-day — the
+# REAL, deployed robot doesn't need WiFi validated at all (everything it does is
+# self-contained on one Jetson, loopback-only), so there's no R1 payoff to chasing this.
 JENV='source /opt/ros/jazzy/setup.bash && source ~/autonomous-fleet-testbed/install/setup.bash && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 CYCLONEDDS_URI=file://$HOME/cyclonedds-hil.xml MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1'
 
 case "$POWER_MODE_ID" in
