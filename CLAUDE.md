@@ -10,6 +10,29 @@ alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean 
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
 
+## NEXT SESSION — START HERE (2026-07-31, post-HIL-debugging-session)
+A full HIL-hardening session landed tonight (25W-always, on-device Jetson VLM canary,
+dynamic CycloneDDS interface selection — see the dated Gotchas entries below for full
+detail) and ended on a fully-green end-to-end CI run. Punch list for next time, in
+order:
+1. **Remove the duplicate mission2 tests from stage-2.** `tests/test_mission2.py`'s 3
+   per-scenario tests (no_ball/yellow/red) are now redundant with
+   `tools/mission2_day.py`'s in-process run in the same stage — same 3 legs, same
+   judging, plus VLM canary coverage the old tests never had. Also audit the rest of
+   stage-2's pytest suite (`test_navigation.py`, `test_mission_run.py`,
+   `test_nav_runner.py`) for anything that doesn't actually need live ROS2/Gazebo and
+   could move to `stage-1-quality` for faster feedback.
+2. **Revisit CI + PDF output** — finish verifying the final green run's (30657248798)
+   actual PDF artifacts (sim and hw) for correct VLM canary placement (each
+   scenario's own canary text, not duplicated across no_ball/yellow/red) and whether
+   the HIL canary text differs from the sim run's — flagged but not finished before
+   this session ended.
+3. Real code coverage (`pytest --cov` + Codecov).
+4. Release 1 → Release 2 planning (branching strategy, `r1-complete` tag).
+5. `RealRobotStartup.md` accuracy check (references "Session 18"; also needs pointing
+   at the new `regen_cyclonedds_config.sh`, since it shares the same DDS setup).
+6. GitHub CI pipeline docs (self-hosted runner setup writeup).
+
 ## Development workflow — tier 1 first
 
 **Primary dev loop (x86 bare metal — use this to flush bugs before touching CI):**
@@ -580,6 +603,140 @@ docker buildx build --platform linux/arm64 \
   user's own screen) — the two structural facts above (secrets withheld from
   `pull_request` fork runs; read-only `GITHUB_TOKEN`) already cover what those
   checkboxes would have, so there's nothing to keep hunting for.
+- **HIL hardening session, 2026-07-31 — full arc, ending in the first fully-green
+  end-to-end CI run of the project (run 30657248798).** Six real, distinct problems
+  found and fixed in sequence; each looked plausible as "the" fix at the time and each
+  turned out to be real but incomplete on its own:
+  1. **25W always, no more `nvpmodel -m` calls in CI at all (Mike's decision).** HIL is
+     wall-powered and the real robot's own short (<30min) field experiments also stay
+     at 25W, so the old 15W-during-mission/25W-during-build switch bought nothing real
+     — and that exact switch is what was tripping nvpmodel's stuck reboot-confirmation
+     bug (see the 2026-07-30 entry above) on *every* HIL run, not a rare one-off as
+     first assumed. Fix wasn't "pick a different number" — an initial pass still kept
+     an explicit `nvpmodel -m 1` "safety net" step and it STILL tripped the bug (the
+     mode requested doesn't have to differ from the current one for the bug to fire).
+     Real fix: stop calling `nvpmodel -m` anywhere in the automated CI path at all.
+     `nvpmodel -q` (read-only, no reboot risk) stays for telemetry's power-mode label.
+  2. **CycloneDDS interface list hard-fails on ANY down interface, doesn't skip to the
+     next-priority one.** The 2026-07-30 fix below (list both interfaces, Ethernet
+     priority 10, WiFi priority 1) assumed CycloneDDS would silently prefer whichever
+     listed interface was actually up. Confirmed false, live: with Ethernet physically
+     unplugged, Nav2 hard-failed on the Jetson with `enP8p1s0: does not match an
+     available interface` / `rmw_create_node: failed to create domain` — every ROS2
+     node on the Jetson died at startup, never got to try wlP1p1s0 at all. This exact
+     "Ethernet unplugged, real CycloneDDS traffic" scenario had never actually been
+     exercised before — the 2026-07-30 WiFi work only verified SSH/mDNS, a different
+     subsystem entirely, unrelated to CycloneDDS's own interface binding.
+  3. **`scripts/regen_cyclonedds_config.sh` (new)** — regenerates the interface config
+     from REAL current link state (`/sys/class/net/<iface>/operstate` — NOT `ip
+     link`'s administrative UP flag, which stays "UP" with no cable plugged in, the
+     root cause of #2) immediately before every launch, on the Jetson
+     (`hil_stage.sh`'s `nav2_up()`, over SSH) — never lists a down interface, so it's
+     correct however the Jetson happens to be connected at boot, no manual step ever
+     needed. Verified live via a direct manual test (bare `ros2 launch
+     nav2_only_launch.py` with the interface removed from the file by hand): fixed
+     immediately, all nodes came up clean.
+  4. **Same failure CLASS, different machine: the workstation's `sim_up()` had NO
+     CycloneDDS config at all**, relying on CycloneDDS's own default auto-selection —
+     which picked `docker0` (a virtual Docker bridge on an unrelated 172.17.0.0/16
+     subnet) over the real WiFi interface. Confirmed via `/sys/class/net/<iface>/
+     device` — the standard way to tell a real NIC from a virtual bridge/veth/loopback
+     apart on Linux (docker0/veth* have no `device` symlink; enp6s0/wlp5s0 do). Result:
+     the workstation's own Gazebo/bridge topics never reached the Jetson at all, even
+     though both machines could ping each other fine (SSH/ping are unicast; CycloneDDS
+     discovery is multicast — a fully separate question). `regen_cyclonedds_config.sh`
+     was generalized (not duplicated per-machine) to auto-detect physical-vs-virtual
+     interfaces via the `/device` check and prioritize by the standard `en*`/`eth*`
+     (Ethernet) vs `wl*` (WiFi) naming convention, so ONE script runs unmodified on
+     both machines despite their real interface names differing
+     (enP8p1s0/wlP1p1s0 vs enp6s0/wlp5s0). Wired into `sim_up()` the same way.
+     Verified live on the workstation itself (real `hil_stage.sh run` invocation,
+     `JETSON_IP` deliberately unset so `nav2_up()` cleanly stopped at its own
+     `require_ip` check before ever touching the Jetson) — regenerated correctly,
+     `docker0` excluded, Gazebo + bridge came up clean.
+  5. **Even with #3 and #4 both fixed, cross-machine DDS discovery over WiFi ALONE
+     still didn't work** — `local_costmap` kept timing out waiting for the `map`
+     transform, live, in CI, with both machines confirmed correctly bound to their
+     real WiFi interfaces (no wrong-interface, no docker0). Leading theory, NOT
+     confirmed further: the WiFi router (AT&T-provided) has AP/client isolation
+     enabled, or filters multicast between wireless clients (common consumer/ISP-
+     router behavior) — would exactly explain why unicast (SSH, ping) worked fine all
+     session but CycloneDDS's multicast-based discovery never crossed the AP.
+     **Deliberately not investigated further** — see the insight below for why, and
+     `scripts/hil_stage.sh`'s own top-of-file comment for the pointer.
+  6. **`scripts/**` was missing from `ci.yml`'s `dorny/paths-filter`** — a
+     `hil_stage.sh`-only push silently skipped the ENTIRE arm64+HIL chain (a run came
+     back green only because everything that ran passed, not because stage-4-hil did
+     — it never ran at all). `hil_stage.sh` drives HIL's entire SSH orchestration, so
+     a change to it should never be able to skip validation this way. Fixed by adding
+     `scripts/**` to the filter's watched paths.
+  **Key insight (Mike): the real, deployed robot does not need WiFi/Ethernet for its
+  core operation at all.** HIL is a two-machine system *by design* — Gazebo (the
+  simulated world) runs on the workstation while Nav2/mission_runner run on the real
+  Jetson, specifically so real onboard software can be tested against a simulated
+  world it can't tell apart from reality. That split is the ENTIRE reason any of #2-#5
+  above exist. The deployed robot has none of it: Nav2, mission_runner, ball_detector,
+  ekf_node, and the VLM canary's Ollama call all run on the same Jetson; even the
+  Docker container path (`HIL_CONTAINER=1`) uses `--network host`, so container-to-
+  host traffic (e.g. reaching Ollama) goes over `localhost` regardless of whether
+  WiFi/Ethernet exists at all. Given that, there's no R1 payoff to chasing #5 further
+  — Ethernet was reconnected for HIL instead (2026-07-31), which is what actually
+  produced the first fully-green run. A dedicated WiFi router/AP Mike controls (not
+  the AT&T gateway) is the right fix if/when it's actually needed — deferred until
+  either a second/slave robot arrives (R2/R3 multi-robot coordination will need real
+  wireless) or R1 debugging over Ethernet-tethered HIL gets cumbersome enough to
+  justify it sooner. Bluetooth was considered and ruled out for this purpose — wrong
+  transport for ROS2/DDS (no standard transport, assumes IP networking + bandwidth for
+  topics like `/scan`/camera streams).
+- **On-device VLM canary, 2026-07-31 — the canary was silently classifying
+  workstation-side even for stage-4-hil, missing the entire point of "on-device."**
+  `_maybe_spawn_vlm_canary()` (`tools/mission2_day.py`) is called from the shared,
+  workstation-side `run_day()` function regardless of executor — so even in HIL mode,
+  classification happened on the WORKSTATION's own Ollama/GPU, using the ALREADY-
+  pulled-back local photo copy, never touching the Jetson's own CUDA/Ollama install
+  (the one specifically installed for this purpose, 2026-07-30). Found when Mike
+  pointed out HIL is "primarily where we want it, the main reason for implementing
+  now." Fixed: `JetsonExecutor` now spawns BOTH the warm-up and the real
+  classification directly on the Jetson over SSH (fire-and-forget, detached,
+  `_spawn_vlm_canary_on_jetson`/`spawn_vlm_warmup`), using `_remote_photo_path`'s
+  existing bare-metal/container path translation, BEFORE `_pull_photos_from_paths`
+  overwrites the leg's photo list with workstation-local copies. A new
+  `MissionExecutor.spawns_own_vlm_canary` flag stops the workstation-side spawn from
+  ALSO firing for a Jetson-executed leg (the same red photo would otherwise get
+  classified twice, by two different machines). Stage-2 (sim, no real Jetson) is
+  unaffected — workstation-side classification is the only sensible option there.
+  **The result has to get back to the WORKSTATION's real `fleet_runs.db`** (the
+  Jetson's own local sqlite write is invisible to every report/dashboard tool, which
+  all read the workstation's copy) — `tools/vlm_canary.py`'s `main()` now also writes
+  a small `vlm_canary_last_result.json` snapshot (overwritten each call — at most one
+  red reaction per day, so "last" is unambiguous) alongside the sqlite DB; a new
+  `python -m tools.mission2_day --ingest-vlm-canary` CI step (placed as LATE as
+  possible in `stage-4-hil`, after the Nav2-log fetch, to give the fire-and-forget
+  background call maximum wall-clock time) pulls that file back and logs it into the
+  workstation's real DB — deliberately re-resolving `photo_path` to the ALREADY-
+  pulled-back workstation-local equivalent rather than trusting the Jetson's own
+  (meaningless-on-the-workstation) path, so it joins correctly against
+  `generate_test_report.py`'s `photos` column (next entry). **Verified end-to-end,
+  live, in the first fully-green run**: `vlm_canary_log` row created at the same
+  wall-clock second as the HIL mission's own `PASS` telemetry row, `photo_path`
+  pointing at the real pulled-HIL-photo (distinct timestamp from the sim run's own
+  canary photo), ingest step logging the real filename rather than "no result file to
+  ingest yet" (which is what every earlier, blocked attempt logged).
+- **Photo/VLM-canary cross-contamination in PDF reports, found + fixed 2026-07-31 —
+  likely present in every HIL report since Piece 9 (2026-07-24), not just today's sim
+  addition.** `generate_test_report.py`'s `find_run_photos()` matches by a ±180s time
+  window around a row's own timestamp — but mission2's 3 legs get telemetry-logged
+  within the same wall-clock second (one tight judging loop, no meaningful delay), so
+  EVERY leg's PDF section showed every OTHER leg's photos and VLM canary text too.
+  Confirmed directly: the exact same canary answer (belonging only to the red leg)
+  appeared duplicated under `no_ball` and `yellow`'s sections in a real generated PDF.
+  Fixed with a new `photos` telemetry column (JSON-encoded, this row's own exact
+  list, populated by `_judge_and_log_leg`/`log_variant_row`) that
+  `generate_test_report.py`'s new `_row_photos()` helper prefers over the time-window
+  guess, falling back to it only for scenarios that don't populate it yet
+  (bedroom_nav/mission1 — unaffected, no reported bug there). Regression-tested
+  directly: two rows sharing an identical timestamp but distinct `photos` columns now
+  correctly produce distinct PDF sections.
 
 ## See also (moved out of this file by /doctor, 2026-07-27, context-lazy-loading pass)
 - Nav2 launch gotchas (Session 10+) — `src/nav_fleet/CLAUDE.md`
