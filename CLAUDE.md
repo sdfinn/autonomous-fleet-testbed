@@ -553,6 +553,33 @@ docker buildx build --platform linux/arm64 \
   direct cause). **If this recurs, the fix is the same one-line `echo yes | ssh ...
   nvpmodel -m <id>` — don't reach for a plain reboot or restart-a-service guess
   first**, both were tried and ruled out this time.
+- **This repo went public 2026-07-31 — it uses two SELF-HOSTED runners (the workstation
+  + the Jetson), which is a real, well-known GitHub Actions risk category for a public
+  repo: a fork PR can trigger a workflow run that executes on physical hardware.**
+  Confirmed and hardened the same day. Facts, not guesses: `ci.yml` has no
+  `workflow_dispatch` trigger (no one, including the owner, can manually trigger a run
+  from the web UI); `sdfinn` is the sole collaborator (confirmed via API — direct push
+  to `main` is impossible for anyone else); `ci.yml` uses `pull_request`, not the
+  riskier `pull_request_target`, so GitHub automatically withholds repository secrets
+  from any fork-PR-triggered run regardless of settings; `default_workflow_permissions`
+  is `read` (confirmed via `gh api repos/.../actions/permissions/workflow`), so even the
+  automatic `GITHUB_TOKEN` can't push/write. The one real, findable, worth-doing setting
+  is Settings → Actions → General → "Fork pull request workflows from outside
+  collaborators" → **set to "require approval for all outside collaborators"** (done
+  2026-07-31) — every fork PR now needs an explicit manual click before anything runs,
+  no exception for repeat contributors. Self-hosted runner network exposure itself was
+  never a real concern regardless of ISP/CGNAT — these runners are outbound-only by
+  design (they long-poll GitHub for work; GitHub never connects inbound), so the actual
+  risk category is "approved code executes on my hardware," not "my machine is
+  reachable from the internet." **A specific pair of checkboxes was initially described
+  as also worth checking ("Send write tokens"/"Send secrets to workflows from fork pull
+  requests") — Mike couldn't find them on this personal-account repo, most likely an
+  org-only setting or a misremembered UI detail from a general-knowledge recall, not
+  verified against the live page before being stated.** Don't re-describe specific UI
+  element names/locations as fact without a way to verify them live (API check, or the
+  user's own screen) — the two structural facts above (secrets withheld from
+  `pull_request` fork runs; read-only `GITHUB_TOKEN`) already cover what those
+  checkboxes would have, so there's nothing to keep hunting for.
 
 ## See also (moved out of this file by /doctor, 2026-07-27, context-lazy-loading pass)
 - Nav2 launch gotchas (Session 10+) — `src/nav_fleet/CLAUDE.md`
