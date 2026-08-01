@@ -13,7 +13,6 @@ dist/
 .coverage
 .coverage.*
 coverage.xml
-coverage-stage*.xml
 htmlcov/
 
 # Virtualenv

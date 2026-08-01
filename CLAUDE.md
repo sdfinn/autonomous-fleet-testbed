@@ -47,39 +47,63 @@ order:
    with a one-line change (glob `PHOTO_DIR`, not `state_dir`), TDD throughout (test
    rewritten to prove the bug RED, fix confirmed GREEN, full 435-test suite still
    green) — commit `bba663b`.
-3. **Real code coverage — IN PROGRESS. CI wiring done 2026-08-01, not yet validated
-   live.** `.coveragerc` (repo root) added; `ci.yml`'s `stage-1-quality` (`--cov`,
-   flag `unit`) and `stage-2-gazebo` (`coverage run -a` across both the pytest
-   integration tests AND the in-process `mission2_day` run — the append picks up
-   the VLM-canary code path too, not just what pytest touches — flag `integration`)
-   each upload their own `coverage-stageN.xml` to Codecov via `codecov/codecov-
-   action@v5`, `fail_ci_if_error: false` so a Codecov outage never breaks CI.
-   Codecov merges the two flags into one project-wide total (real merge, not
-   double-counted — the two stages run non-overlapping test files, confirmed by
-   the Item 1 audit). Each stage also writes a ONE-LINE `$GITHUB_STEP_SUMMARY`
-   pointer only (`Stage N (flag) coverage: NN% — full breakdown: <codecov URL>`) —
-   deliberately not the full report, per the confirmed Summary-tab mis-caching bug
-   Gotcha; the real per-file breakdown lives in the job's console log and on
-   Codecov. Local stage-1 subset re-verified working end-to-end right before this
-   commit (`coverage report --format=total` → 66%, `coverage xml` → succeeds — see
-   the new Key Commands entry below for the exact local invocation).
-   **STILL NEEDED, not done — resume here:** (1) Mike needs to log into
-   codecov.io via GitHub OAuth so the repo is activated/visible on the dashboard —
-   an external-account action Claude can't do; main is unprotected
-   (`gh api repos/.../branches/main -q .protected` → `false`) and the repo's
-   public, so tokenless upload should work without a `CODECOV_TOKEN` secret, but
-   this needs confirming against a real run, not assumed from docs. (2) push and
-   watch a real CI run end-to-end to confirm both flags actually land on Codecov's
-   dashboard and merge into a real total (not yet done — everything above is
-   local-verification-only so far). (3) once confirmed, decide whether the earlier
-   62%/67%/full-suite numbers below are still worth keeping as historical context
-   or should be superseded by whatever the real CI-measured flags show.
-   Below is the STATE THIS WAS PICKED UP FROM last time — numbers/context
-   pre-dating today's CI wiring:
-   `pytest-cov` is already a dependency — no Codecov needed to get a real number
-   locally, and Codecov itself doesn't measure anything; it's a reporting/trend/badge
-   layer that ingests a coverage report `coverage.py` already produced (roughly the
-   JaCoCo-vs-a-separate-dashboard split, not one tool). Numbers gathered so far:
+3. **Real code coverage — CI wiring done + validated 2026-08-01, pure-local (no
+   third-party site).** A Codecov-hosted design was built first, then dropped the
+   same day — pushing real coverage data to an external site "did not sit well"
+   with Mike (his words), and a live CI run had already surfaced that Codecov's
+   tokenless upload doesn't actually work for this repo by default anyway (`error
+   -- Upload queued for processing failed: {"message":"Token required - not valid
+   tokenless upload"}` — confirmed from the real job log, not assumed from docs).
+   Rebuilt entirely on `coverage.py`'s own built-in `coverage combine` instead —
+   still `pytest-cov`, no new dependency, no network call, no token.
+   **How it works:** `.coveragerc` (repo root) scopes measurement to `tools/` +
+   `src/nav_fleet/nav_fleet/` and omits the 3 hand-invoked hardware debug scripts
+   (`calibrate_ball_range.py`, `direct_drive_test.py`, `ghcr_prune.py`). `stage-1-
+   quality` and `stage-2-gazebo` (the latter via `coverage run -a` across BOTH the
+   pytest integration tests AND the in-process `mission2_day` run, so the VLM-
+   canary code path is covered too, not just what pytest touches) each save their
+   own `.coverage` data file (renamed `.coverage.stageN`) as a GitHub Actions
+   artifact. A new job, **`coverage-report`** (needs `stage-2-gazebo`, runs even on
+   a stage-2 FAILURE — best-effort, same pattern as `stage-5-reports-hw`),
+   downloads both artifacts, computes each stage's own % via `COVERAGE_FILE=` env
+   overrides, then `coverage combine` for the REAL merged total (not double-counted
+   — the two stages run non-overlapping test files, confirmed by the Item 1 audit).
+   `coverage html` is uploaded as a `coverage-html-<run>` artifact (download,
+   unzip, open `index.html` — the browsable view, no hosted dashboard needed).
+   Each stage plus the combine job also writes a ONE-LINE `$GITHUB_STEP_SUMMARY`
+   pointer only, never the full report, per the confirmed Summary-tab mis-caching
+   bug Gotcha.
+   **Trend history: `tools/coverage_log.py`** (new, TDD, 6 tests, same isolated-
+   table-in-`fleet_runs.db` convention as `diagnosis_log.py`/`vlm_canary.py` —
+   `coverage_runs` table, `log_coverage_run()`, a `--db`-flag CLI). The
+   `coverage-report` job's last step calls `python -m tools.coverage_log
+   --stage1-pct ... --stage2-pct ... --combined-pct ... --commit-sha
+   ${{ github.sha }} --ci-run-number ${{ github.run_number }}` — logged into the
+   SAME self-hosted DB every other telemetry tool already reads/writes, not a new
+   system. `dashboard/app.py` gained a 6th tab, **Coverage** — 3 metric tiles
+   (latest stage1/stage2/combined %), a trend line chart (`load_coverage_history()`,
+   guarded for the table not existing yet on a fresh/pre-feature DB — catches BOTH
+   `sqlite3.OperationalError` and `pd.errors.DatabaseError`, since pandas wraps the
+   former as the latter and that wrapping isn't guaranteed across pandas
+   versions/connection types — found live, not assumed, see below), and a run-log
+   table. **Verified live via Playwright both ways** (this file's own dashboard/
+   CLAUDE.md precedent — zero automated pytest coverage for `app.py` by design):
+   once against a throwaway DB copy seeded with fake trend rows (real chart, real
+   metrics, no crash) and once against the REAL production DB, which doesn't have
+   `coverage_runs` yet (empty-state info message, no crash) — this second pass is
+   what caught the `sqlite3.OperationalError`-only guard being wrong; a naive
+   `pd.read_sql` against a missing table actually raises `pd.errors.DatabaseError`,
+   confirmed from a real traceback, not from memory of how `vlm_canary.py`'s
+   different (`conn.execute`, not `pd.read_sql`) guard behaves.
+   **CI-validated end-to-end, run 30716244177 (2026-08-01):** full pipeline green
+   including the new `coverage-report` job — this was BEFORE the Codecov-to-local
+   pivot, so that specific run still used the (now-removed) Codecov upload path;
+   the pure-local `coverage-report` job itself has NOT yet had its own dedicated
+   green CI run as of this writing — that's the very next push.
+   Below is prior-session context (still accurate — this pivot only changed HOW
+   the numbers get combined/reported, not what was measured):
+   `pytest-cov` is already a dependency — no external service needed to get a real
+   number locally.  Numbers gathered so far:
    - Stage-1-only subset (pure Python, no ROS): **62%** (`tools/` + `src/nav_fleet/nav_fleet/`).
    - + `test_nav_runner.py` (mocked ROS, no Gazebo needed): **67%**.
    - Full suite (all 3 live-ROS files via real Gazebo) attempted twice — **both runs
@@ -97,15 +121,16 @@ order:
      active"; (4) run the CI-safe-ORDER invocation from the test-ordering Gotcha below
      (NOT a naive `pytest tests/` — that reorders `test_nav_runner.py` before
      `test_navigation.py` and silently breaks the shared rclpy context).
-   - **Decided with Mike (2026-08-01):** wire up Codecov as a reporting layer now
-     (trend history + PR diff-coverage are useful regardless of the starting number);
-     defer the README badge until the number's one worth showing. Coverage collection
-     needs to span BOTH stage-1 and stage-2 (they run non-overlapping test files —
-     stage-2 doesn't re-run stage-1's own tests) via separate uploads merged with
-     Codecov's "flags" feature, NOT stage-4-hil (doesn't invoke pytest at all — runs
-     `mission_runner.py --day` directly over SSH on the Jetson — and would just
-     re-measure the same lines stage-2 already covers via a different executor, not
-     teach us anything new). Also decided: a `.coveragerc`/pyproject omit list for the
+   - **Decided with Mike (2026-08-01), later SUPERSEDED same day:** the original plan
+     here was Codecov as a hosted reporting layer (trend history + PR diff-coverage),
+     README badge deferred. **Reversed later the same session** — see the pure-local
+     `coverage combine`/`coverage-report`-job/`tools/coverage_log.py`/dashboard design
+     above, which is what's actually built. What DID survive the reversal unchanged:
+     coverage collection spans BOTH stage-1 and stage-2 (non-overlapping test files —
+     stage-2 doesn't re-run stage-1's own tests), NOT stage-4-hil (doesn't invoke
+     pytest at all — runs `mission_runner.py --day` directly over SSH on the Jetson —
+     would just re-measure the same lines stage-2 already covers via a different
+     executor, not teach us anything new); and the `.coveragerc` omit list for the
      one-off manual CLI tools (`calibrate_ball_range.py`, `direct_drive_test.py`,
      `ghcr_prune.py`) so they don't drag the headline number down — they're
      hand-invoked hardware debug scripts, never meant to be unit-tested.
@@ -163,18 +188,21 @@ python tools/check_traceability.py requirements/traceability.yaml tests/ \
 
 # Code coverage — stage-1 (unit) subset, safe to run anytime, no Gazebo needed.
 # .coveragerc (repo root) scopes to tools/ + src/nav_fleet/nav_fleet/, omits the 3
-# hand-invoked hardware debug scripts. CI mirrors this exact invocation for the
-# "unit" flag; full stage-1+stage-2 combined number lives on Codecov, not locally
-# runnable in one shot (stage-2's half needs live Gazebo — see the shared-machine
-# gotcha before running that locally).
+# hand-invoked hardware debug scripts. CI mirrors this exact invocation for its own
+# stage-1 number; the real combined stage-1+stage-2 total (via `coverage combine`,
+# pure-local, no third-party site) only exists in CI's coverage-report job — not
+# locally runnable in one shot (stage-2's half needs live Gazebo — see the
+# shared-machine gotcha before running that locally).
 python -m pytest tests/ --ignore=tests/test_ros2_contracts.py \
   --ignore=tests/test_navigation.py --ignore=tests/test_mission_run.py \
   --ignore=tests/test_nav_runner.py -k "not integration" \
   --cov=tools --cov=src/nav_fleet/nav_fleet --cov-report=term-missing
 # Browsable HTML instead of the terminal table:
 coverage html && xdg-open htmlcov/index.html
-# Combined stage-1+stage-2 dashboard (unit + integration flags, trend, PR diff):
-# https://codecov.io/gh/sdfinn/autonomous-fleet-testbed
+# Combined stage-1+stage-2 trend + browsable HTML report:
+# - trend/latest numbers: streamlit dashboard, Coverage tab (below)
+# - full browsable report: download the coverage-html-<run> artifact from any CI
+#   run's coverage-report job, unzip, open index.html
 
 # Dashboard
 streamlit run dashboard/app.py

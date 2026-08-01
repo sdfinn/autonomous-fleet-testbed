@@ -157,29 +157,28 @@ jobs:
             -k "not integration" \
             --cov=tools --cov=src/nav_fleet/nav_fleet --cov-report=term-missing
 
-      # Combined stage-1+stage-2 coverage (2026-08-01): each stage uploads its own
-      # coverage.xml to Codecov tagged with a flag (unit here, integration in
-      # stage-2) — Codecov merges them into a real project-wide total since the two
-      # stages run non-overlapping test files (Item 1 audit, CLAUDE.md). .coveragerc
-      # (repo root) scopes measurement to tools/ + src/nav_fleet/nav_fleet/ and omits
-      # the 3 hand-invoked hardware debug scripts. fail_ci_if_error stays false on
-      # the upload — a Codecov outage or missing token should never break CI.
-      - name: Coverage report (stage 1)
+      # Combined stage-1+stage-2 coverage (2026-08-01, pure-local — Mike's call, no
+      # third-party site): this stage's own .coverage data file is saved and passed
+      # to the coverage-report job (below stage-2-gazebo) as a build artifact, which
+      # runs `coverage combine` against both stages' data for the real merged total.
+      # .coveragerc (repo root) scopes measurement to tools/ + src/nav_fleet/nav_fleet/
+      # and omits the 3 hand-invoked hardware debug scripts.
+      - name: Save stage-1 coverage data
         if: always()
         run: |
-          coverage xml -o coverage-stage1.xml
           COV_PCT=$(coverage report --format=total)
           echo "Stage 1 (unit) coverage: ${COV_PCT}%"
-          echo "### Stage 1 (unit) coverage: ${COV_PCT}% — full breakdown: https://codecov.io/gh/sdfinn/autonomous-fleet-testbed" >> $GITHUB_STEP_SUMMARY
+          echo "### Stage 1 (unit) coverage: ${COV_PCT}%" >> $GITHUB_STEP_SUMMARY
+          mv .coverage .coverage.stage1
 
-      - name: Upload coverage to Codecov (flag=unit)
+      - name: Upload stage-1 coverage data
         if: always()
-        uses: codecov/codecov-action@v5
+        uses: actions/upload-artifact@v4
         with:
-          files: coverage-stage1.xml
-          flags: unit
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+          name: coverage-data-stage1
+          path: .coverage.stage1
+          if-no-files-found: warn
+          retention-days: 30
 
       # Canary (2026-07-25, Mike): this job's own $GITHUB_STEP_SUMMARY has never had
       # anything written to it before — added to directly test whether GitHub's Summary
@@ -353,26 +352,28 @@ jobs:
           path: /tmp/stage2_mission2_day/mission2_day.log
           if-no-files-found: warn
 
-      # Combined stage-1+stage-2 coverage (2026-08-01) — see the matching comment
-      # in stage-1-quality. This is the "integration" flag; Codecov merges it with
-      # stage-1's "unit" flag into one project-wide total.
-      - name: Coverage report (stage 2)
+      # Combined stage-1+stage-2 coverage (2026-08-01, pure-local) — see the matching
+      # comment in stage-1-quality. This stage's .coverage already includes both the
+      # pytest integration tests AND the mission2_day in-process run (coverage run -a
+      # above appended to it) — saved and uploaded the same way for the coverage-
+      # report job (below) to combine with stage-1's data for the real merged total.
+      - name: Save stage-2 coverage data
         if: always()
         run: |
           source ~/fleet-env/bin/activate
-          coverage xml -o coverage-stage2.xml || true
           COV_PCT=$(coverage report --format=total 2>/dev/null || echo "n/a")
           echo "Stage 2 (integration) coverage: ${COV_PCT}%"
-          echo "### Stage 2 (integration) coverage: ${COV_PCT}% — full breakdown: https://codecov.io/gh/sdfinn/autonomous-fleet-testbed" >> $GITHUB_STEP_SUMMARY
+          echo "### Stage 2 (integration) coverage: ${COV_PCT}%" >> $GITHUB_STEP_SUMMARY
+          mv .coverage .coverage.stage2 2>/dev/null || true
 
-      - name: Upload coverage to Codecov (flag=integration)
+      - name: Upload stage-2 coverage data
         if: always()
-        uses: codecov/codecov-action@v5
+        uses: actions/upload-artifact@v4
         with:
-          files: coverage-stage2.xml
-          flags: integration
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+          name: coverage-data-stage2
+          path: .coverage.stage2
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Record Gazebo timing
         if: always()
@@ -400,6 +401,58 @@ jobs:
           pkill -9 -f "parameter_bridge|component_container_isolated|ekf_node|ball_detector" || true
           pkill -9 -f "static_transform_publisher|robot_state_publisher" || true
           pkill -f "gz sim" || true
+
+  coverage-report:
+    name: "Combined coverage (stage-1 unit + stage-2 integration)"
+    # Pure-local replacement for an earlier Codecov-hosted design (2026-08-01, Mike's
+    # call — no third-party site holding coverage data). Downloads both stages'
+    # .coverage data files (uploaded as build artifacts above) and runs `coverage
+    # combine` for the real merged total — not double-counted, since the two stages
+    # run non-overlapping test files (Item 1 audit, CLAUDE.md). Self-hosted only
+    # because that's where the fleet-env venv already lives; no Gazebo/GPU work
+    # happens in this job. Runs even if stage-2-gazebo FAILED (best-effort, same
+    # pattern as stage-5-reports-hw) so a broken run's coverage data still surfaces.
+    runs-on: [self-hosted, x86, gpu, rtx5080]
+    needs: stage-2-gazebo
+    if: ${{ !cancelled() && needs.stage-2-gazebo.result != 'skipped' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download coverage data (stage 1 + stage 2)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-data-stage*
+          merge-multiple: true
+
+      - name: Combine + compute per-stage and combined percentages
+        run: |
+          source ~/fleet-env/bin/activate
+          STAGE1_PCT=$(COVERAGE_FILE=.coverage.stage1 coverage report --format=total 2>/dev/null || echo "n/a")
+          STAGE2_PCT=$(COVERAGE_FILE=.coverage.stage2 coverage report --format=total 2>/dev/null || echo "n/a")
+          coverage combine .coverage.stage1 .coverage.stage2
+          COMBINED_PCT=$(coverage report --format=total)
+          coverage report -m
+          coverage html
+          echo "STAGE1_PCT=${STAGE1_PCT}" >> $GITHUB_ENV
+          echo "STAGE2_PCT=${STAGE2_PCT}" >> $GITHUB_ENV
+          echo "COMBINED_PCT=${COMBINED_PCT}" >> $GITHUB_ENV
+          echo "Combined coverage: stage1=${STAGE1_PCT}% stage2=${STAGE2_PCT}% combined=${COMBINED_PCT}%"
+          echo "### Combined coverage: ${COMBINED_PCT}% (stage1=${STAGE1_PCT}%, stage2=${STAGE2_PCT}%) — full browsable report: coverage-html artifact below" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload combined coverage HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html-${{ github.run_number }}
+          path: htmlcov/
+          retention-days: 30
+
+      - name: Log coverage trend
+        run: |
+          source ~/fleet-env/bin/activate
+          python -m tools.coverage_log \
+            --stage1-pct "${STAGE1_PCT}" --stage2-pct "${STAGE2_PCT}" \
+            --combined-pct "${COMBINED_PCT}" \
+            --commit-sha "${{ github.sha }}" --ci-run-number "${{ github.run_number }}"
 
   stage-4-hil:
     name: "Stage 4 — HIL: Gazebo (x86) ↔ Nav2 + Mission 2 day (no_ball + yellow + red, real Jetson)"

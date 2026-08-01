@@ -45,6 +45,25 @@ def load_runs():
     return runs, steps
 
 
+@st.cache_data(ttl=30)
+def load_coverage_history():
+    """Returns an empty DataFrame if coverage_runs doesn't exist yet (table is
+    created lazily by tools.coverage_log's first CI upload) — same guarded-query
+    pattern as tools.vlm_canary.find_vlm_canary_results for a table that may not
+    exist on a fresh/pre-feature DB."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        df = pd.read_sql('SELECT * FROM coverage_runs ORDER BY id ASC', conn)
+    # pandas wraps sqlite3.OperationalError as its own DatabaseError (confirmed live,
+    # 2026-08-01) — catch both since that wrapping isn't guaranteed across pandas
+    # versions/connection types.
+    except (sqlite3.OperationalError, pd.errors.DatabaseError):
+        df = pd.DataFrame(columns=['id', 'timestamp', 'commit_sha', 'ci_run_number',
+                                    'stage1_pct', 'stage2_pct', 'combined_pct'])
+    conn.close()
+    return df
+
+
 def _filter_options(df, column):
     """Sidebar options derived from the data — a new runner_type/sim_engine value shows
     up here automatically instead of waiting for a hardcoded list update (CR-07)."""
@@ -72,8 +91,8 @@ for column, choice in (("robot_type", robot_type_filter),
     if choice != "All" and column in runs.columns:
         runs = runs[runs[column] == choice]
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    'Overview', 'Scenarios', 'Telemetry', 'Sensor Health', 'Drift'
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    'Overview', 'Scenarios', 'Telemetry', 'Sensor Health', 'Drift', 'Coverage'
 ])
 
 # ── Tab 1: Overview ──────────────────────────────────────────────────────────
@@ -439,3 +458,54 @@ with tab5:
                     elapsed = time.perf_counter() - start
 
                 _render_diagnosis_result(response, model_label, elapsed)
+
+# ── Tab 6: Coverage ──────────────────────────────────────────────────────────
+with tab6:
+    st.subheader('Code Coverage Trend')
+    st.caption(
+        'Logged by the coverage-report CI job (tools.coverage_log) — stage-1 (unit, '
+        'no ROS) and stage-2 (integration, live Gazebo, includes the mission2_day/ '
+        'VLM-canary path) are measured separately, then merged via `coverage combine` '
+        'for the real total. Pure-local, no third-party site (2026-08-01).'
+    )
+
+    cov = load_coverage_history()
+    if cov.empty:
+        st.info('No coverage runs logged yet — the coverage-report CI job populates '
+                'this after its next run.')
+    else:
+        latest = cov.iloc[-1]
+
+        def _pct_str(value):
+            return f"{value:.0f}%" if pd.notna(value) else 'N/A'
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric('Stage 1 (unit)', _pct_str(latest['stage1_pct']))
+        c2.metric('Stage 2 (integration)', _pct_str(latest['stage2_pct']))
+        c3.metric('Combined', _pct_str(latest['combined_pct']))
+
+        st.divider()
+        fig_cov = go.Figure()
+        for col, label, color in (
+            ('stage1_pct', 'Stage 1 (unit)', '#3498db'),
+            ('stage2_pct', 'Stage 2 (integration)', '#9b59b6'),
+            ('combined_pct', 'Combined', '#2ecc71'),
+        ):
+            fig_cov.add_trace(go.Scatter(
+                x=cov['id'], y=cov[col], mode='markers+lines',
+                name=label, line=dict(color=color), text=cov['commit_sha'],
+                hovertemplate=f'{label}: %{{y}}%%<br>%{{text}}<extra></extra>',
+            ))
+        fig_cov.update_layout(
+            title='Coverage over CI runs', yaxis_title='%', xaxis_title='coverage-report run id',
+            height=350,
+        )
+        st.plotly_chart(fig_cov, use_container_width=True)
+
+        st.divider()
+        st.subheader('Run Log')
+        st.dataframe(
+            cov[['id', 'timestamp', 'commit_sha', 'ci_run_number',
+                 'stage1_pct', 'stage2_pct', 'combined_pct']].sort_values('id', ascending=False),
+            use_container_width=True,
+        )
