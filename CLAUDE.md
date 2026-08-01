@@ -386,6 +386,33 @@ docker buildx build --platform linux/arm64 \
   fully explained his repeated, correct, "watching the whole time" observation. Don't
   minimize a repeated, specific live observation as "which moment you happened to be
   watching" — re-measure the SPECIFIC boundary being described first.
+- **GitHub Actions' own Summary tab has a confirmed platform-side bug — it mis-caches/
+  mis-maps job-summary content client-side, unrelated to anything in `ci.yml`. Not
+  fixable from this repo; stop re-investigating it as if it were our bug.** Confirmed
+  twice, independently (2026-07-23 and again 2026-07-25, same signature both times):
+  `stage-1-quality`'s own Summary panel displayed `stage-5`'s drift-report content
+  (`hil_jetson: FAIL`, a large σ-drift banner) verbatim — even though `stage-1-quality`'s
+  job spec (checkout → ROS2 apt install → ament lint install → flake8 → pytest) writes
+  to `$GITHUB_STEP_SUMMARY` **zero times**, re-verified line-by-line against `ci.yml`
+  both times. The 2026-07-25 recurrence went further: the displayed content didn't match
+  that run's own console log OR its own downloadable PDF artifact either — genuinely
+  stale/cached data from an unrelated run, not just a rendering-order mix-up. The Checks
+  API confirms `output.summary` is `null` for every job; `$GITHUB_STEP_SUMMARY` has no
+  public REST/GraphQL surface at all — the browser's Summary tab (a JS-rendered SPA) is
+  the only place this data exists, which is exactly why no automated check can catch it.
+  **Workaround in place, not a fix for the underlying bug:** `stage-5-reports-sim`/`-hw`
+  moved their real "Fleet status" content off `$GITHUB_STEP_SUMMARY` into plain
+  console-log output (`ci.yml`, the `Fleet status` steps) so the actually-meaningful
+  content lives somewhere trustworthy even though the Summary tab can't be. This does
+  NOT generalize to "never touch `$GITHUB_STEP_SUMMARY`" — every stage still writes a
+  short one-line timing/link summary (`Stage N ... wall time`, `Download the PDF
+  report`) with no reported problem; only large report-content blocks have been
+  observed getting mis-cached. `stage-1-quality` still carries a diagnostic canary step
+  (`"Canary summary line"`, `echo "### Message from Mike" >> $GITHUB_STEP_SUMMARY`,
+  added 2026-07-25 specifically to probe this bug in its own panel) — its own comment
+  says to remove it once confirmed live, which already happened; left in place
+  deliberately (2026-08-01, Mike's call) rather than removed, so don't treat that
+  comment as a live TODO.
 - **`.github/workflows/ci.yml` uses CRLF line endings — a raw Python `open(path).read()`/
   `open(path, 'w').write()` round-trip silently strips them all to LF, producing a
   1000+-line noise diff that buries the real 2-line change.** Found 2026-07-26 (Piece 2
