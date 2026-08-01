@@ -95,11 +95,40 @@ order:
    `pd.read_sql` against a missing table actually raises `pd.errors.DatabaseError`,
    confirmed from a real traceback, not from memory of how `vlm_canary.py`'s
    different (`conn.execute`, not `pd.read_sql`) guard behaves.
-   **CI-validated end-to-end, run 30716244177 (2026-08-01):** full pipeline green
-   including the new `coverage-report` job — this was BEFORE the Codecov-to-local
-   pivot, so that specific run still used the (now-removed) Codecov upload path;
-   the pure-local `coverage-report` job itself has NOT yet had its own dedicated
-   green CI run as of this writing — that's the very next push.
+   **Two real bugs found + fixed getting the pure-local `coverage-report` job
+   itself to a genuine green run, both root-caused against real CI artifacts, not
+   guessed:**
+   1. **`actions/upload-artifact@v4`'s glob matcher silently skips dotfiles.**
+      `mv .coverage .coverage.stage1` succeeded and `coverage report` printed a
+      real 66% right before it, but the upload step logged `"No files were found
+      with the provided path: .coverage.stage1. No artifacts will be uploaded"`
+      and uploaded nothing (confirmed via the run's real artifact list — no
+      `coverage-data-stage1`/`2` existed at all). Fixed by dropping the leading
+      dot everywhere (`coverage.stage1`/`coverage.stage2`) — `coverage combine`
+      takes explicit filenames as arguments, so the name never needed to match
+      any convention.
+   2. **Coverage data files record ABSOLUTE source paths — combining data
+      collected on two different machines breaks reporting.** `stage-1-quality`
+      runs on a GitHub-hosted `ubuntu-latest` runner (`/home/runner/work/...`);
+      `stage-2-gazebo`/`coverage-report` run on the self-hosted runner (a
+      different absolute checkout path). Once bug 1 was fixed and the artifacts
+      actually downloaded, `coverage report`/`combine` failed with `"No source
+      for code: /home/runner/work/autonomous-fleet-testbed/.../__init__.py"` —
+      reproduced locally against the REAL downloaded artifacts (`gh run download
+      <run> -n coverage-data-stageN`) before touching `.coveragerc` again, ruling
+      out a coverage.py VERSION mismatch first (hosted runner's fresh `pip
+      install` got 7.15.2, self-hosted `~/fleet-env` has 7.14.3 — tested
+      cross-version combine directly, it worked fine, not the cause). Fixed with
+      a `[paths]` section in `.coveragerc` (coverage.py's documented mechanism
+      for exactly this multi-machine scenario) remapping either machine's
+      absolute prefix back to the relative path — verified end-to-end against
+      the real downloaded artifacts before re-pushing (STAGE1_PCT=66,
+      STAGE2_PCT=31, COMBINED_PCT=82, `coverage html` succeeds).
+   **Lesson for next time this bites:** when a CI step fails with no visible
+   error text between two log lines, don't assume `set -e` swallowed something —
+   download the run's REAL artifacts (`gh run download`) and reproduce locally
+   with the actual data before touching config; both bugs here needed exactly
+   that to root-cause instead of guessing from the step names alone.
    Below is prior-session context (still accurate — this pivot only changed HOW
    the numbers get combined/reported, not what was measured):
    `pytest-cov` is already a dependency — no external service needed to get a real

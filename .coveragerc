@@ -11,3 +11,19 @@ omit =
 
 [report]
 show_missing = True
+
+[paths]
+# stage-1-quality runs on a GitHub-hosted ubuntu-latest runner (checkout at
+# /home/runner/work/...); stage-2-gazebo and the coverage-report job run on the
+# self-hosted runner (checkout at a different absolute path) — coverage.py's data
+# files record absolute source paths, so combining/reporting on the self-hosted
+# machine otherwise fails with "No source for code: /home/runner/work/..." (found
+# 2026-08-01, confirmed live against a real failed coverage-report job's actual
+# downloaded artifacts). This remaps either machine's absolute prefix back to the
+# relative path that exists wherever combine/report actually runs.
+tools =
+    tools
+    */tools
+nav_fleet =
+    src/nav_fleet/nav_fleet
+    */src/nav_fleet/nav_fleet
