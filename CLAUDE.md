@@ -10,10 +10,12 @@ alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean 
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
 
-## NEXT SESSION — START HERE (2026-07-31, post-HIL-debugging-session)
-A full HIL-hardening session landed tonight (25W-always, on-device Jetson VLM canary,
-dynamic CycloneDDS interface selection — see the dated Gotchas entries below for full
-detail) and ended on a fully-green end-to-end CI run. Punch list for next time, in
+## NEXT SESSION — START HERE (2026-08-01, paused mid-Item-3, machine-safety pause)
+Session continued the 2026-07-31 punch list. Items 1 and 2 fully closed out today
+(details below and in the dated Gotchas). Item 3 (real code coverage) is IN PROGRESS —
+deliberately paused, not blocked on anything code-related, purely because the
+workstation (this repo's self-hosted CI runner) is unsafe to run Gazebo on right now —
+see the new dated Gotchas entries below before resuming. Punch list for next time, in
 order:
 1. ~~**Remove the duplicate mission2 tests from stage-2.**~~ **Done 2026-08-01.**
    `tests/test_mission2.py` (the 3 old per-scenario no_ball/yellow/red tests) deleted
@@ -30,12 +32,55 @@ order:
    steps directly. Moving any of them would require installing full ROS2
    (`ros-jazzy-ros-base`+) in stage-1, which defeats its whole "cheap/fast feedback"
    purpose — not done. Already optimally split as-is.
-2. **Revisit CI + PDF output** — finish verifying the final green run's (30657248798)
-   actual PDF artifacts (sim and hw) for correct VLM canary placement (each
-   scenario's own canary text, not duplicated across no_ball/yellow/red) and whether
-   the HIL canary text differs from the sim run's — flagged but not finished before
-   this session ended.
-3. Real code coverage (`pytest --cov` + Codecov).
+2. ~~**Revisit CI + PDF output.**~~ **Done 2026-08-01.** Sim PDF (`sim-report-159-DRIFT.pdf`)
+   confirmed correct: VLM canary text appears exactly once, under `mission2_red`'s own
+   section, never duplicated into `no_ball`/`yellow`. The HIL PDF (`hil-report-159.pdf`)
+   check found a REAL bug, not just an unfinished verification: `ingest_vlm_canary_
+   from_jetson()` (`tools/mission2_day.py`) was joining the wrong photo directory
+   (`state_dir` instead of `PHOTO_DIR`) — a copy of the reaction-red photo exists in
+   BOTH directories with the same basename but a different absolute path, and
+   `find_vlm_canary_results()`'s exact-string join silently matched nothing. Confirmed
+   directly against the real `fleet_runs.db` (run 690): the `photos` column and
+   `vlm_canary_log.photo_path` pointed at two different directories for the same
+   photo. Every HIL PDF report has shown ZERO canary text since the feature shipped
+   2026-07-31, even though the canary genuinely ran and was ingested every time. Fixed
+   with a one-line change (glob `PHOTO_DIR`, not `state_dir`), TDD throughout (test
+   rewritten to prove the bug RED, fix confirmed GREEN, full 435-test suite still
+   green) — commit `bba663b`.
+3. **Real code coverage — IN PROGRESS, paused for machine safety, resume here.**
+   `pytest-cov` is already a dependency — no Codecov needed to get a real number
+   locally, and Codecov itself doesn't measure anything; it's a reporting/trend/badge
+   layer that ingests a coverage report `coverage.py` already produced (roughly the
+   JaCoCo-vs-a-separate-dashboard split, not one tool). Numbers gathered so far:
+   - Stage-1-only subset (pure Python, no ROS): **62%** (`tools/` + `src/nav_fleet/nav_fleet/`).
+   - + `test_nav_runner.py` (mocked ROS, no Gazebo needed): **67%**.
+   - Full suite (all 3 live-ROS files via real Gazebo) attempted twice — **both runs
+     produced unreliable numbers, DO NOT trust either one.** Root causes found (see the
+     two new dated Gotchas below): a real test-ordering fragility in
+     `test_nav_runner.py`'s rclpy teardown, AND a live, concurrent `synthetic-fleet`
+     Gazebo/Nav2 session sharing this exact machine's `/robot_001` DDS namespace at the
+     time — found mid-investigation, session paused there rather than fight through it.
+   - **Resume checklist:** (1) confirm no OTHER Gazebo/Nav2 session is running on this
+     machine — `pgrep -fa "gz sim|robot_state_publisher"` and check the launching
+     PROJECT PATH in the command line, not just process existence (`synthetic-fleet`
+     vs `autonomous-fleet-testbed` look identical at the process-name level); (2)
+     confirm no CI run is in-flight (`gh run list`) since a push auto-triggers CI on
+     this same self-hosted machine; (3) launch fresh, wait for "Managed nodes are
+     active"; (4) run the CI-safe-ORDER invocation from the test-ordering Gotcha below
+     (NOT a naive `pytest tests/` — that reorders `test_nav_runner.py` before
+     `test_navigation.py` and silently breaks the shared rclpy context).
+   - **Decided with Mike (2026-08-01):** wire up Codecov as a reporting layer now
+     (trend history + PR diff-coverage are useful regardless of the starting number);
+     defer the README badge until the number's one worth showing. Coverage collection
+     needs to span BOTH stage-1 and stage-2 (they run non-overlapping test files —
+     stage-2 doesn't re-run stage-1's own tests) via separate uploads merged with
+     Codecov's "flags" feature, NOT stage-4-hil (doesn't invoke pytest at all — runs
+     `mission_runner.py --day` directly over SSH on the Jetson — and would just
+     re-measure the same lines stage-2 already covers via a different executor, not
+     teach us anything new). Also decided: a `.coveragerc`/pyproject omit list for the
+     one-off manual CLI tools (`calibrate_ball_range.py`, `direct_drive_test.py`,
+     `ghcr_prune.py`) so they don't drag the headline number down — they're
+     hand-invoked hardware debug scripts, never meant to be unit-tested.
 4. Release 1 → Release 2 planning (branching strategy, `r1-complete` tag).
 5. `RealRobotStartup.md` accuracy check (references "Session 18"; also needs pointing
    at the new `regen_cyclonedds_config.sh`, since it shares the same DDS setup).
@@ -774,6 +819,82 @@ docker buildx build --platform linux/arm64 \
   (bedroom_nav/mission1 — unaffected, no reported bug there). Regression-tested
   directly: two rows sharing an identical timestamp but distinct `photos` columns now
   correctly produce distinct PDF sections.
+- **`ingest_vlm_canary_from_jetson()` was joining the wrong photo directory — every HIL
+  PDF report has shown zero VLM canary text since the feature shipped 2026-07-31, found
+  + fixed 2026-08-01.** `_pull_photos_from_paths()` writes each leg's `photos`
+  telemetry column using `PHOTO_DIR`-based paths (`~/fleet-ci-data/photos/...`), but
+  `ingest_vlm_canary_from_jetson()` globbed `state_dir` (e.g. `/tmp/hil_stage/...`)
+  for the local reaction-red photo instead — a real copy of the same file exists in
+  BOTH directories (state_dir gets a `cp -f`'d duplicate), same basename, different
+  absolute path, so `find_vlm_canary_results()`'s exact-string `WHERE photo_path IN
+  (...)` join silently matched nothing. Confirmed directly against the real
+  `fleet_runs.db` (run 690): `photos` column pointed at PHOTO_DIR, `vlm_canary_log.
+  photo_path` pointed at state_dir. The sim report never had this bug (sim never goes
+  through this Jetson-specific ingest path), which is exactly why only the HIL PDF was
+  affected. Fixed: glob `PHOTO_DIR` instead — TDD, `tests/test_mission2_day.py`'s
+  `test_ingest_vlm_canary_from_jetson_logs_result_with_photo_dir_path` (replaces the
+  old test, which had enshrined the WRONG assumption) confirmed RED against the old
+  code, GREEN after.
+- **`test_nav_runner.py`'s rclpy teardown will silently break `test_navigation.py`/
+  `test_mission_run.py` if pytest's file collection order ever changes — found
+  2026-08-01 running a naive `pytest tests/` for a coverage check.** `conftest.py`'s
+  `ros_context` fixture (session-scoped) is deliberately shared ONLY between
+  `test_navigation.py` and `test_mission_run.py` — its own docstring says so. But
+  `test_nav_runner.py` has a SEPARATE, independent module-scoped `_ros` fixture that
+  calls `rclpy.try_shutdown()` unconditionally on teardown — if `test_nav_runner.py`
+  happens to run BEFORE the other two finish (which is exactly what plain alphabetical
+  pytest discovery does: `test_nav_runner.py` < `test_navigation.py`), its teardown
+  kills the shared rclpy context out from under them, and every subsequent
+  `test_navigation.py`/`test_mission_run.py` test ERRORs with
+  `rclpy.exceptions.NotInitializedException`. **CI never hits this** — `ci.yml`'s
+  `Run navigation + mission integration tests` step explicitly orders the 3 files
+  (`test_navigation.py test_mission_run.py test_nav_runner.py`, nav_runner LAST) —
+  but ANY local ad-hoc `pytest tests/ ...` invocation that lets pytest auto-discover
+  will silently hit this. **Not fixed** (a real fix would make `test_nav_runner.py`'s
+  `_ros` fixture check whether it OWNS the context before shutting it down, mirroring
+  `ros_context`'s own care) — flagged, not yet a priority; the safe workaround for now
+  is to always pass the 3 live-ROS files explicitly in CI's order:
+  `pytest tests/test_navigation.py tests/test_mission_run.py tests/test_nav_runner.py
+  tests/ --ignore=tests/test_ros2_contracts.py --ignore=tests/test_navigation.py
+  --ignore=tests/test_mission_run.py --ignore=tests/test_nav_runner.py ...`. **Caution
+  found the same session, still being separated out:** a second, independent full-suite
+  attempt using exactly that safe-order command still came back with wildly wrong
+  numbers (~15% total, only 29 tests collected) — root cause NOT this ordering bug (a
+  different symptom entirely) — see the next entry; don't assume this ordering fix
+  alone is sufficient before re-verifying against a genuinely idle machine.
+- **This workstation is BOTH `autonomous-fleet-testbed`'s self-hosted CI runner AND a
+  general dev machine that can have OTHER projects' full Gazebo/Nav2 stacks running at
+  the same time — found 2026-08-01, mid-coverage-investigation, twice in one session.**
+  Two distinct instances of the same hazard class:
+  1. **A `git push` to `main` auto-triggers a real CI run on THIS machine.** Pushed two
+     commits, then immediately launched a local Gazebo session for a coverage check —
+     CI's own `stage-2-gazebo` job started concurrently, and its "Sweep stale sim
+     processes" step (`pkill -9 -f "parameter_bridge|component_container_isolated|
+     ekf_node|ball_detector"`, etc.) killed the local session out from under it
+     mid-run. The collision also caused two REAL test failures in CI itself
+     (`test_navigation_succeeds`, `test_mission1_completes` — genuine `Goal rejected
+     after all retries` errors from two Nav2 stacks fighting over the same DDS
+     topics/action servers), which needed a re-run to clear (confirmed: same commit,
+     zero code change, passed clean the second time — pure resource contention, not a
+     regression). **Practice adopted:** check `gh run list` for an in-flight run before
+     launching anything Gazebo-related locally, especially right after a push.
+  2. **A SEPARATE, unrelated local Gazebo/Nav2 stack from the `synthetic-fleet` project
+     (a different git working directory on this same machine, open in another VS Code
+     window) was found ALREADY RUNNING**, bound to the identical `/robot_001/...` DDS
+     topic namespace as this repo's own launch — `pgrep -fa` showed two full sets of
+     `robot_state_publisher`/`ball_detector`/`ekf_node`/Nav2-container processes
+     side by side, one launched from `/home/mike/synthetic-fleet/install/...`, one from
+     `/home/mike/autonomous-fleet-testbed/install/...`. This most likely explains the
+     wildly-wrong ~15%/29-tests coverage run in the previous entry (two stacks
+     cross-talking on the same topics looks exactly like flaky/failing navigation, not
+     an obviously "two robots" symptom) and possibly some of the earlier collision's
+     confusion too. **Deliberately NOT killed by Claude** — another project's live
+     session in a window Mike may be actively using is not something to touch without
+     being asked. Session paused here rather than work around it. **Before resuming
+     Item 3 (or any local Gazebo-dependent test run on this machine going forward):**
+     `pgrep -fa "gz sim|robot_state_publisher"` and check the launching PROJECT PATH in
+     the command line specifically — process names alone look identical across
+     projects that share the same `nav_fleet` package name.
 
 ## See also (moved out of this file by /doctor, 2026-07-27, context-lazy-loading pass)
 - Nav2 launch gotchas (Session 10+) — `src/nav_fleet/CLAUDE.md`
