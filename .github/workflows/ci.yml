@@ -169,14 +169,14 @@ jobs:
           COV_PCT=$(coverage report --format=total)
           echo "Stage 1 (unit) coverage: ${COV_PCT}%"
           echo "### Stage 1 (unit) coverage: ${COV_PCT}%" >> $GITHUB_STEP_SUMMARY
-          mv .coverage .coverage.stage1
+          mv .coverage coverage.stage1
 
       - name: Upload stage-1 coverage data
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-data-stage1
-          path: .coverage.stage1
+          path: coverage.stage1
           if-no-files-found: warn
           retention-days: 30
 
@@ -364,14 +364,14 @@ jobs:
           COV_PCT=$(coverage report --format=total 2>/dev/null || echo "n/a")
           echo "Stage 2 (integration) coverage: ${COV_PCT}%"
           echo "### Stage 2 (integration) coverage: ${COV_PCT}%" >> $GITHUB_STEP_SUMMARY
-          mv .coverage .coverage.stage2 2>/dev/null || true
+          mv .coverage coverage.stage2 2>/dev/null || true
 
       - name: Upload stage-2 coverage data
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-data-stage2
-          path: .coverage.stage2
+          path: coverage.stage2
           if-no-files-found: warn
           retention-days: 30
 
@@ -427,9 +427,9 @@ jobs:
       - name: Combine + compute per-stage and combined percentages
         run: |
           source ~/fleet-env/bin/activate
-          STAGE1_PCT=$(COVERAGE_FILE=.coverage.stage1 coverage report --format=total 2>/dev/null || echo "n/a")
-          STAGE2_PCT=$(COVERAGE_FILE=.coverage.stage2 coverage report --format=total 2>/dev/null || echo "n/a")
-          coverage combine .coverage.stage1 .coverage.stage2
+          STAGE1_PCT=$(COVERAGE_FILE=coverage.stage1 coverage report --format=total 2>/dev/null || echo "n/a")
+          STAGE2_PCT=$(COVERAGE_FILE=coverage.stage2 coverage report --format=total 2>/dev/null || echo "n/a")
+          coverage combine coverage.stage1 coverage.stage2
           COMBINED_PCT=$(coverage report --format=total)
           coverage report -m
           coverage html
