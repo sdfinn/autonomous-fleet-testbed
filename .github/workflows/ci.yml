@@ -71,9 +71,22 @@ jobs:
         # in Release1Todo.md Session 16+. continue-on-error reports this honestly as a real,
         # tracked gap (not silently skipped via robot-profile skip_requirements, which is for
         # hardware capability differences, not implementation gaps) without blocking every
-        # downstream stage on a known issue. Remove this once BR-03 has a real test.
+        # downstream stage on a known issue. Removing continue-on-error (and this gate
+        # becoming a real, enforcing check) is explicit Release 2 scope, tied to BR-03's
+        # recovery-behavior work landing then — not a Release 1 to-do, don't pull it forward.
+        #
+        # mkdir fix (2026-08-01): `reports/` is gitignored (generated-artifacts only), so a
+        # fresh actions/checkout@v4 never has it on disk — the `>` redirect below used to fail
+        # with "No such file or directory" BEFORE check_traceability.py ever ran, since the
+        # very first commit that added this step. continue-on-error masked it as a silent
+        # green no-op instead of a crash, so the traceability-report artifact has never once
+        # actually been produced by CI. This mkdir is a pure mechanical fix — it makes the
+        # step run and actually upload real (7/8-coverage, BR-03-missing) output instead of
+        # crashing before it starts. It changes nothing about continue-on-error or blocking
+        # behavior, so it carries no Release 1 risk.
         continue-on-error: true
         run: |
+          mkdir -p reports
           python tools/check_traceability.py \
             requirements/traceability.yaml \
             tests/ \
