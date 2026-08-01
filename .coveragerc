@@ -1,0 +1,13 @@
+[run]
+source =
+    tools
+    src/nav_fleet/nav_fleet
+omit =
+    # Hand-invoked hardware debug scripts (Mike, 2026-08-01 decision) — never
+    # meant to be unit-tested, would only drag the headline number down.
+    tools/calibrate_ball_range.py
+    tools/direct_drive_test.py
+    tools/ghcr_prune.py
+
+[report]
+show_missing = True

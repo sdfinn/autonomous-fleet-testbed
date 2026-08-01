@@ -13,6 +13,7 @@ dist/
 .coverage
 .coverage.*
 coverage.xml
+coverage-stage*.xml
 htmlcov/
 
 # Virtualenv
@@ -51,6 +52,12 @@ maps/*.yaml
 # Environment secrets
 .env
 *.env
+
+# Internal planning/todo docs (Release1Todo.md, Releases2Plus.md) — contain
+# personal/career commentary never redacted for the public repo; kept locally
+# for a single non-fragmented planning home, never committed. See CLAUDE.md's
+# reference_synthetic_fleet_repo / project memory for the 2026-08-01 decision.
+planning/
 
 # IDE
 .vscode/settings.json

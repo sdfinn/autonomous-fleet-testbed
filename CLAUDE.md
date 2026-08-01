@@ -47,7 +47,35 @@ order:
    with a one-line change (glob `PHOTO_DIR`, not `state_dir`), TDD throughout (test
    rewritten to prove the bug RED, fix confirmed GREEN, full 435-test suite still
    green) — commit `bba663b`.
-3. **Real code coverage — IN PROGRESS, paused for machine safety, resume here.**
+3. **Real code coverage — IN PROGRESS. CI wiring done 2026-08-01, not yet validated
+   live.** `.coveragerc` (repo root) added; `ci.yml`'s `stage-1-quality` (`--cov`,
+   flag `unit`) and `stage-2-gazebo` (`coverage run -a` across both the pytest
+   integration tests AND the in-process `mission2_day` run — the append picks up
+   the VLM-canary code path too, not just what pytest touches — flag `integration`)
+   each upload their own `coverage-stageN.xml` to Codecov via `codecov/codecov-
+   action@v5`, `fail_ci_if_error: false` so a Codecov outage never breaks CI.
+   Codecov merges the two flags into one project-wide total (real merge, not
+   double-counted — the two stages run non-overlapping test files, confirmed by
+   the Item 1 audit). Each stage also writes a ONE-LINE `$GITHUB_STEP_SUMMARY`
+   pointer only (`Stage N (flag) coverage: NN% — full breakdown: <codecov URL>`) —
+   deliberately not the full report, per the confirmed Summary-tab mis-caching bug
+   Gotcha; the real per-file breakdown lives in the job's console log and on
+   Codecov. Local stage-1 subset re-verified working end-to-end right before this
+   commit (`coverage report --format=total` → 66%, `coverage xml` → succeeds — see
+   the new Key Commands entry below for the exact local invocation).
+   **STILL NEEDED, not done — resume here:** (1) Mike needs to log into
+   codecov.io via GitHub OAuth so the repo is activated/visible on the dashboard —
+   an external-account action Claude can't do; main is unprotected
+   (`gh api repos/.../branches/main -q .protected` → `false`) and the repo's
+   public, so tokenless upload should work without a `CODECOV_TOKEN` secret, but
+   this needs confirming against a real run, not assumed from docs. (2) push and
+   watch a real CI run end-to-end to confirm both flags actually land on Codecov's
+   dashboard and merge into a real total (not yet done — everything above is
+   local-verification-only so far). (3) once confirmed, decide whether the earlier
+   62%/67%/full-suite numbers below are still worth keeping as historical context
+   or should be superseded by whatever the real CI-measured flags show.
+   Below is the STATE THIS WAS PICKED UP FROM last time — numbers/context
+   pre-dating today's CI wiring:
    `pytest-cov` is already a dependency — no Codecov needed to get a real number
    locally, and Codecov itself doesn't measure anything; it's a reporting/trend/badge
    layer that ingests a coverage report `coverage.py` already produced (roughly the
@@ -132,6 +160,21 @@ python -m nav_fleet.mission_runner mission1
 # Traceability gate
 python tools/check_traceability.py requirements/traceability.yaml tests/ \
   --profile robot_profiles/jetson_ugv_pt.yaml
+
+# Code coverage — stage-1 (unit) subset, safe to run anytime, no Gazebo needed.
+# .coveragerc (repo root) scopes to tools/ + src/nav_fleet/nav_fleet/, omits the 3
+# hand-invoked hardware debug scripts. CI mirrors this exact invocation for the
+# "unit" flag; full stage-1+stage-2 combined number lives on Codecov, not locally
+# runnable in one shot (stage-2's half needs live Gazebo — see the shared-machine
+# gotcha before running that locally).
+python -m pytest tests/ --ignore=tests/test_ros2_contracts.py \
+  --ignore=tests/test_navigation.py --ignore=tests/test_mission_run.py \
+  --ignore=tests/test_nav_runner.py -k "not integration" \
+  --cov=tools --cov=src/nav_fleet/nav_fleet --cov-report=term-missing
+# Browsable HTML instead of the terminal table:
+coverage html && xdg-open htmlcov/index.html
+# Combined stage-1+stage-2 dashboard (unit + integration flags, trend, PR diff):
+# https://codecov.io/gh/sdfinn/autonomous-fleet-testbed
 
 # Dashboard
 streamlit run dashboard/app.py

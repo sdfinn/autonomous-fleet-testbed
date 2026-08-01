@@ -12,9 +12,14 @@ set -euo pipefail
 
 DASH_MSG="Dashboard: streamlit run dashboard/app.py (from repo root; fleet-env venv auto-activates via .bashrc)"
 
+COV_MSG="Coverage: local stage-1 subset — see CLAUDE.md Key Commands for the exact
+  pytest --cov invocation | combined stage-1+stage-2 (unit+integration flags, trend,
+  PR diff): https://codecov.io/gh/sdfinn/autonomous-fleet-testbed"
+
 FLEET_MSG=$(cd ~/autonomous-fleet-testbed && ~/fleet-env/bin/python -m tools.fleet_status 2>/dev/null || echo "Fleet status unavailable (DB not initialized yet?) — run manually: python -m tools.fleet_status")
 
 FULL_MSG="${DASH_MSG}
+${COV_MSG}
 
 ${FLEET_MSG}"
 

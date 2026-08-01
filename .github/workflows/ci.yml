@@ -154,7 +154,32 @@ jobs:
             --ignore=tests/test_navigation.py \
             --ignore=tests/test_mission_run.py \
             --ignore=tests/test_nav_runner.py \
-            -k "not integration"
+            -k "not integration" \
+            --cov=tools --cov=src/nav_fleet/nav_fleet --cov-report=term-missing
+
+      # Combined stage-1+stage-2 coverage (2026-08-01): each stage uploads its own
+      # coverage.xml to Codecov tagged with a flag (unit here, integration in
+      # stage-2) — Codecov merges them into a real project-wide total since the two
+      # stages run non-overlapping test files (Item 1 audit, CLAUDE.md). .coveragerc
+      # (repo root) scopes measurement to tools/ + src/nav_fleet/nav_fleet/ and omits
+      # the 3 hand-invoked hardware debug scripts. fail_ci_if_error stays false on
+      # the upload — a Codecov outage or missing token should never break CI.
+      - name: Coverage report (stage 1)
+        if: always()
+        run: |
+          coverage xml -o coverage-stage1.xml
+          COV_PCT=$(coverage report --format=total)
+          echo "Stage 1 (unit) coverage: ${COV_PCT}%"
+          echo "### Stage 1 (unit) coverage: ${COV_PCT}% — full breakdown: https://codecov.io/gh/sdfinn/autonomous-fleet-testbed" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload coverage to Codecov (flag: unit)
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-stage1.xml
+          flags: unit
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
       # Canary (2026-07-25, Mike): this job's own $GITHUB_STEP_SUMMARY has never had
       # anything written to it before — added to directly test whether GitHub's Summary
@@ -286,7 +311,8 @@ jobs:
                                              # .bashrc, so this runner falls back to apt's
                                              # pytest 7.4.4 (owned by colcon-core) otherwise
           python -m pytest tests/test_navigation.py tests/test_mission_run.py \
-            tests/test_nav_runner.py -v --timeout=300
+            tests/test_nav_runner.py -v --timeout=300 \
+            --cov=tools --cov=src/nav_fleet/nav_fleet --cov-report=
 
       - name: Run Mission 2 day (in-process — VLM canary x86 coverage)
         # tools/mission2_day.py's run_day() is now the ONLY place Mission 2's 3
@@ -309,7 +335,11 @@ jobs:
           source /opt/ros/jazzy/setup.bash
           source install/setup.bash
           source ~/fleet-env/bin/activate
-          python -m tools.mission2_day --executor inprocess --no-launch
+          # coverage run -a appends to the SAME .coverage data file the pytest step
+          # above wrote (both run from repo root — no explicit COVERAGE_FILE needed),
+          # so stage 2's coverage picture includes the VLM-canary/mission-day code
+          # path, not just what the pytest integration tests themselves touch.
+          coverage run -a -m tools.mission2_day --executor inprocess --no-launch
 
       - name: Show mission2_day log tail on failure
         if: failure()
@@ -322,6 +352,27 @@ jobs:
           name: stage2-mission2-day-log-${{ github.run_number }}
           path: /tmp/stage2_mission2_day/mission2_day.log
           if-no-files-found: warn
+
+      # Combined stage-1+stage-2 coverage (2026-08-01) — see the matching comment
+      # in stage-1-quality. This is the "integration" flag; Codecov merges it with
+      # stage-1's "unit" flag into one project-wide total.
+      - name: Coverage report (stage 2)
+        if: always()
+        run: |
+          source ~/fleet-env/bin/activate
+          coverage xml -o coverage-stage2.xml || true
+          COV_PCT=$(coverage report --format=total 2>/dev/null || echo "n/a")
+          echo "Stage 2 (integration) coverage: ${COV_PCT}%"
+          echo "### Stage 2 (integration) coverage: ${COV_PCT}% — full breakdown: https://codecov.io/gh/sdfinn/autonomous-fleet-testbed" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload coverage to Codecov (flag: integration)
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-stage2.xml
+          flags: integration
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
       - name: Record Gazebo timing
         if: always()
