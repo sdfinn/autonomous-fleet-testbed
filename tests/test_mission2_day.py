@@ -573,16 +573,36 @@ def test_run_day_skips_workstation_side_canary_for_jetson_executor(monkeypatch):
 
 
 # ── Ingest the on-Jetson canary result back into the workstation's real DB (2026-07-31) ─────
-def test_ingest_vlm_canary_from_jetson_logs_result_with_local_photo_path(
+def test_ingest_vlm_canary_from_jetson_logs_result_with_photo_dir_path(
         monkeypatch, tmp_path):
+    """Regression test for the 2026-08-01 finding: HIL PDF reports never showed the
+    on-device VLM canary text, even though the canary genuinely ran and was ingested.
+    Root cause — `ingest_vlm_canary_from_jetson` globbed `state_dir` for the local photo,
+    but the leg's OWN `photos` telemetry column (which find_vlm_canary_results() joins
+    against) is always PHOTO_DIR-based (`_pull_photos_from_paths`'s `dest = PHOTO_DIR /
+    base`) — a real photo can exist in BOTH directories (state_dir gets a `cp -f`'d
+    duplicate) with the SAME basename but a DIFFERENT absolute path string, and the exact-
+    string join silently found nothing. The logged photo_path must match PHOTO_DIR, not
+    state_dir, even when state_dir also has a copy — proven here by giving each directory
+    a DIFFERENT basename's file, so only the correct one satisfies the assertion."""
     import json as _json
     import sqlite3
 
     from tools.mission2_day import ingest_vlm_canary_from_jetson
+    photo_dir = tmp_path / 'photo_dir'
+    photo_dir.mkdir()
+    state_dir = tmp_path / 'state_dir'
+    state_dir.mkdir()
+    monkeypatch.setattr(mission2_day_module, 'PHOTO_DIR', photo_dir)
+
+    photo_dir_red_photo = photo_dir / "mission2_reaction_red_20260731_080109.png"
+    photo_dir_red_photo.write_bytes(b'fake png bytes')
+    # A DIFFERENT file in state_dir — proves the fix doesn't just happen to pick
+    # whichever directory a naive glob-both-and-merge would find first.
+    (state_dir / "mission2_reaction_red_20260731_099999.png").write_bytes(b'wrong copy')
+
     db = str(tmp_path / "t.db")
-    local_red_photo = tmp_path / "mission2_reaction_red_20260731_080109.png"
-    local_red_photo.write_bytes(b'fake png bytes')
-    remote_json_local_copy = tmp_path / 'vlm_canary_last_result.json'
+    remote_json_local_copy = state_dir / 'vlm_canary_last_result.json'
 
     def fake_scp(cmd, **kwargs):
         # Simulate a successful scp by writing the file scp would have pulled back.
@@ -594,16 +614,16 @@ def test_ingest_vlm_canary_from_jetson_logs_result_with_local_photo_path(
         return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
     monkeypatch.setattr(subprocess, 'run', fake_scp)
 
-    ingest_vlm_canary_from_jetson('192.168.1.86', state_dir=str(tmp_path), db_path=db)
+    ingest_vlm_canary_from_jetson('192.168.1.86', state_dir=str(state_dir), db_path=db)
 
     conn = sqlite3.connect(db)
     row = conn.execute(
         "SELECT run_context, photo_path, answer FROM vlm_canary_log").fetchone()
     conn.close()
-    # photo_path must be the WORKSTATION-local path (matched by basename in state_dir),
-    # NOT the Jetson-side path the JSON reported — that path is meaningless here and
-    # would never match generate_test_report.py's `photos` column join.
-    assert row == ('red', str(local_red_photo), 'a red ball')
+    # photo_path must be the PHOTO_DIR path — the same one _pull_photos_from_paths wrote
+    # into the leg's `photos` telemetry column — NOT the Jetson-side path the JSON
+    # reported, and NOT state_dir's own copy either.
+    assert row == ('red', str(photo_dir_red_photo), 'a red ball')
 
 
 def test_ingest_vlm_canary_from_jetson_no_op_when_scp_fails(monkeypatch, tmp_path):

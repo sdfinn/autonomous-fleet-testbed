@@ -757,9 +757,14 @@ def ingest_vlm_canary_from_jetson(jetson_ip, state_dir=None, db_path=None):
 
     photo_path is deliberately NOT trusted from the Jetson's own JSON (a Jetson-side
     absolute path, meaningless on the workstation) — reuses whichever workstation-
-    local reaction_red photo _pull_photos_from_paths already copied into state_dir for
+    local reaction_red photo _pull_photos_from_paths already copied into PHOTO_DIR for
     this exact day, so find_vlm_canary_results()'s exact-path join actually works
-    against generate_test_report.py's own `photos` column (2026-07-31 fix, same day)."""
+    against generate_test_report.py's own `photos` column (2026-07-31 fix, same day).
+    Bug fixed 2026-08-01: this used to glob state_dir instead of PHOTO_DIR — a copy of
+    the same photo exists in BOTH (state_dir gets a `cp -f`'d duplicate), but the
+    `photos` telemetry column is always PHOTO_DIR-based, so the state_dir path never
+    actually matched it — every HIL PDF report silently showed zero canary text since
+    this feature shipped, confirmed via the real fleet_runs.db (run 690)."""
     import json as _json
 
     from tools.telemetry_logger import DB_PATH as _DB_PATH
@@ -780,7 +785,7 @@ def ingest_vlm_canary_from_jetson(jetson_ip, state_dir=None, db_path=None):
 
     with open(local_json) as f:
         payload = _json.load(f)
-    matches = sorted(pathlib.Path(state_dir).glob('mission2_reaction_red_*.png'))
+    matches = sorted(PHOTO_DIR.glob('mission2_reaction_red_*.png'))
     local_photo_path = str(matches[-1]) if matches else payload.get('photo_path')
     log_vlm_canary_result(
         payload.get('run_context', 'red'), local_photo_path,
