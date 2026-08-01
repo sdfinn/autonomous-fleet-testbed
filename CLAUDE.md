@@ -10,7 +10,47 @@ alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean 
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
 
-## NEXT SESSION — START HERE (2026-08-01, paused mid-Item-3, machine-safety pause)
+## NEXT SESSION — START HERE (2026-08-01, evening session — real robot deploy rewrite)
+**Item 1, first thing next session (Mike's explicit ask): review the docker/no-docker
+decision and review what real value `stage-3-arm64` is providing.** This session found
+(see `docs/bare-metal-vs-container-decision.md` for the full writeup, and the
+`RealRobotStartup.md` rewrite) that the container role HIL actually proved was always
+narrower than the original 2026-07-27 "containerized brain" decision — only the raw
+`mission_runner.py --day` ROS2 loop ever runs in a container, never Nav2/EKF/
+`ball_detector`, and the real robot's own deployment (`scripts/robot_boot.sh`) ended up
+bare-metal end to end, not using the Docker image at all. Given that, is `stage-3-arm64`
+(the native arm64 build, ~10 min of the pipeline) still earning its keep, or has its
+actual value shrunk now that the real robot doesn't consume its output? Concretely to
+revisit: does `stage-4-hil` still need the arm64 image at all (currently gates
+`HIL_CONTAINER=1`'s mission_runner-in-container run), or could HIL also move to running
+`mission_runner.py --day` bare, matching what the real robot now does — collapsing two
+divergent "how does the mission actually run" paths into one? Not decided, not started —
+this is the open question to bring to Mike, not a predetermined answer.
+
+Also carried forward, not yet started: item 4 (Release 1 → Release 2 planning — branching
+strategy, `r1-complete` tag now real per the deploy rewrite above) and item 6 (GitHub CI
+pipeline docs, self-hosted runner setup writeup) from the prior punch list below.
+
+**This evening's session, full summary:** `RealRobotStartup.md` fully rewritten (was
+last-verified 2026-07-28, materially stale against everything hardened since — WiFi/DDS/
+avahi fixes, HIL hardening's 6 fixes, container-mode findings). Real-time collaborative
+correction with Mike caught several wrong assumptions before they got written down:
+mission target moved from BR-01/`test_navigation.py` to the mission2 3-leg day
+(`sim_vs_real_comparison.py`'s correlation gate dropped entirely — log/drift analysis is
+R2 scope per Mike); the architecture is bare-metal end to end (not the originally-planned
+containerized brain, corrected mid-conversation after tracing the ACTUAL `nav2_up()`/
+`JetsonExecutor` code, not the plan doc); power-on now fully automates the mission via a
+new `scripts/robot_boot.sh` + `scripts/robot-mission.service` (systemd, `network-
+online.target`-gated) — NOT yet exercised by CI/HIL (can't simulate a power cycle there),
+manual-first-then-systemd is the explicit safety pattern in the doc. New: `tools/
+calibrate_hsv_realcam.py` (+ 4 tests) — a real, previously-missed gap, since mission2's
+yellow/red legs need real-camera HSV thresholds that never mattered under the old
+BR-01-only gate. `docs/bare-metal-vs-container-decision.md` is a new standing reference
+(the honest architecture-drift story, written for reuse — design reviews, interview prep).
+**Nothing in this session has been pushed** — Mike wanted to log off; everything is
+committed locally on `main` only, push next session after a final look.
+
+## (superseded 2026-08-01 evening) PREVIOUS (2026-08-01, paused mid-Item-3, machine-safety pause)
 Session continued the 2026-07-31 punch list. Items 1 and 2 fully closed out today
 (details below and in the dated Gotchas). Item 3 (real code coverage) is IN PROGRESS —
 deliberately paused, not blocked on anything code-related, purely because the
@@ -164,8 +204,8 @@ order:
      `ghcr_prune.py`) so they don't drag the headline number down — they're
      hand-invoked hardware debug scripts, never meant to be unit-tested.
 4. Release 1 → Release 2 planning (branching strategy, `r1-complete` tag).
-5. `RealRobotStartup.md` accuracy check (references "Session 18"; also needs pointing
-   at the new `regen_cyclonedds_config.sh`, since it shares the same DDS setup).
+5. ~~`RealRobotStartup.md` accuracy check~~ **Done 2026-08-01 evening** — full rewrite,
+   see the NEXT SESSION block above for the summary.
 6. GitHub CI pipeline docs (self-hosted runner setup writeup).
 
 ## Development workflow — tier 1 first

@@ -1,0 +1,35 @@
+# Copyright 2026 Mike
+# SPDX-License-Identifier: Apache-2.0
+#
+# Install (RealRobotStartup.md Part A, only after scripts/robot_boot.sh has been
+# verified manually over SSH at least once):
+#   sudo cp scripts/robot-mission.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable robot-mission.service
+#
+# Runs scripts/robot_boot.sh once at boot, after WiFi has actually associated
+# (network-online.target — the standard systemd target for "at least one interface is
+# up," not "internet reachable"; nothing in robot_boot.sh needs internet or the
+# workstation, but regen_cyclonedds_config.sh needs at least one physical, currently-up
+# interface to exist or it hard-exits). Type=oneshot: this is a single run-to-
+# completion job (the mission day itself), not a long-lived daemon — systemd doesn't
+# expect it to keep running.
+#
+# Disable for manual/debug boots: sudo systemctl disable robot-mission.service
+
+[Unit]
+Description=Real-robot mission2 day (no_ball -> yellow -> red), operator ball placement
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=mike
+WorkingDirectory=/home/mike/autonomous-fleet-testbed
+ExecStart=/home/mike/autonomous-fleet-testbed/scripts/robot_boot.sh
+# Best-effort: a failed boot run shouldn't spin retrying against a robot no one is
+# watching — the manual SSH path (run scripts/robot_boot.sh by hand) is the debug tool.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

@@ -500,3 +500,24 @@ Claude is working with files under this directory.
   local report generation only ever seeing whichever ad hoc local runs happened to hit
   the wrong one. `FLEET_TELEMETRY=off` skips writing a telemetry row entirely, for ad
   hoc/experimental runs that shouldn't join the drift-tracked record.
+- `coverage_log.py` — 2026-08-01: `coverage_runs` table (isolated, same shape
+  convention as `diagnosis_log.py`/`vlm_canary.py`), `log_coverage_run()`, a
+  `--db`-flag CLI. Written by CI's `coverage-report` job (`ci.yml`) after `coverage
+  combine` merges stage-1 (unit) + stage-2 (integration) `.coverage` data into the
+  real project-wide total — pure-local, no third-party site (Codecov tried first,
+  dropped same day — tokenless upload didn't actually work for this repo, and Mike
+  didn't want coverage data on an external site regardless). `dashboard/app.py`'s
+  Coverage tab reads this table directly.
+- `calibrate_hsv_realcam.py` — 2026-08-01, for `RealRobotStartup.md` Part A4: suggests
+  HSV thresholds for the real robot's camera from a close-up ball photo's own pixel
+  statistics (reuses `nav_fleet.hsv_detect.rgb_to_hsv`, already unit-tested — no new
+  color-math code). A suggestion tool, not a solver — unlike `calibrate_ball_range.py`
+  (sim-only, has Gazebo ground truth for `range_k`), there's no ground truth for a real
+  photo's HSV band. Handles hue wraparound (red sits at the 0/360 seam) by shifting the
+  whole distribution so its median lands at 180 before taking percentiles, then
+  shifting back — a naive min/max would otherwise report red as spanning almost the
+  whole hue circle. `range_k` isn't touched (a focal-length property, not per-color;
+  real-camera range calibration doesn't exist yet). Found because mission2's yellow/red
+  legs — now the actual R1 validation target, see `RealRobotStartup.md` — depend
+  entirely on real-camera color detection working, which never mattered under the old
+  BR-01-only gate (Mission 1 never consumed detections).
