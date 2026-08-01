@@ -15,6 +15,12 @@ on:
 # planning docs purged from every commit). The rewrite's own push had identical tree
 # content, so the paths-filter below correctly skipped stages 3-4 — this comment forces
 # a real full-pipeline run to confirm everything still works end-to-end post-rewrite.
+#
+# 2026-08-01: local dashboard showed FAIL rows (bedroom_nav drift, mission2_* variants)
+# from a run contended by a concurrent synthetic-fleet Gazebo session on this same
+# machine. Machine re-verified clear (no stray gz sim/robot_state_publisher processes,
+# no in-flight CI). This comment forces a real full-pipeline run to confirm clean vs.
+# a genuine regression.
 concurrency:
   group: fleet-ci-shared-hardware
   cancel-in-progress: false
