@@ -172,7 +172,7 @@ jobs:
           echo "Stage 1 (unit) coverage: ${COV_PCT}%"
           echo "### Stage 1 (unit) coverage: ${COV_PCT}% — full breakdown: https://codecov.io/gh/sdfinn/autonomous-fleet-testbed" >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload coverage to Codecov (flag: unit)
+      - name: Upload coverage to Codecov (flag=unit)
         if: always()
         uses: codecov/codecov-action@v5
         with:
@@ -365,7 +365,7 @@ jobs:
           echo "Stage 2 (integration) coverage: ${COV_PCT}%"
           echo "### Stage 2 (integration) coverage: ${COV_PCT}% — full breakdown: https://codecov.io/gh/sdfinn/autonomous-fleet-testbed" >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload coverage to Codecov (flag: integration)
+      - name: Upload coverage to Codecov (flag=integration)
         if: always()
         uses: codecov/codecov-action@v5
         with:
