@@ -15,13 +15,21 @@ A full HIL-hardening session landed tonight (25W-always, on-device Jetson VLM ca
 dynamic CycloneDDS interface selection — see the dated Gotchas entries below for full
 detail) and ended on a fully-green end-to-end CI run. Punch list for next time, in
 order:
-1. **Remove the duplicate mission2 tests from stage-2.** `tests/test_mission2.py`'s 3
-   per-scenario tests (no_ball/yellow/red) are now redundant with
-   `tools/mission2_day.py`'s in-process run in the same stage — same 3 legs, same
-   judging, plus VLM canary coverage the old tests never had. Also audit the rest of
-   stage-2's pytest suite (`test_navigation.py`, `test_mission_run.py`,
-   `test_nav_runner.py`) for anything that doesn't actually need live ROS2/Gazebo and
-   could move to `stage-1-quality` for faster feedback.
+1. ~~**Remove the duplicate mission2 tests from stage-2.**~~ **Done 2026-08-01.**
+   `tests/test_mission2.py` (the 3 old per-scenario no_ball/yellow/red tests) deleted
+   outright — confirmed redundant with `tools/mission2_day.py`'s in-process run
+   already in the same stage (same 3 legs, same judging, plus VLM canary coverage the
+   old tests never had). Every reference across `ci.yml`, `README.md`,
+   `tools/mission2_harness.py`, and `src/nav_fleet/CLAUDE.md` updated or repointed at
+   `mission2_day.py`. **Audit of the rest of stage-2's suite (`test_navigation.py`,
+   `test_mission_run.py`, `test_nav_runner.py`) — conclusion: nothing else moves.**
+   `test_nav_runner.py`/`test_mission_run.py` mock out Nav2 itself (no live Gazebo
+   needed for their own logic), but all 4 files still `import rclpy` at module level,
+   and `stage-1-quality` (bare `ubuntu-latest`) never installs `rclpy` — only the
+   ROS2 apt repo + `ros-jazzy-ament-*` lint tools, confirmed by reading that job's
+   steps directly. Moving any of them would require installing full ROS2
+   (`ros-jazzy-ros-base`+) in stage-1, which defeats its whole "cheap/fast feedback"
+   purpose — not done. Already optimally split as-is.
 2. **Revisit CI + PDF output** — finish verifying the final green run's (30657248798)
    actual PDF artifacts (sim and hw) for correct VLM canary placement (each
    scenario's own canary text, not duplicated across no_ball/yellow/red) and whether
@@ -43,7 +51,7 @@ python -m pytest tests/ -v \
   --ignore=tests/test_ros2_contracts.py \
   --ignore=tests/test_navigation.py \
   --ignore=tests/test_mission_run.py \
-  --ignore=tests/test_mission2.py    # seconds — run Python unit tests
+  --ignore=tests/test_nav_runner.py    # seconds — run Python unit tests
 ros2 launch nav_fleet sim_launch.py    # Session 09+ — Gazebo + Nav2 locally
 # nav_runner, metrics_collector, drift check all run here
 ```
@@ -71,7 +79,7 @@ ros2 launch src/nav_fleet/launch/sim_launch.py   # Session 09+ — Gazebo locall
 # Run Python unit tests (venv auto-activated by .bashrc)
 python -m pytest tests/ -v --ignore=tests/test_ros2_contracts.py \
   --ignore=tests/test_navigation.py --ignore=tests/test_mission_run.py \
-  --ignore=tests/test_mission2.py
+  --ignore=tests/test_nav_runner.py
 
 # Run a mission (repo root; sim must be up — see launch commands above)
 python -m nav_fleet.mission_runner mission1
@@ -162,7 +170,9 @@ docker buildx build --platform linux/arm64 \
   has now bitten twice. `tests/test_mission2.py` (Session 16+ Plan B camera-reactive Mission 2)
   is the same shape — live ROS2 + a running sim — and got the `--ignore` treatment in
   `stage-1-quality` up front this time (commit 0b77e10), correctly running instead as an
-  integration test in `stage-2-gazebo`.
+  integration test in `stage-2-gazebo`. (File itself removed 2026-08-01 as redundant
+  with `tools/mission2_day.py`'s in-process run — left here as historical context for
+  the `--ignore`-treatment lesson, which still applies to any new rclpy-importing file.)
 - **CI stage-0's traceability gate has `continue-on-error: true` — this is a live, ongoing gap,
   not stale.** Session 10 added `test_navigation.py`, but 2 of its 3 test function names never
   matched `requirements/traceability.yaml`'s placeholder names (fixed in Session 11/12: BR-01/

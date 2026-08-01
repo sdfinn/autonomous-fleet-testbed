@@ -80,8 +80,7 @@ source install/setup.bash
 # Unit tests (the live-ROS test files are excluded — they need the sim running)
 python -m pytest tests/ -v \
   --ignore=tests/test_ros2_contracts.py --ignore=tests/test_navigation.py \
-  --ignore=tests/test_mission_run.py --ignore=tests/test_mission2.py \
-  --ignore=tests/test_nav_runner.py
+  --ignore=tests/test_mission_run.py --ignore=tests/test_nav_runner.py
 
 # Launch the sim (Gazebo headless + Nav2). Wait for "Managed nodes are active".
 ros2 launch src/nav_fleet/launch/sim_launch.py
@@ -136,7 +135,7 @@ optional extra hardware — see "Hardware-in-the-loop" above.
    colcon build --symlink-install && source install/setup.bash
    python -m pytest tests/ -v --ignore=tests/test_ros2_contracts.py \
      --ignore=tests/test_navigation.py --ignore=tests/test_mission_run.py \
-     --ignore=tests/test_mission2.py --ignore=tests/test_nav_runner.py
+     --ignore=tests/test_nav_runner.py
    ```
    *You should see:* the build finishes in ~1 s and all unit tests pass.
 6. **First mission** — run the Quickstart above. *You should see:* Nav2 reach

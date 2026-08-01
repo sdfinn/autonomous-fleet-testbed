@@ -134,7 +134,6 @@ jobs:
             --ignore=tests/test_ros2_contracts.py \
             --ignore=tests/test_navigation.py \
             --ignore=tests/test_mission_run.py \
-            --ignore=tests/test_mission2.py \
             --ignore=tests/test_nav_runner.py \
             -k "not integration"
 
@@ -268,22 +267,23 @@ jobs:
                                              # .bashrc, so this runner falls back to apt's
                                              # pytest 7.4.4 (owned by colcon-core) otherwise
           python -m pytest tests/test_navigation.py tests/test_mission_run.py \
-            tests/test_mission2.py tests/test_nav_runner.py -v --timeout=300
+            tests/test_nav_runner.py -v --timeout=300
 
       - name: Run Mission 2 day (in-process — VLM canary x86 coverage)
-        # tools/mission2_day.py's run_day() (not just the older per-scenario tests
-        # above) is the only place _maybe_spawn_vlm_canary() lives — without this
-        # step the VLM/Ollama canary path had zero x86 CI coverage and only ever
-        # ran on the real Jetson in stage-4-hil. --no-launch reuses the stack the
-        # "Launch Gazebo + Nav2" step above already brought up, matching how
-        # JetsonExecutor also implies no-launch (hil_stage.sh owns the HIL stack).
-        # Telemetry runs normally here (no FLEET_TELEMETRY=off) — mission2_* is now
-        # declared under pipeline_matrix.yaml's sim stage (runner_type=local), and
-        # tests/test_mission2.py's own per-scenario tests already write real
-        # local+mission2_* history (70+ rows each), so this feeds a real, already-
-        # populated drift baseline rather than starting a fresh empty one. This also
-        # gives stage-5-reports-sim a real `runs` row to join the VLM canary result
-        # against via find_run_photos()/find_vlm_canary_results().
+        # tools/mission2_day.py's run_day() is now the ONLY place Mission 2's 3
+        # legs (no_ball/yellow/red) actually run in this stage — the old standalone
+        # tests/test_mission2.py per-scenario tests were removed (2026-08-01) as
+        # redundant: same 3 legs, same judging, but this in-process run also covers
+        # the VLM/Ollama canary path, which the old tests never exercised at all
+        # (previously only ran on the real Jetson in stage-4-hil). --no-launch
+        # reuses the stack the "Launch Gazebo + Nav2" step above already brought up,
+        # matching how JetsonExecutor also implies no-launch (hil_stage.sh owns the
+        # HIL stack). Telemetry runs normally here (no FLEET_TELEMETRY=off) —
+        # mission2_* is declared under pipeline_matrix.yaml's sim stage
+        # (runner_type=local), so this is now the sole source feeding the
+        # local+mission2_* drift baseline (previously duplicated by the removed
+        # tests). This also gives stage-5-reports-sim a real `runs` row to join the
+        # VLM canary result against via find_run_photos()/find_vlm_canary_results().
         env:
           STATE_DIR: /tmp/stage2_mission2_day
         run: |

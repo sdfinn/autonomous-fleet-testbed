@@ -133,7 +133,10 @@ Claude is working with files under this directory.
   the pattern for any test/tool that spawns a model then expects the camera to see it.
   **Removal lags too** (found same evening): a REMOVED model lingers in rendered camera
   frames for seconds — back-to-back tests reacted to the previous test's "ghost" ball.
-  Hence `BALL_REMOVAL_SETTLE_S = 3.0` after `remove_ball` in tests/test_mission2.py.
+  Hence `BALL_REMOVAL_SETTLE_S = 3.0` after `remove_ball`/`BallOps.settle()` in
+  `tools/mission2_harness.py` (consumed by `tools/mission2_day.py`; the old
+  standalone `tests/test_mission2.py` this originally referenced was removed
+  2026-08-01 as redundant with `mission2_day.py`'s in-process stage-2 run).
 - **`pkill -f`/`pgrep -f` SELF-MATCH: the pattern matches the invoking shell's own command
   line.** Bit twice on 2026-07-17: a teardown containing `pkill -INT -f "ros2 launch …"`
   plus a relaunch of that same string SIGINT'd its own shell (exit 144) and never killed the

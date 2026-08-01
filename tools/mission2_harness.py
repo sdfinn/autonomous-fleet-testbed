@@ -5,14 +5,16 @@
 HARNESS-ONLY code (spec §5): the judge, not the contestant. Robot code must never import
 this module or learn ball positions from it.
 
-Placement (Task 9 rework, 2026-07-17 — Mike's explicit decision): tests/test_mission2.py
+Placement (Task 9 rework, 2026-07-17 — Mike's explicit decision): the sim tier
 now uses the DETERMINISTIC BALL_AT_SPHERE_XY spot below, not seeded random placement.
 Seeded fuzzing (`solve_placement` + the seed machinery, still below/unused by the live
 tests) is deferred to a later session, constrained to an "area of interest" sampling
 region rather than the free-roam corridor/anchor sampling here.
 
 Run as a CLI from the repo root for the HIL tier (python -m tools.mission2_harness ...);
-the sim tier (tests/test_mission2.py) calls the functions in-process.
+the sim tier (tools/mission2_day.py, in-process via InProcessExecutor — the old
+standalone tests/test_mission2.py this docstring originally pointed at was removed
+2026-08-01 as redundant with it) calls the functions in-process.
 """
 import argparse
 import ast
@@ -39,8 +41,8 @@ WORLD = 'bedroom'
 BALL_RADIUS = 0.043           # 86 mm croquet ball (spec §6) — never inflate
 # Ghost-ball settle (CLAUDE.md Gotchas, 2026-07-17): the headless llvmpipe renderer keeps a
 # REMOVED model in camera frames for seconds — wait this long after remove_ball so the next
-# run never reacts to the previous run's ball. Single source of truth: tests/test_mission2.py,
-# scripts/hil_stage.sh, and tools/mission2_day.py all key off this value.
+# run never reacts to the previous run's ball. Single source of truth: scripts/hil_stage.sh
+# and tools/mission2_day.py both key off this value.
 BALL_REMOVAL_SETTLE_S = 3.0
 
 # Deterministic placement (Task 9 rework, 2026-07-17 — Mike's decision, supersedes seeded
@@ -495,9 +497,10 @@ def _cmd_remove(args):
 
 
 def _cmd_assert_home(args):
-    """Start-position precondition (mirrors tests/test_mission2.py::_assert_at_home_base):
-    workstation ground truth must be within `--tol` of home_base, else exit nonzero so a
-    failed drive-home surfaces loudly instead of silently displacing the next rung."""
+    """Start-position precondition (mirrors mission_runner.MissionRunner's own home-base
+    check, exercised in-process by tools/mission2_day.py): workstation ground truth must
+    be within `--tol` of home_base, else exit nonzero so a failed drive-home surfaces
+    loudly instead of silently displacing the next rung."""
     truth = get_ground_truth_xy()
     hx, hy = SEMANTIC_MAP['home_base']
     if truth is None:
@@ -561,8 +564,9 @@ def _cmd_judge_no_ball(args):
     # navigate to the marker -> marker photo -> navigate HOME -> home_arrival photo, reacting
     # to nothing. judge_no_ball checks zero reactions + marker photo exists + ended HOME
     # (workstation ground truth) + home-photo pair PASS. Mirrors
-    # tests/test_mission2.py::test_mission2_no_ball. Photos were scp'd to STATE_DIR by
-    # hil_stage.sh (the Jetson has no Gazebo, so the pair check runs here).
+    # judge_no_ball (called in-process by tools/mission2_day.py for the sim tier). Photos
+    # were scp'd to STATE_DIR by hil_stage.sh (the Jetson has no Gazebo, so the pair check
+    # runs here).
     with open(args.mission_log) as f:
         log_text = f.read()
     marker_photos = sorted(glob.glob(args.marker_glob))
