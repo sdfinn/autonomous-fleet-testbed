@@ -71,3 +71,6 @@ Thumbs.db
 
 # LibreOffice lock files
 .~lock.*#
+
+# git worktrees for isolated feature work (superpowers:using-git-worktrees)
+.worktrees/
