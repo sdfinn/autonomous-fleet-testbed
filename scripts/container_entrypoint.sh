@@ -62,15 +62,15 @@ rm -f "$NAV2_LOG"
 
 echo "=== [container-entrypoint] waiting up to 120s for Nav2 to report active ==="
 deadline=$((SECONDS + 120))
-count=0
-until [ "$count" -ge 2 ]; do
+until [ "${count:-0}" -ge 2 ]; do
   if (( SECONDS >= deadline )); then
     echo "FATAL: Nav2 not active within 120s — see $NAV2_LOG" >&2
     tail -n 40 "$NAV2_LOG" >&2 || true
     exit 1
   fi
   sleep 3
-  count=$(grep -c 'Managed nodes are active' "$NAV2_LOG" 2>/dev/null || echo 0)
+  count=$(grep -c 'Managed nodes are active' "$NAV2_LOG" 2>/dev/null || true)
+  count="${count:-0}"
 done
 echo "=== [container-entrypoint] Nav2 active — starting mission2 day ==="
 
