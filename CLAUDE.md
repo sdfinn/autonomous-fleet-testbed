@@ -10,7 +10,30 @@ alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean 
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
 
-## NEXT SESSION — START HERE (2026-08-01, evening session — real robot deploy rewrite)
+## NEXT SESSION — START HERE (2026-08-03 — Docker-brain redesign spec)
+**First thing next session (Mike's explicit ask): review the design spec at
+`docs/superpowers/specs/2026-08-03-docker-brain-real-robot-hil-unification-design.md`
+before anything else proceeds.** Not yet reviewed by Mike, not yet committed to git.
+Once reviewed/approved (with any changes folded in), the next step is writing-plans →
+an implementation plan — nothing has been implemented yet, this session was pure
+design.
+
+**Summary of the decision this spec captures:** reverses the 2026-08-01 bare-metal-
+end-to-end call — item 1 of that session's punch list ("does `stage-3-arm64` still
+earn its keep") got a real answer: yes, restructured. Nav2/EKF/`ball_detector`/
+`mission_runner`/`mission2_day` all move into one Docker container long-term (driver
+layer stays bare, Ollama stays bare); HIL and the real robot converge onto the exact
+same container entrypoint and the exact same `nav2_only_launch.py` (parameterized by
+3 new launch args — `use_sim_time`/`hsv_config`/`map` — not a separate
+`robot_launch.py` file); the biggest single piece of rework is HIL's own orchestration
+moving from workstation-SSH-dispatch onto the Jetson's own container, matching how
+the real robot already has to run. Mike's explicit framing for this reversal: decide
+on long-term architectural merit for the fleet testbed's future, not on which
+direction avoids rework — read the spec's own "Context" section for the full
+reasoning, and its "Known implementation-time risks" section before starting
+implementation.
+
+## (superseded 2026-08-03) PREVIOUS (2026-08-01, evening session — real robot deploy rewrite)
 **Item 1, first thing next session (Mike's explicit ask): review the docker/no-docker
 decision and review what real value `stage-3-arm64` is providing.** This session found
 (see `docs/bare-metal-vs-container-decision.md` for the full writeup, and the
