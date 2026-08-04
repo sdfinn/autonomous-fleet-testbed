@@ -10,13 +10,66 @@ alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean 
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
 
-## NEXT SESSION — START HERE (2026-08-03 — Docker-brain redesign spec)
-**First thing next session (Mike's explicit ask): review the design spec at
-`docs/superpowers/specs/2026-08-03-docker-brain-real-robot-hil-unification-design.md`
-before anything else proceeds.** Not yet reviewed by Mike, not yet committed to git.
-Once reviewed/approved (with any changes folded in), the next step is writing-plans →
-an implementation plan — nothing has been implemented yet, this session was pure
-design.
+## NEXT SESSION — START HERE (2026-08-03 evening — docker-brain implementation, Tasks 1-4 of 9 done)
+**Spec reviewed/approved earlier this session** (with two real deviations from the
+original spec text, decided live with Mike — see below), **implementation plan
+written and execution started via subagent-driven-development, 4 of 9 tasks
+complete.** Work is happening in an isolated git worktree, NOT on `main`:
+`/home/mike/autonomous-fleet-testbed/.worktrees/feat/docker-brain-unification`
+(branch `feat/docker-brain-unification`) — `cd` there to resume, don't redo this
+work on `main`. Nothing has been pushed anywhere.
+
+- **Plan:** `docs/superpowers/plans/2026-08-03-docker-brain-real-robot-hil-unification-plan.md`
+  (9 tasks, already committed to `main` and inherited by the worktree).
+- **Ledger (full task-by-task history, gitignored — worktree-local, not on `main`):**
+  `.worktrees/feat/docker-brain-unification/.superpowers/sdd/progress.md`.
+- **Done, each independently reviewed (spec + quality) via the subagent-driven-development
+  loop, all Approved:** Task 1 (`nav2_only_launch.py` launch args), Task 2
+  (`mission_runner.py` self-report telemetry for the real robot), Task 3 (Dockerfile +
+  new `scripts/container_entrypoint.sh` — real arm64 build verified, ~39 min under QEMU
+  emulation on this workstation since the Jetson runner wasn't used for this manual
+  check), Task 4 (`pipeline_matrix.yaml` real-stage scenario fix — was stale, still
+  pointing at the old BR-01 gate).
+- **Real bug found + fixed along the way:** a `grep -c ... || echo 0` double-print bug
+  in `container_entrypoint.sh`'s Nav2-readiness wait loop (the plan's own transcribed
+  code carried this forward from an existing, unrelated bug already present in
+  `robot_boot.sh`) — fixed to match `hil_stage.sh`'s already-correct pattern, re-reviewed
+  clean. **`scripts/robot_boot.sh` itself still has this same bug on `main` today,
+  unfixed** — Task 6 (below) replaces that file's Nav2-wait loop entirely with a
+  container invocation, so it'll disappear there as a side effect, not a targeted fix;
+  worth confirming that actually happens when Task 6 lands.
+- **Two important deviations from the design spec doc's literal text, decided live with
+  Mike this session, NOT yet folded back into the spec file itself** (the spec doc at
+  `docs/superpowers/specs/2026-08-03-docker-brain-real-robot-hil-unification-design.md`
+  still describes the ORIGINAL, wider idea — reading the spec doc alone would be
+  misleading; the plan doc's own "Global Constraints" section has the real, current
+  decision):
+  1. Ball placement, ground-truth reading, and judging (`tools/mission2_harness.py`)
+     stay workstation-side for HIL, unchanged from today — NOT moved into the
+     container's self-orchestration as the spec originally described. Reason: they use
+     `gz`/Gazebo-transport, a separate protocol from CycloneDDS with unverified
+     cross-machine reachability, and that harness code never runs on the real robot
+     either way (no Gazebo there) — so moving it wouldn't actually converge HIL with
+     the robot, just add unproven risk.
+  2. The real robot does NOT get ground-truth judging at all (impossible — no Gazebo,
+     no oracle) — it self-reports each leg's own PASS/FAIL and saves logs/photos;
+     analysis happens after, manually, not in real time.
+  Consider updating the spec doc itself to match, or at least adding a pointer at its
+  top to the plan's Global Constraints section, before this is forgotten.
+- **Remaining, in order:** Task 5 (`JetsonExecutor`/`hil_stage.sh` → always-container
+  HIL, the biggest remaining piece — retires the bare-metal Nav2-on-Jetson path
+  entirely), Task 6 (`robot_boot.sh`/`robot-mission.service` rewrite), Task 7 (`ci.yml`
+  cleanup — drop the now-dead `HIL_CONTAINER` env var), Task 8 (`RealRobotStartup.md`
+  doc updates — A5/A6 + intro item 2), Task 9 (manual hardware-verification
+  checkpoints — needs live Jetson access, cannot be subagent-dispatched, needs Mike or
+  a session with real SSH access to the robot).
+- **Known process-hygiene lesson from this session, worth carrying into future
+  subagent-driven-development dispatches in this repo:** an implementer subagent left
+  orphaned `gz sim`/`robot_state_publisher` processes running after its own manual
+  live-ROS verification step — the controller had to sweep them by hand
+  (`CLAUDE.md`'s own documented teardown pattern). Future dispatch prompts for any task
+  that launches Gazebo/Nav2 should explicitly include a teardown/sweep step, not just a
+  check-before-launch step.
 
 **Summary of the decision this spec captures:** reverses the 2026-08-01 bare-metal-
 end-to-end call — item 1 of that session's punch list ("does `stage-3-arm64` still
