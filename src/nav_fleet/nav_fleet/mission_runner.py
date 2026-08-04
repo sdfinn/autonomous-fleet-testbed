@@ -21,6 +21,7 @@ Requires a live sim (sim_launch.py, or sim_only + nav2_only for HIL). Logs one t
 row per mission to FLEET_DB via tools.telemetry_logger.
 """
 import argparse
+import json
 import math
 import os
 import pathlib
@@ -51,6 +52,40 @@ CLEAR_COSTMAP_SERVICES = (
     '/robot_001/global_costmap/clear_entirely_global_costmap',
     '/robot_001/local_costmap/clear_entirely_local_costmap',
 )
+
+# Mirrors tools.mission2_day.hil_variant_names()'s declared order
+# (config/pipeline_matrix.yaml) — duplicated here, not imported, because this file
+# is ROBOT code and must never import tools.mission2_day (which pulls in
+# tools.mission2_harness — ball positions/judge logic robot code must never see).
+MISSION2_DAY_LEG_NAMES = ('no_ball', 'yellow', 'red')
+
+
+def _log_mission2_day_self_report(results):
+    """Real-robot-only telemetry (MISSION2_SELF_REPORT=1, set by
+    scripts/container_entrypoint.sh's caller for the real-robot context only —
+    never for HIL): log each leg's SELF-reported PASS/FAIL (leg['ok'], from Nav2's
+    own goal completion) with NO ground-truth judging. The real robot has no
+    Gazebo, no ground-truth oracle at all (RealRobotStartup.md: a human's own eyes
+    are the accepted substitute, and analysis of the resulting logs/photos happens
+    after, not in real time). HIL never sets MISSION2_SELF_REPORT — its judged
+    verdict comes from the workstation's own ground-truth check instead
+    (tools.mission2_day, which stays workstation-side precisely because it needs
+    Gazebo)."""
+    for name, leg in zip(MISSION2_DAY_LEG_NAMES, results):
+        log_run(
+            scenario=f'mission2_{name}',
+            steps=1,
+            final_x=0.0, final_y=0.0,
+            result='PASS' if leg['ok'] else 'FAIL',
+            step_log=[],
+            robot_id=os.environ.get('ROBOT_ID', 'robot_001'),
+            robot_type='jetson_ugv_pt',
+            runner_type=os.environ.get('RUNNER_TYPE', 'real_robot'),
+            sim_engine='real',
+            nav_success_rate=1.0 if leg['ok'] else 0.0,
+            power_mode=os.environ.get('POWER_MODE'),
+            photos=json.dumps(leg['photos']) if leg['photos'] else None,
+        )
 
 
 class MissionRunner(Node):
@@ -332,6 +367,8 @@ def main():
                 git_sha=git_sha(), power_mode=os.environ.get('POWER_MODE')))
             results = runner.run_mission2_day()
             print('MISSION2_DAY_RESULT:' + json.dumps(results))
+            if os.environ.get('MISSION2_SELF_REPORT') == '1':
+                _log_mission2_day_self_report(results)
             bag_kept = any(not leg['ok'] for leg in results) and failure_bag.snapshot()
             if bag_kept:
                 print(f'failure bag kept: {bag_path}')
