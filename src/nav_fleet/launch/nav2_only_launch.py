@@ -13,9 +13,12 @@
 # limitations under the License.
 """Nav2 half only: nav2_bringup with this project's map/params, no simulator.
 
-The 'robot brain' — runs on the same machine as the sim (via sim_launch.py) or on the
-real Jetson for hardware-in-the-loop, where /clock, /robot_001/tf, scan, odom etc. all
-arrive over DDS from the sim machine (see Mission1HILSession15.md).
+The 'robot brain' — runs inside the Docker container (docs/superpowers/specs/
+2026-08-03-docker-brain-real-robot-hil-unification-design.md), on the same
+machine as the sim (via sim_launch.py) for local dev, or on the real Jetson for
+both hardware-in-the-loop AND the real robot — the only difference between HIL
+and the real robot is the VALUE of the three launch arguments below, never the
+file.
 
 start_delay: seconds to wait before starting Nav2. sim_launch.py passes 13.0 (matches
 the original single-file timing: world load + bridge up + first sensor data). Default
@@ -45,6 +48,24 @@ def generate_launch_description():
         description='Passed through to nav2_bringup (e.g. debug, to see per-cycle '
                     'controller_server/goal_checker reasoning during a stall diagnosis)',
     )
+    # Docker-brain unification (2026-08-03 design): the ONE difference between HIL
+    # and the real robot. Defaults preserve today's HIL behavior exactly, so every
+    # existing caller (sim_launch.py, hil_stage.sh) that doesn't pass these three
+    # is unaffected.
+    use_sim_time_arg = DeclareLaunchArgument(
+        'use_sim_time', default_value='true',
+        description='true for sim/HIL (Gazebo clock), false for the real robot',
+    )
+    hsv_config_arg = DeclareLaunchArgument(
+        'hsv_config', default_value=str(PKG / 'config' / 'hsv_gazebo.yaml'),
+        description='ball_detector HSV thresholds — hsv_gazebo.yaml for sim/HIL, '
+                    'hsv_realcam.yaml for the real robot',
+    )
+    map_arg = DeclareLaunchArgument(
+        'map', default_value=str(PKG / 'maps' / 'living_room.yaml'),
+        description='Nav2 map yaml — living_room.yaml for sim/HIL, bedroom_real.yaml '
+                    'for the real robot',
+    )
 
     # robot_localization EKF — fuses IMU yaw-rate + wheel-odom translation and owns the
     # odom→base_footprint transform (Session 16 Task 9e; see config/ekf.yaml for the
@@ -62,7 +83,8 @@ def generate_launch_description():
         executable='ekf_node',
         name='ekf_filter_node',
         output='screen',
-        parameters=[str(PKG / 'config' / 'ekf.yaml'), {'use_sim_time': True}],
+        parameters=[str(PKG / 'config' / 'ekf.yaml'),
+                    {'use_sim_time': LaunchConfiguration('use_sim_time')}],
         remappings=[
             ('/tf', '/robot_001/tf'),
             ('/tf_static', '/robot_001/tf_static'),
@@ -78,8 +100,8 @@ def generate_launch_description():
         executable='ball_detector',
         name='ball_detector',
         output='screen',
-        parameters=[{'use_sim_time': True,
-                     'hsv_config': str(PKG / 'config' / 'hsv_gazebo.yaml')}],
+        parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time'),
+                     'hsv_config': LaunchConfiguration('hsv_config')}],
     )
 
     nav2_bringup_dir = get_package_share_directory('nav2_bringup')
@@ -92,9 +114,9 @@ def generate_launch_description():
             launch_arguments={
                 'namespace': 'robot_001',
                 'use_namespace': 'true',
-                'use_sim_time': 'true',
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
                 'params_file': str(PKG / 'config' / 'nav2_params.yaml'),
-                'map': str(PKG / 'maps' / 'living_room.yaml'),
+                'map': LaunchConfiguration('map'),
                 'use_composition': 'True',
                 'autostart': 'true',
                 # Forwarded, not previously wired (found in second-round review,
@@ -112,6 +134,9 @@ def generate_launch_description():
     return LaunchDescription([
         start_delay_arg,
         log_level_arg,
+        use_sim_time_arg,
+        hsv_config_arg,
+        map_arg,
         ekf_node,
         ball_detector,
         nav2,
