@@ -140,7 +140,9 @@ sync() {
   require_ip
   local sha="${1:?usage: hil_stage.sh sync <git-sha>}"
   jssh "cd ${JETSON_REPO} && git fetch origin ${sha} && git checkout --detach FETCH_HEAD"
-  jssh "source /opt/ros/jazzy/setup.bash && cd ${JETSON_REPO} && colcon build --symlink-install --base-paths src"
+  # No bare colcon build any more (docker-brain unification, 2026-08) — nothing
+  # bare launches nav_fleet code on the Jetson; the checkout only needs to exist
+  # here for regen_cyclonedds_config.sh and to identify the tested commit.
 }
 
 clean_state() {
@@ -187,48 +189,13 @@ sim_up() {
   echo '=== [sim-up] bridge up ==='
 }
 
-nav2_up() {
-  echo '=== [nav2-up] launching Nav2 on the Jetson (budget 120s) ==='
-  require_ip
-  # Regenerate cyclonedds-hil.xml from the Jetson's REAL current link state before
-  # every launch (2026-07-31) — a statically listed DOWN interface makes CycloneDDS
-  # hard-fail outright ("X: does not match an available interface"), not gracefully
-  # fall back to the next-priority one (confirmed live). This makes Nav2 come up
-  # correctly whichever interface the Jetson happens to be connected through at boot,
-  # with no manual step ever needed either way.
-  jssh "cd ${JETSON_REPO} && bash scripts/regen_cyclonedds_config.sh"
-  # The (...) subshell + < /dev/null are BOTH required, or the local ssh call blocks
-  # forever and nav2_up never reaches its polling loop:
-  #  - bash's `&` binds to the ENTIRE preceding &&-list, so without the parens the
-  #    backgrounded job is a subshell running the whole chain — that subshell inherits
-  #    the SSH session's stdout/stderr pipes and holds the channel open indefinitely.
-  #  - < /dev/null stops ros2 launch inheriting the session's stdin.
-  # With the parens, only ros2 launch (all fds redirected) survives; the wrapper
-  # subshell exits immediately and sshd can close the channel.
-  jssh "$JENV && cd ${JETSON_REPO} && rm -f ${NAV2_LOG} && (nohup ros2 launch src/nav_fleet/launch/nav2_only_launch.py > ${NAV2_LOG} 2>&1 < /dev/null &) && sleep 1 && echo nav2-launched"
-  local deadline=$((SECONDS + 120))
-  # Two lifecycle managers report active (localization, then navigation) — gate on BOTH.
-  local count
-  count=$(jssh "grep -c 'Managed nodes are active' ${NAV2_LOG} 2>/dev/null || true")
-  until [ "${count:-0}" -ge 2 ]; do
-    if (( SECONDS >= deadline )); then
-      echo 'FATAL: Nav2 not active within 120s — Jetson nav2 log tail:' >&2
-      jssh "tail -n 40 ${NAV2_LOG}" >&2 || true
-      return 1
-    fi
-    sleep 3
-    count=$(jssh "grep -c 'Managed nodes are active' ${NAV2_LOG} 2>/dev/null || true")
-  done
-  echo '=== [nav2-up] managed nodes active ==='
-}
-
 run() {
-  # HIL stack GATE (Task 13b): clean state, bring up the workstation Gazebo half and the
-  # Jetson Nav2. NO mission, NO verify, NO retry — the `day` orchestrator runs the missions,
-  # and a mission failure must surface RED. The only retry left anywhere is nav_runner's
-  # in-process cold-goal retry (Task 13a); all harness-level whole-mission retries were removed.
+  # HIL stack GATE (Task 13b, narrowed 2026-08 for the docker-brain unification):
+  # clean state, bring up ONLY the workstation's Gazebo half — Nav2/EKF/
+  # ball_detector now start INSIDE the container as part of `day()`'s one-shot
+  # run (see container_entrypoint.sh), not as a separate bare pre-step.
   clean_state
-  sim_up && nav2_up
+  sim_up
 }
 
 day() {
