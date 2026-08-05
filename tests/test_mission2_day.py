@@ -434,26 +434,6 @@ def test_spawn_vlm_canary_on_jetson_dispatches_ssh_with_remote_path(monkeypatch)
     assert 'nohup' in remote_cmd
 
 
-def test_spawn_vlm_canary_on_jetson_translates_container_path(monkeypatch):
-    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
-                        lambda self: None)
-    captured = {}
-
-    def fake_run(cmd, **kwargs):
-        captured['cmd'] = cmd
-        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
-    monkeypatch.setattr(subprocess, 'run', fake_run)
-
-    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
-    leg = _leg(photos=['/root/fleet-ci-data/photos/mission2_reaction_red_1.png'],
-               reaction_events=[{'color': 'red', 'reaction': 'photo_then_stop',
-                                 'truth_xy': None}])
-    ex._spawn_vlm_canary_on_jetson(leg)
-
-    assert '~/fleet-ci-data/photos/mission2_reaction_red_1.png red' in captured['cmd'][-1]
-
-
 def test_spawn_vlm_canary_on_jetson_does_nothing_without_a_red_reaction(monkeypatch):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',

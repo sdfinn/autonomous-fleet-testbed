@@ -57,8 +57,8 @@ BALL_REMOVAL_SETTLE_S="${BALL_REMOVAL_SETTLE_S:-3}"
 # matching gotcha.
 #
 # UPDATE (2026-07-31): this file is now REGENERATED fresh, from real link state, before
-# every launch — see scripts/regen_cyclonedds_config.sh, called by both nav2_up() (Jetson)
-# and sim_up() (workstation). Two more real bugs found the same day, same failure class:
+# every launch — see scripts/regen_cyclonedds_config.sh, called by sim_up() (workstation)
+# and by container_entrypoint.sh inside the container (Jetson). Two more real bugs found the same day, same failure class:
 # (1) a statically-listed DOWN interface makes CycloneDDS hard-fail outright ("X: does not
 # match an available interface"), not gracefully skip to the next-priority one — so the
 # static file above broke the moment Ethernet was actually unplugged, regardless of
@@ -169,8 +169,8 @@ sim_up() {
   # default auto-selection picked docker0 (a virtual Docker bridge on an unrelated
   # subnet) over the real WiFi interface, silently keeping every Gazebo/bridge topic
   # from ever reaching the Jetson even though the machines could ping each other fine.
-  # Same script nav2_up() already runs on the Jetson side — auto-detects physical vs
-  # virtual interfaces, so it needs no per-machine interface name list.
+  # Same script container_entrypoint.sh runs inside the container on the Jetson side —
+  # auto-detects physical vs virtual interfaces, so it needs no per-machine interface name list.
   bash scripts/regen_cyclonedds_config.sh
   export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 \
     CYCLONEDDS_URI="file://$HOME/cyclonedds-hil.xml"
@@ -200,12 +200,11 @@ run() {
 
 day() {
   # THE Mission 2 day (Task 13d) — tools/mission2_day.py in HIL mode against the stack `run`
-  # brought up. The mission runs on the Jetson (bare-metal, or in the stage-3 arm64 image when
-  # HIL_CONTAINER=1 — both inherited from the environment); ball ops + ground-truth judging +
-  # telemetry all stay workstation-side. The orchestrator scps each run's photos to
-  # reports/photos/ AND STATE_DIR (CI evidence) and prints per-run judged verdicts + waypoint
-  # checklists. FLEET_DB (when set) receives the JUDGED rows directly here — no SSH row-
-  # shipping, because the judge runs on the workstation where FLEET_DB lives.
+  # brought up. The mission runs on the Jetson inside the container via container_entrypoint.sh;
+  # ball ops + ground-truth judging + telemetry all stay workstation-side. The orchestrator scps
+  # each run's photos to reports/photos/ AND STATE_DIR (CI evidence) and prints per-run judged
+  # verdicts + waypoint checklists. FLEET_DB (when set) receives the JUDGED rows directly here —
+  # no SSH row-shipping, because the judge runs on the workstation where FLEET_DB lives.
   require_ip
   ws_source
   local live_power_label
@@ -278,10 +277,10 @@ teardown() {
     # shortens REACTION_FRAMES's time-to-trigger — a silent confound on Mission 2's
     # reaction-distance judging.
     jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner|[e]kf_node|[b]all_detector' || true" || true
-    # HIL_CONTAINER=1's mission() process runs inside the container's own PID namespace —
-    # invisible to the host-side pkill above. A fixed --name (hil_mission) lets teardown
-    # reach it directly. Best-effort: no-op when docker is absent or nothing is running,
-    # and must never fail teardown itself.
+    # The mission() process runs inside the container's own PID namespace — invisible to the
+    # host-side pkill above. A fixed --name (hil_mission) lets teardown reach it directly.
+    # Best-effort: no-op when docker is absent or nothing is running, and must never fail
+    # teardown itself.
     jssh "command -v docker >/dev/null 2>&1 && docker rm -f hil_mission hil_mission2 >/dev/null 2>&1 || true" || true
   fi
   # Safety net (Task 11): remove any Mission 2 ball still in the workstation Gazebo before
