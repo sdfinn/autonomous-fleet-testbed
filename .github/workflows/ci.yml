@@ -503,9 +503,6 @@ jobs:
                                   # Gotchas); removing the calls, not just picking a number,
                                   # is what actually removes the failure class.
       STATE_DIR: /tmp/hil_stage
-      # phase 2 (Task 12): the day orchestrator runs mission2 inside the arm64 image stage-3
-      # built, consuming the arm64→HIL pipeline edge (see tools/mission2_day.JetsonExecutor).
-      HIL_CONTAINER: "1"
       HIL_IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
       # The day's JUDGED verdict rows (mission2_no_ball / _yellow / _red) are logged HERE on
       # the workstation (where the judge runs) directly into the shared drift DB — no SSH row-
