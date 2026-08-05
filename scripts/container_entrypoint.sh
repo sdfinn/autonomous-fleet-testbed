@@ -33,8 +33,13 @@
 # external at all for the real robot).
 set -euo pipefail
 
+# ROS2's setup.bash references unbound vars internally (e.g. AMENT_TRACE_SETUP_FILES) —
+# incompatible with this script's `set -u` (same known issue hil_stage.sh's sim_up()/
+# nav2_up()-successor already work around). Relax it only around the sourcing.
+set +u
 source /opt/ros/jazzy/setup.bash
 source /ros2_ws/install/setup.bash
+set -u
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export ROS_DOMAIN_ID=0
 # GraphicsMagick (nav2 map_server's image loader) SIGSEGVs on the Jetson's ARM build
