@@ -77,17 +77,8 @@ STACK_READY_TIMEOUT_S = 150.0
 SPAWN_APPEAR_SETTLE_S = 2.0                     # llvmpipe: new model takes ~1.5 s in-frame
 RETREAT_DROP_M = 0.4                            # y-drop below peak that means "retreating"
 
-# Jetson connection (HIL executor) — MUST stay in sync with scripts/hil_stage.sh's JENV
-# (pinned cross-reference; CR-16 caught these two drifting: the MAGICK/OMP knobs existed
-# only in the bash copy). Non-interactive SSH skips .bashrc, so every remote ROS command
-# must source its own env. MAGICK_THREAD_LIMIT/OMP: GraphicsMagick single-threading —
-# the known workaround for its ARM SIGSEGV under threading (see hil_stage.sh).
 JETSON_USER = os.environ.get('JETSON_USER', 'mike')
 JETSON_REPO = '~/autonomous-fleet-testbed'
-JENV = ('source /opt/ros/jazzy/setup.bash && '
-        'source ~/autonomous-fleet-testbed/install/setup.bash && '
-        'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 '
-        'MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1')
 STATE_DIR = os.environ.get('STATE_DIR', '/tmp/hil_stage')
 POWER_MODE_LABEL = os.environ.get('POWER_MODE', '25W')
 
@@ -197,10 +188,12 @@ class JetsonExecutor(MissionExecutor):
             raise RuntimeError('JetsonExecutor needs JETSON_IP (run: hil_stage.sh discover)')
         self.ip = jetson_ip
         self.state_dir = state_dir
-        self.image = None
-        if os.environ.get('HIL_CONTAINER') == '1':
-            self.image = os.environ['HIL_IMAGE']   # KeyError is a real misconfiguration — surface
-            self._require_image_local()
+        # Container mode is the ONLY mode (docker-brain unification, 2026-08) — Nav2/
+        # EKF/ball_detector/mission_runner all run inside the image now; nothing bare
+        # launches nav_fleet code on the Jetson any more. KeyError on a missing
+        # HIL_IMAGE is a real misconfiguration — surface it, don't default silently.
+        self.image = os.environ['HIL_IMAGE']
+        self._require_image_local()
 
     def _require_image_local(self):
         # Pre-flight (S17 Piece 2 carry-in, from the sign-off false start): a wrong tag ->
@@ -227,26 +220,22 @@ class JetsonExecutor(MissionExecutor):
                 f'git rev-parse.')
 
     def run_day(self):
-        cmd_suffix = 'python3 -m nav_fleet.mission_runner --day'
-        if self.image is not None:
-            cmd = (
-                "docker run --rm --name hil_mission2 --network host --ipc host "
-                "-v $HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports "
-                "-v $HOME/fleet-ci-data:/root/fleet-ci-data "
-                f"-e RUNNER_TYPE=hil_jetson -e POWER_MODE={POWER_MODE_LABEL} "
-                "-e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp -e ROS_DOMAIN_ID=0 "
-                f"{self.image} bash -c 'source /opt/ros/jazzy/setup.bash && "
-                f"source /ros2_ws/install/setup.bash && {cmd_suffix}'")
-        else:
-            cmd = (f'{JENV} && cd {JETSON_REPO} && RUNNER_TYPE=hil_jetson '
-                   f'POWER_MODE={POWER_MODE_LABEL} {cmd_suffix}')
+        cmd = (
+            "docker run --rm --name hil_mission2 --network host --ipc host "
+            "-v $HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports "
+            "-v $HOME/fleet-ci-data:/root/fleet-ci-data "
+            "-e USE_SIM_TIME=true -e HSV_CONFIG_FILE=hsv_gazebo.yaml "
+            "-e NAV2_MAP_FILE=living_room.yaml "
+            f"-e RUNNER_TYPE=hil_jetson -e POWER_MODE={POWER_MODE_LABEL} "
+            f"{self.image} bash /ros2_ws/scripts/container_entrypoint.sh")
         out_path = os.path.join(self.state_dir, 'day.out')
         dispatch_time = time.time()
         log.info(f'[timing] ssh dispatch for the day at {dispatch_time:.3f}')
-        # 1080s (18 min: comfortable headroom over worst-case real leg work + cold-start
-        # retry backoff, while leaving a 2-min safety margin under CI's 1200s outer
-        # timeout — S17 review fix, 2026-07-25) — the inner timeout must fire FIRST so
-        # the normal teardown/evidence-upload steps can still run via `if: always()`.
+        # 1080s (18 min): comfortable headroom over Nav2 bring-up (up to 120s, now
+        # INSIDE this one call, see container_entrypoint.sh) + worst-case real leg
+        # work + cold-start retry backoff, while leaving a 2-min safety margin under
+        # CI's 1200s outer timeout — the inner timeout must fire FIRST so the normal
+        # teardown/evidence-upload steps can still run via `if: always()`.
         proc = subprocess.run(
             ['timeout', '1080', 'ssh', '-o', 'BatchMode=yes',
              '-o', 'StrictHostKeyChecking=accept-new',
@@ -291,8 +280,8 @@ class JetsonExecutor(MissionExecutor):
     def _spawn_vlm_canary_on_jetson(self, leg):
         """The real on-device classification (2026-07-31) — spawned ON THE JETSON using
         its own Ollama/CUDA install, using the ORIGINAL remote photo path (via
-        _remote_photo_path, the same translation _pull_photos_from_paths already relies
-        on for bare-metal vs container mode). Mirrors _maybe_spawn_vlm_canary's own
+        _remote_photo_path, the same container-path translation _pull_photos_from_paths
+        already relies on). Mirrors _maybe_spawn_vlm_canary's own
         red-reaction filter exactly — hardcodes run_context='red' rather than threading
         a leg name through, since that filter can only ever match the 'red' variant
         (hil_variant_names()'s fixed declared shape: only the red leg ever carries a
@@ -349,20 +338,13 @@ class JetsonExecutor(MissionExecutor):
         return local
 
     def _remote_photo_path(self, rel):
-        """`rel` (from a 'photo saved: <path>' log line) is PHOTO_DIR-relative absolute
-        (2026-07-22 fix — was checkout-relative, see _ssh_mission2's comment) — but that
-        absolute path was recorded from wherever mission_runner actually ran, which isn't
-        always the real Jetson filesystem path:
-          - bare-metal: mission_runner runs directly as JETSON_USER, so `rel` already IS
-            the real host path — use it as-is.
-          - container: `rel` is a path INSIDE the container (root's HOME, e.g.
-            '/root/fleet-ci-data/...'), which the container-run bind mount
-            (-v $HOME/fleet-ci-data:/root/fleet-ci-data) maps onto JETSON_USER's real
-            fleet-ci-data dir on the host — substitute the container's root prefix for
-            '~' so the remote shell expands it to JETSON_USER's actual home."""
-        if self.image is not None:
-            return '~' + rel[len('/root'):]
-        return rel
+        """`rel` (from a 'photo saved: <path>' log line) is a path INSIDE the
+        container (root's HOME, e.g. '/root/fleet-ci-data/...'), which the
+        container-run bind mount (-v $HOME/fleet-ci-data:/root/fleet-ci-data) maps
+        onto JETSON_USER's real fleet-ci-data dir on the host — substitute the
+        container's root prefix for '~' so the remote shell expands it to
+        JETSON_USER's actual home."""
+        return '~' + rel[len('/root'):]
 
     def _pull_failure_bags(self, log_text):
         """scp -r every 'failure bag kept: <path>' from the Jetson to reports/failure_bags/

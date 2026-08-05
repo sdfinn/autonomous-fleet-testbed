@@ -20,12 +20,13 @@ hil:
   runner_type: hil_jetson
   scenarios: [mission2_no_ball, mission2_yellow, mission2_red]
 
-# Real robot (RealRobotStartup.md). Added 2026-07-28 — before this, --stage real
-# didn't exist at all: tests/test_navigation.py's telemetry_run fixture always
-# logs scenario 'bedroom_nav' (the BR-01 nav-only check), matching this list.
-# Decided 2026-07-28 (Mike): BR-01 nav-only IS the R1 validation gate, deliberately
-# — not a real run of mission_runner's 'mission1' (navigate -> photo -> navigate
-# back). Settled, no plan to change it.
+# Real robot (RealRobotStartup.md). Changed 2026-08 (docker-brain unification):
+# RealRobotStartup.md's 2026-08-01 rewrite already moved the real-robot validation
+# target from BR-01/bedroom_nav to the mission2 day (no_ball -> yellow -> red,
+# self-reported per Task 2 above, no ground-truth judging) — this list was never
+# updated to match at the time. Fixed now: tools.fleet_status --stage real and
+# tools.generate_test_report --stage real both read this list directly, and would
+# otherwise silently look for rows that stopped being logged.
 real:
   runner_type: real_robot
-  scenarios: [bedroom_nav]
+  scenarios: [mission2_no_ball, mission2_yellow, mission2_red]

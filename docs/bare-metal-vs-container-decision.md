@@ -1,5 +1,13 @@
 # Bare-metal vs. containerized: why Nav2 runs bare and mission logic runs in Docker
 
+> **Superseded 2026-08-03.** This doc's conclusion (Nav2 stays bare-metal, only the
+> mission loop containerizes) was reversed by the docker-brain unification — Nav2/EKF/
+> `ball_detector`/`mission_runner` now all run inside one container on both HIL and the
+> real robot. See `RealRobotStartup.md`'s intro item 2 and `docs/superpowers/specs/
+> 2026-08-03-docker-brain-real-robot-hil-unification-design.md` for the current
+> architecture. Left in place as historical context for the earlier decision's own
+> reasoning, not as current guidance.
+
 Written 2026-08-01, during the `RealRobotStartup.md` rewrite for real-robot deployment.
 This is the honest version of a real architecture decision — including the part where
 the first attempt was wrong — kept as a standing reference (interview prep, design

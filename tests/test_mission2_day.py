@@ -178,20 +178,14 @@ def test_in_process_executor_run_day_delegates_to_runner():
 
 
 # ── JetsonExecutor construction (image preflight — unaffected by the Piece 9 rewrite) ───────
-def test_jetson_executor_bare_metal_skips_image_preflight(monkeypatch):
-    """HIL_CONTAINER unset (bare-metal, the default) must never touch docker/SSH."""
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
-
-    def _boom(*a, **k):
-        raise AssertionError('subprocess.run must not be called in bare-metal mode')
-    monkeypatch.setattr(subprocess, 'run', _boom)
-
-    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
-    assert ex.image is None
+def test_jetson_executor_requires_hil_image(monkeypatch):
+    """HIL_IMAGE is required now — container mode is the only mode."""
+    monkeypatch.delenv('HIL_IMAGE', raising=False)
+    with pytest.raises(KeyError):
+        JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
 
 
-def test_jetson_executor_container_mode_passes_when_image_present(monkeypatch):
-    monkeypatch.setenv('HIL_CONTAINER', '1')
+def test_jetson_executor_passes_preflight_when_image_present(monkeypatch):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     monkeypatch.setattr(
         subprocess, 'run',
@@ -201,8 +195,7 @@ def test_jetson_executor_container_mode_passes_when_image_present(monkeypatch):
     assert ex.image == 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef'
 
 
-def test_jetson_executor_container_mode_fails_loud_when_image_missing(monkeypatch):
-    monkeypatch.setenv('HIL_CONTAINER', '1')
+def test_jetson_executor_fails_loud_when_image_missing(monkeypatch):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:wrongtag')
     monkeypatch.setattr(
         subprocess, 'run',
@@ -217,7 +210,6 @@ def test_jetson_executor_construction_never_starts_a_container(monkeypatch):
     """Decision 1 (S17 Piece 9 rewrite): the persistent-container machinery (Piece 8's
     `_start_container`/`HIL_CONTAINER_NAME`) is gone — construction in container mode
     must do ONLY the image preflight check, never a `docker run`."""
-    monkeypatch.setenv('HIL_CONTAINER', '1')
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     calls = []
 
@@ -232,10 +224,9 @@ def test_jetson_executor_construction_never_starts_a_container(monkeypatch):
     assert not hasattr(mission2_day_module, 'HIL_CONTAINER_NAME')
 
 
-def test_close_is_a_noop_in_both_modes(monkeypatch):
+def test_close_is_a_noop(monkeypatch):
     """close() is the base MissionExecutor no-op in every mode now — JetsonExecutor no
     longer overrides it (there is no long-lived container left to tear down)."""
-    monkeypatch.setenv('HIL_CONTAINER', '1')
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     monkeypatch.setattr(
         subprocess, 'run',
@@ -254,36 +245,7 @@ def _day_result_stdout(legs):
     return 'MISSION2_DAY_RESULT:' + json.dumps(legs) + '\n'
 
 
-def test_run_day_bare_metal_dispatches_ssh_with_day_flag(monkeypatch, tmp_path):
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
-    legs = [_leg(), _leg(), _leg()]
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        if cmd[0] == 'timeout':
-            return subprocess.CompletedProcess(cmd, returncode=0,
-                                                stdout=_day_result_stdout(legs), stderr='')
-        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
-
-    monkeypatch.setattr(subprocess, 'run', fake_run)
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_pull_photos_from_paths',
-                        lambda self, paths: list(paths))
-    ex = JetsonExecutor('10.42.0.217', str(tmp_path))
-
-    result = ex.run_day()
-
-    ssh_cmd = next(c for c in calls if 'ssh' in c)
-    assert 'python3 -m nav_fleet.mission_runner --day' in ssh_cmd[-1]
-    assert 'docker' not in ssh_cmd[-1]
-    assert result == legs
-
-
-def test_run_day_container_mode_uses_plain_docker_run_rm(monkeypatch, tmp_path):
-    """Decision 1: with ONE `run_day()` call for the whole day, container mode goes
-    back to a plain one-shot `docker run --rm` — no persistent container/`docker exec`
-    left to amortize a per-scenario cost against."""
-    monkeypatch.setenv('HIL_CONTAINER', '1')
+def test_run_day_dispatches_the_container_entrypoint(monkeypatch, tmp_path):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     legs = [_leg(), _leg(), _leg()]
     calls = []
@@ -305,13 +267,16 @@ def test_run_day_container_mode_uses_plain_docker_run_rm(monkeypatch, tmp_path):
     ssh_cmd = next(c for c in calls if 'ssh' in c and 'timeout' in c)
     assert 'docker run --rm' in ssh_cmd[-1]
     assert '--name hil_mission2' in ssh_cmd[-1]
-    assert 'docker exec' not in ssh_cmd[-1]
-    assert 'python3 -m nav_fleet.mission_runner --day' in ssh_cmd[-1]
+    assert '--network host --ipc host' in ssh_cmd[-1]
+    assert 'bash /ros2_ws/scripts/container_entrypoint.sh' in ssh_cmd[-1]
+    assert '-e USE_SIM_TIME=true' in ssh_cmd[-1]
+    assert '-e HSV_CONFIG_FILE=hsv_gazebo.yaml' in ssh_cmd[-1]
+    assert '-e NAV2_MAP_FILE=living_room.yaml' in ssh_cmd[-1]
     assert 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef' in ssh_cmd[-1]
 
 
 def test_run_day_pulls_photos_per_leg_and_failure_bags(monkeypatch, tmp_path):
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     legs = [_leg(photos=['/home/mike/fleet-ci-data/photos/a.png']),
             _leg(photos=['/home/mike/fleet-ci-data/photos/b.png']),
             _leg(photos=[])]
@@ -341,7 +306,7 @@ def test_run_day_pulls_photos_per_leg_and_failure_bags(monkeypatch, tmp_path):
 
 
 def test_run_day_raises_when_no_result_line_found(monkeypatch, tmp_path):
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
 
     def fake_run(cmd, **kwargs):
         return subprocess.CompletedProcess(
@@ -349,6 +314,8 @@ def test_run_day_raises_when_no_result_line_found(monkeypatch, tmp_path):
             stdout='', stderr='Traceback ...\nModuleNotFoundError\n')
 
     monkeypatch.setattr(subprocess, 'run', fake_run)
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+                        lambda self: None)
     ex = JetsonExecutor('10.42.0.217', str(tmp_path))
 
     with pytest.raises(RuntimeError, match='no MISSION2_DAY_RESULT'):
@@ -369,30 +336,12 @@ def test_parse_day_result_raises_when_missing():
 
 
 # ── Photo path translation (2026-07-22 regression + container fix, now list-driven) ─────────
-def test_pull_photos_bare_metal_uses_absolute_path_verbatim(monkeypatch, tmp_path):
-    """Bare-metal mission_runner runs directly as JETSON_USER, so the logged absolute
-    path already IS the real host path — no translation needed."""
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
-    monkeypatch.setattr(mission2_day_module, 'PHOTO_DIR', tmp_path)
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
-
-    monkeypatch.setattr(subprocess, 'run', fake_run)
-    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
-    ex._pull_photos_from_paths(['/home/mike/fleet-ci-data/photos/mission2_home_ref_1.png'])
-    scp_cmd = next(c for c in calls if c[0] == 'scp')
-    assert scp_cmd[-2] == (
-        'mike@10.42.0.217:/home/mike/fleet-ci-data/photos/mission2_home_ref_1.png')
 
 
 def test_pull_photos_container_mode_translates_root_prefix_to_tilde(monkeypatch, tmp_path):
     """Container mode: mission_runner's absolute path is INSIDE the container (root's
     HOME, per the image's missing USER directive), mapped to JETSON_USER's real home via
     the container-run bind mount — the scp path must be JETSON_USER's home, not root's."""
-    monkeypatch.setenv('HIL_CONTAINER', '1')
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     monkeypatch.setattr(mission2_day_module, 'PHOTO_DIR', tmp_path)
     calls = []
@@ -410,8 +359,10 @@ def test_pull_photos_container_mode_translates_root_prefix_to_tilde(monkeypatch,
 
 
 def test_pull_photos_from_paths_empty_list_makes_no_scp_call(monkeypatch, tmp_path):
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     monkeypatch.setattr(mission2_day_module, 'PHOTO_DIR', tmp_path)
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+                        lambda self: None)
 
     def _boom(*a, **k):
         raise AssertionError('scp must not be called with no photo paths')
@@ -427,6 +378,9 @@ def test_jetson_executor_spawns_own_vlm_canary_flag_is_true():
 
 
 def test_spawn_vlm_warmup_on_jetson_dispatches_ssh_command(monkeypatch):
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+                        lambda self: None)
     captured = {}
 
     def fake_run(cmd, **kwargs):
@@ -444,6 +398,10 @@ def test_spawn_vlm_warmup_on_jetson_dispatches_ssh_command(monkeypatch):
 
 
 def test_spawn_vlm_warmup_on_jetson_logs_warning_on_failure_without_raising(monkeypatch):
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+                        lambda self: None)
+
     def _boom(*a, **k):
         raise OSError('no such file or directory')
     monkeypatch.setattr(subprocess, 'run', _boom)
@@ -453,29 +411,6 @@ def test_spawn_vlm_warmup_on_jetson_logs_warning_on_failure_without_raising(monk
 
 
 def test_spawn_vlm_canary_on_jetson_dispatches_ssh_with_remote_path(monkeypatch):
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
-    captured = {}
-
-    def fake_run(cmd, **kwargs):
-        captured['cmd'] = cmd
-        return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
-    monkeypatch.setattr(subprocess, 'run', fake_run)
-
-    ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
-    leg = _leg(photos=['/home/mike/fleet-ci-data/photos/mission2_reaction_red_1.png'],
-               reaction_events=[{'color': 'red', 'reaction': 'photo_then_stop',
-                                 'truth_xy': None}])
-    ex._spawn_vlm_canary_on_jetson(leg)
-
-    assert 'mike@10.42.0.217' in captured['cmd']
-    remote_cmd = captured['cmd'][-1]
-    assert 'python3 -m tools.vlm_canary' in remote_cmd
-    assert '/home/mike/fleet-ci-data/photos/mission2_reaction_red_1.png red' in remote_cmd
-    assert 'nohup' in remote_cmd
-
-
-def test_spawn_vlm_canary_on_jetson_translates_container_path(monkeypatch):
-    monkeypatch.setenv('HIL_CONTAINER', '1')
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
                         lambda self: None)
@@ -492,10 +427,18 @@ def test_spawn_vlm_canary_on_jetson_translates_container_path(monkeypatch):
                                  'truth_xy': None}])
     ex._spawn_vlm_canary_on_jetson(leg)
 
-    assert '~/fleet-ci-data/photos/mission2_reaction_red_1.png red' in captured['cmd'][-1]
+    assert 'mike@10.42.0.217' in captured['cmd']
+    remote_cmd = captured['cmd'][-1]
+    assert 'python3 -m tools.vlm_canary' in remote_cmd
+    assert '~/fleet-ci-data/photos/mission2_reaction_red_1.png red' in remote_cmd
+    assert 'nohup' in remote_cmd
 
 
 def test_spawn_vlm_canary_on_jetson_does_nothing_without_a_red_reaction(monkeypatch):
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+                        lambda self: None)
+
     def _boom(*a, **k):
         raise AssertionError('must not spawn when there was no red reaction')
     monkeypatch.setattr(subprocess, 'run', _boom)
@@ -507,6 +450,10 @@ def test_spawn_vlm_canary_on_jetson_does_nothing_without_a_red_reaction(monkeypa
 
 
 def test_spawn_vlm_canary_on_jetson_logs_warning_on_failure_without_raising(monkeypatch):
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+                        lambda self: None)
+
     def _boom(*a, **k):
         raise OSError('no such file or directory')
     monkeypatch.setattr(subprocess, 'run', _boom)
@@ -521,7 +468,7 @@ def test_spawn_vlm_canary_on_jetson_logs_warning_on_failure_without_raising(monk
 def test_run_day_spawns_canary_on_jetson_before_pulling_photos_back(monkeypatch, tmp_path):
     """The on-Jetson spawn must see the ORIGINAL remote path — it has to fire before
     _pull_photos_from_paths overwrites leg['photos'] with workstation-local copies."""
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     legs = [_leg(reaction_events=[{'color': 'red', 'reaction': 'photo_then_stop',
                                    'truth_xy': None}],
                  photos=['/home/mike/fleet-ci-data/photos/mission2_reaction_red_1.png'])]
@@ -648,7 +595,7 @@ def test_pull_failure_bags_scps_the_directory_recursively(monkeypatch, tmp_path)
     """S17 Piece 3: a 'failure bag kept: <path>' log line must scp -r the whole bag
     directory back — a single-file scp (the photo pattern) would silently miss the
     .mcap files inside it."""
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     monkeypatch.setattr(mission2_day_module, 'FAILURE_BAG_DIR', tmp_path)
     captured = {}
 
@@ -668,8 +615,10 @@ def test_pull_failure_bags_scps_the_directory_recursively(monkeypatch, tmp_path)
 
 
 def test_pull_failure_bags_no_bag_line_makes_no_scp_call(monkeypatch, tmp_path):
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     monkeypatch.setattr(mission2_day_module, 'FAILURE_BAG_DIR', tmp_path)
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+                        lambda self: None)
 
     def _boom(*a, **k):
         raise AssertionError('scp must not be called when no bag was kept')
@@ -683,7 +632,9 @@ def test_pull_failure_bags_no_bag_line_makes_no_scp_call(monkeypatch, tmp_path):
 def test_no_startup_crash_row_on_clean_exit(monkeypatch):
     """mrc == 0 (script completed normally, whatever the mission result) — never
     synthesize a row; mission_runner.py's own _log_mission already handled it."""
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+                        lambda self: None)
     captured = []
     monkeypatch.setattr(mission2_day_module, 'log_run', lambda **kw: captured.append(kw))
     ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
@@ -695,7 +646,9 @@ def test_no_startup_crash_row_when_completion_line_present(monkeypatch):
     """mrc != 0 CAN happen on a normal, handled FAIL (main() does `raise
     SystemExit(0 if ok else 1)`) — the completion print line is the real signal that
     _log_mission already ran, not the exit code alone."""
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+                        lambda self: None)
     captured = []
     monkeypatch.setattr(mission2_day_module, 'log_run', lambda **kw: captured.append(kw))
     ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
@@ -707,7 +660,9 @@ def test_startup_crash_row_logged_when_process_died_before_completion_line(monke
     """mrc != 0 AND no completion line — the process died before _log_mission ever
     ran (e.g. an import-time crash). Synthesize the FAIL row ourselves so the
     workstation DB has SOME record instead of the attempt being invisible."""
-    monkeypatch.delenv('HIL_CONTAINER', raising=False)
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+                        lambda self: None)
     captured = []
     monkeypatch.setattr(mission2_day_module, 'log_run', lambda **kw: captured.append(kw))
     ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')

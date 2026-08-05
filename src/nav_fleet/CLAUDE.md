@@ -345,9 +345,9 @@ Claude is working with files under this directory.
   declares its OWN top-level `log_level_arg` and forwards the resolved value down via
   `launch_arguments`), so local testing through that composed path never caught it. The
   ONE place that launches `nav2_only_launch.py` standalone — no `sim_launch.py` in
-  between — is `hil_stage.sh`'s `nav2_up()` (i.e., Stage 4 HIL), which is exactly where
-  it broke: `[ERROR] [launch]: Caught exception in launch: launch configuration
-  'log_level' does not exist`, Nav2 never came up. Lesson: when adding/fixing a
+  between — is `container_entrypoint.sh` (Stage 4 HIL and the real robot), which is
+  exactly where it broke: `[ERROR] [launch]: Caught exception in launch: launch
+  configuration 'log_level' does not exist`, Nav2 never came up. Lesson: when adding/fixing a
   `DeclareLaunchArgument` in a launch file that's ALSO composed by another launch file,
   test the file standalone too (`ros2 launch <file>.py` directly, no wrapper) — a
   composing parent's own declaration of the same argument name can mask a broken

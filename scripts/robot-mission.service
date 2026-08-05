@@ -19,8 +19,9 @@
 
 [Unit]
 Description=Real-robot mission2 day (no_ball -> yellow -> red), operator ball placement
-After=network-online.target
+After=network-online.target docker.service
 Wants=network-online.target
+Requires=docker.service
 
 [Service]
 Type=oneshot

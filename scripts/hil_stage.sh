@@ -5,9 +5,9 @@
 # Subcommands:
 #   discover          print the Jetson's current IP (mDNS first, ip-neigh fallback), verify SSH
 #   power-mode        set nvpmodel mode $POWER_MODE_ID on the Jetson and print it
-#   sync <sha>        fetch+checkout <sha> on the Jetson and colcon build --base-paths src
+#   sync <sha>        fetch+checkout <sha> on the Jetson (no build — the checkout only identifies which commit is under test)
 #   run               HIL STACK GATE (Task 13b): clean STATE_DIR, then sim-up (workstation
-#                     Gazebo) -> nav2-up (Jetson). NO mission, NO retry — a mission failure
+#                     Gazebo). Nav2 bring-up happens later inside the container as part of day(). NO mission, NO retry — a mission failure
 #                     must be RED (the in-process nav_runner cold-goal retry, Task 13a, is the
 #                     only retry left; harness-level whole-mission retries were removed).
 #   day               THE Mission 2 day (Task 13d): runs tools/mission2_day.py in HIL mode
@@ -16,8 +16,6 @@
 #                     ball ops + ground-truth judging stay workstation-side. Judged verdicts +
 #                     per-waypoint checklists print per run; photos land in reports/photos/ AND
 #                     STATE_DIR (CI evidence). This is the ONE stage-4 test step.
-#   reset-home        drive the robot to home_base (go_home mission) — RETAINED for manual
-#                     use, but NOT a CI step: the day's no_ball/yellow missions self-return.
 #   teardown          kill both sides (safe to run any time; used by CI's if:always() step)
 #   restore-checkout  checkout main on the Jetson (run once at the very end)
 set -euo pipefail
@@ -26,9 +24,6 @@ JETSON_USER="${JETSON_USER:-mike}"
 POWER_MODE_ID="${POWER_MODE_ID:-1}"
 STATE_DIR="${STATE_DIR:-/tmp/hil_stage}"
 SIM_LOG="${STATE_DIR}/sim.log"
-# Per-run log name (2026-07-18): a fixed name let a later nav2-up OVERWRITE the crash
-# evidence of the run before it — a Nav2 SIGSEGV autopsy was lost exactly that way.
-NAV2_LOG="/tmp/nav2_hil_$(date +%Y%m%d_%H%M%S).log"   # on the Jetson
 JETSON_REPO='~/autonomous-fleet-testbed'
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Ghost-ball settle (CLAUDE.md Gotchas, 2026-07-17): the headless llvmpipe renderer keeps a
@@ -57,8 +52,8 @@ BALL_REMOVAL_SETTLE_S="${BALL_REMOVAL_SETTLE_S:-3}"
 # matching gotcha.
 #
 # UPDATE (2026-07-31): this file is now REGENERATED fresh, from real link state, before
-# every launch — see scripts/regen_cyclonedds_config.sh, called by both nav2_up() (Jetson)
-# and sim_up() (workstation). Two more real bugs found the same day, same failure class:
+# every launch — see scripts/regen_cyclonedds_config.sh, called by sim_up() (workstation)
+# and by container_entrypoint.sh inside the container (Jetson). Two more real bugs found the same day, same failure class:
 # (1) a statically-listed DOWN interface makes CycloneDDS hard-fail outright ("X: does not
 # match an available interface"), not gracefully skip to the next-priority one — so the
 # static file above broke the moment Ethernet was actually unplugged, regardless of
@@ -140,7 +135,10 @@ sync() {
   require_ip
   local sha="${1:?usage: hil_stage.sh sync <git-sha>}"
   jssh "cd ${JETSON_REPO} && git fetch origin ${sha} && git checkout --detach FETCH_HEAD"
-  jssh "source /opt/ros/jazzy/setup.bash && cd ${JETSON_REPO} && colcon build --symlink-install --base-paths src"
+  # No bare colcon build any more (docker-brain unification, 2026-08) — the checkout
+  # persists here for two reasons: (a) it's the bind-mount target for reports/
+  # (HIL's photo/log evidence lands here), and (b) robot_boot.sh reads `git rev-parse
+  # HEAD` from this exact checkout to pick which image tag to run.
 }
 
 clean_state() {
@@ -149,7 +147,7 @@ clean_state() {
   # artifact and can even satisfy a judge's photo-presence check with stale data. Wipe first.
   mkdir -p "$STATE_DIR"
   rm -f "$STATE_DIR"/*.png "$STATE_DIR"/*.out "$STATE_DIR"/*.json \
-        "$STATE_DIR"/nav2_hil_*.log "$STATE_DIR"/mission2_day.log 2>/dev/null || true
+        "$STATE_DIR"/mission2_day.log "$STATE_DIR"/nav2_container_*.log 2>/dev/null || true
 }
 
 sim_up() {
@@ -167,8 +165,8 @@ sim_up() {
   # default auto-selection picked docker0 (a virtual Docker bridge on an unrelated
   # subnet) over the real WiFi interface, silently keeping every Gazebo/bridge topic
   # from ever reaching the Jetson even though the machines could ping each other fine.
-  # Same script nav2_up() already runs on the Jetson side — auto-detects physical vs
-  # virtual interfaces, so it needs no per-machine interface name list.
+  # Same script container_entrypoint.sh runs inside the container on the Jetson side —
+  # auto-detects physical vs virtual interfaces, so it needs no per-machine interface name list.
   bash scripts/regen_cyclonedds_config.sh
   export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 \
     CYCLONEDDS_URI="file://$HOME/cyclonedds-hil.xml"
@@ -187,58 +185,22 @@ sim_up() {
   echo '=== [sim-up] bridge up ==='
 }
 
-nav2_up() {
-  echo '=== [nav2-up] launching Nav2 on the Jetson (budget 120s) ==='
-  require_ip
-  # Regenerate cyclonedds-hil.xml from the Jetson's REAL current link state before
-  # every launch (2026-07-31) — a statically listed DOWN interface makes CycloneDDS
-  # hard-fail outright ("X: does not match an available interface"), not gracefully
-  # fall back to the next-priority one (confirmed live). This makes Nav2 come up
-  # correctly whichever interface the Jetson happens to be connected through at boot,
-  # with no manual step ever needed either way.
-  jssh "cd ${JETSON_REPO} && bash scripts/regen_cyclonedds_config.sh"
-  # The (...) subshell + < /dev/null are BOTH required, or the local ssh call blocks
-  # forever and nav2_up never reaches its polling loop:
-  #  - bash's `&` binds to the ENTIRE preceding &&-list, so without the parens the
-  #    backgrounded job is a subshell running the whole chain — that subshell inherits
-  #    the SSH session's stdout/stderr pipes and holds the channel open indefinitely.
-  #  - < /dev/null stops ros2 launch inheriting the session's stdin.
-  # With the parens, only ros2 launch (all fds redirected) survives; the wrapper
-  # subshell exits immediately and sshd can close the channel.
-  jssh "$JENV && cd ${JETSON_REPO} && rm -f ${NAV2_LOG} && (nohup ros2 launch src/nav_fleet/launch/nav2_only_launch.py > ${NAV2_LOG} 2>&1 < /dev/null &) && sleep 1 && echo nav2-launched"
-  local deadline=$((SECONDS + 120))
-  # Two lifecycle managers report active (localization, then navigation) — gate on BOTH.
-  local count
-  count=$(jssh "grep -c 'Managed nodes are active' ${NAV2_LOG} 2>/dev/null || true")
-  until [ "${count:-0}" -ge 2 ]; do
-    if (( SECONDS >= deadline )); then
-      echo 'FATAL: Nav2 not active within 120s — Jetson nav2 log tail:' >&2
-      jssh "tail -n 40 ${NAV2_LOG}" >&2 || true
-      return 1
-    fi
-    sleep 3
-    count=$(jssh "grep -c 'Managed nodes are active' ${NAV2_LOG} 2>/dev/null || true")
-  done
-  echo '=== [nav2-up] managed nodes active ==='
-}
-
 run() {
-  # HIL stack GATE (Task 13b): clean state, bring up the workstation Gazebo half and the
-  # Jetson Nav2. NO mission, NO verify, NO retry — the `day` orchestrator runs the missions,
-  # and a mission failure must surface RED. The only retry left anywhere is nav_runner's
-  # in-process cold-goal retry (Task 13a); all harness-level whole-mission retries were removed.
+  # HIL stack GATE (Task 13b, narrowed 2026-08 for the docker-brain unification):
+  # clean state, bring up ONLY the workstation's Gazebo half — Nav2/EKF/
+  # ball_detector now start INSIDE the container as part of `day()`'s one-shot
+  # run (see container_entrypoint.sh), not as a separate bare pre-step.
   clean_state
-  sim_up && nav2_up
+  sim_up
 }
 
 day() {
   # THE Mission 2 day (Task 13d) — tools/mission2_day.py in HIL mode against the stack `run`
-  # brought up. The mission runs on the Jetson (bare-metal, or in the stage-3 arm64 image when
-  # HIL_CONTAINER=1 — both inherited from the environment); ball ops + ground-truth judging +
-  # telemetry all stay workstation-side. The orchestrator scps each run's photos to
-  # reports/photos/ AND STATE_DIR (CI evidence) and prints per-run judged verdicts + waypoint
-  # checklists. FLEET_DB (when set) receives the JUDGED rows directly here — no SSH row-
-  # shipping, because the judge runs on the workstation where FLEET_DB lives.
+  # brought up. The mission runs on the Jetson inside the container via container_entrypoint.sh;
+  # ball ops + ground-truth judging + telemetry all stay workstation-side. The orchestrator scps
+  # each run's photos to reports/photos/ AND STATE_DIR (CI evidence) and prints per-run judged
+  # verdicts + waypoint checklists. FLEET_DB (when set) receives the JUDGED rows directly here —
+  # no SSH row-shipping, because the judge runs on the workstation where FLEET_DB lives.
   require_ip
   ws_source
   local live_power_label
@@ -261,40 +223,6 @@ ws_source() {
   export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0
 }
 
-reset_home() {
-  echo '=== [reset-home] drive the robot back to home_base (mirrors the sim janitor) ==='
-  require_ip
-  ws_source
-  # RETAINED for manual use (Task 13): under Option B the nominal/yellow missions self-return
-  # home, so CI no longer runs this between rungs. When invoked manually it drives the robot
-  # to home_base via the go_home mission (a single navigate leg; mission_runner clears both
-  # costmaps first). Teleporting is forbidden: it breaks AMCL + the costmaps.
-  # Bare-metal on the Jetson (a plain nav needs no container image). 180s: one nav leg.
-  # Retry up to 3x: go_home is a COLD first goal (fresh mission_runner process, idle Nav2),
-  # the case most exposed to a transient flake where bt_navigator's FollowPath call times
-  # out waiting for the cold controller_server to acknowledge — the plan succeeds but the
-  # handoff misses its ack window (observed live 2026-07-18: ~2 of 3 cold home-goal attempts
-  # flaked; a warm goal in an already-running process, e.g. yellow's retreat, does not). Each
-  # failed attempt aborts in ~0.2 s, so the retries are cheap. This is an UNJUDGED reset leg,
-  # so retrying is safe — it never masks a react-rung regression (those stay single-shot).
-  local rc=0 attempt
-  for attempt in 1 2 3; do
-    rc=0
-    timeout 180 ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${JETSON_USER}@${JETSON_IP}" \
-      "$JENV && cd ${JETSON_REPO} && RUNNER_TYPE=hil_jetson POWER_MODE=${POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner go_home" \
-      2>&1 | tee "$STATE_DIR/reset_home.out" || rc=$?
-    [ "$rc" -eq 0 ] && break
-    echo "WARN: drive-home reset attempt ${attempt} failed (rc=${rc}) — retry after 5s settle" >&2
-    sleep 5
-  done
-  if [ "$rc" -ne 0 ]; then
-    echo "FATAL: drive-home reset failed after retries (rc=${rc})" >&2
-    return "$rc"
-  fi
-  # Confirm the robot actually reached home before the next rung runs off a bad pose.
-  python3 -m tools.mission2_harness assert-home
-}
-
 teardown() {
   echo '=== [teardown] both sides ==='
   if [ -n "${JETSON_IP:-}" ]; then
@@ -311,10 +239,10 @@ teardown() {
     # shortens REACTION_FRAMES's time-to-trigger — a silent confound on Mission 2's
     # reaction-distance judging.
     jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner|[e]kf_node|[b]all_detector' || true" || true
-    # HIL_CONTAINER=1's mission() process runs inside the container's own PID namespace —
-    # invisible to the host-side pkill above. A fixed --name (hil_mission) lets teardown
-    # reach it directly. Best-effort: no-op when docker is absent or nothing is running,
-    # and must never fail teardown itself.
+    # The mission() process runs inside the container's own PID namespace — invisible to the
+    # host-side pkill above. A fixed --name (hil_mission) lets teardown reach it directly.
+    # Best-effort: no-op when docker is absent or nothing is running, and must never fail
+    # teardown itself.
     jssh "command -v docker >/dev/null 2>&1 && docker rm -f hil_mission hil_mission2 >/dev/null 2>&1 || true" || true
   fi
   # Safety net (Task 11): remove any Mission 2 ball still in the workstation Gazebo before
@@ -363,7 +291,7 @@ restore_checkout() {
   echo '=== [restore-checkout] Jetson repo back on main (fast-forwarded when reachable) ==='
 }
 
-cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|day|reset-home|teardown|restore-checkout}"
+cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|day|teardown|restore-checkout}"
 shift || true
 case "$cmd" in
   discover)         discover ;;
@@ -371,7 +299,6 @@ case "$cmd" in
   sync)             sync "$@" ;;
   run)              run ;;
   day)              day ;;
-  reset-home)       reset_home ;;
   teardown)         teardown ;;
   restore-checkout) restore_checkout ;;
   *) echo "FATAL: unknown subcommand '$cmd'" >&2; exit 1 ;;

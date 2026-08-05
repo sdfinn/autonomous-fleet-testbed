@@ -414,3 +414,33 @@ def test_day_mode_captures_failure_bag_and_reraises_on_crash(monkeypatch, capsys
     assert bag_calls['snapshotted'] is True
     assert bag_calls['stop_keep'] is True
     assert 'failure bag kept: /tmp/fake_bag' in capsys.readouterr().out
+
+
+def test_log_mission2_day_self_report_logs_one_row_per_leg_from_self_reported_ok(
+        monkeypatch):
+    """Real-robot-only telemetry (MISSION2_SELF_REPORT=1, container_entrypoint.sh):
+    each leg's PASS/FAIL comes from its OWN self-reported 'ok' (Nav2 goal
+    completion via the mission's checklist) — no ground truth, no
+    tools.mission2_harness import. The real robot has no Gazebo/ground-truth
+    oracle at all; a human's own eyes are the accepted judge, after the fact."""
+    logged = []
+    monkeypatch.setattr(mission_runner_module, 'log_run',
+                        lambda **kw: logged.append(kw))
+    monkeypatch.setenv('RUNNER_TYPE', 'real_robot')
+    monkeypatch.setenv('POWER_MODE', '25W')
+
+    results = [
+        {'ok': True, 'photos': ['/home/mike/fleet-ci-data/photos/a.png']},
+        {'ok': False, 'photos': []},
+        {'ok': True, 'photos': ['/home/mike/fleet-ci-data/photos/b.png']},
+    ]
+    mission_runner_module._log_mission2_day_self_report(results)
+
+    assert [row['scenario'] for row in logged] == [
+        'mission2_no_ball', 'mission2_yellow', 'mission2_red']
+    assert [row['result'] for row in logged] == ['PASS', 'FAIL', 'PASS']
+    assert logged[0]['photos'] == '["/home/mike/fleet-ci-data/photos/a.png"]'
+    assert logged[1]['photos'] is None
+    assert logged[0]['runner_type'] == 'real_robot'
+    assert logged[0]['sim_engine'] == 'real'
+    assert logged[0]['power_mode'] == '25W'

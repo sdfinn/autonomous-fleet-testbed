@@ -3,21 +3,19 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Boot-time entry point for the real, deployed Waveshare UGV-PT (RealRobotStartup.md
-# Part A). Brings up Nav2/EKF/ball_detector bare — matching scripts/hil_stage.sh's
-# nav2_up() exactly, same launch pattern, same env vars, same DDS regen step — then
-# runs one mission2 day (no_ball -> yellow -> red) with a human placing/swapping the
-# ball (tools.mission2_day --ball-ops operator: no prompting, no delays, the operator
-# watches the robot and acts unprompted — see tools/mission2_day.py's OperatorBallOps
-# docstring).
+# Part A). Runs the SAME container image and the SAME entrypoint script HIL uses
+# (scripts/container_entrypoint.sh) — only the launch-argument VALUES differ
+# (real-robot context: use_sim_time=false, the real-camera HSV profile, the real
+# room's map) — see docs/superpowers/specs/
+# 2026-08-03-docker-brain-real-robot-hil-unification-design.md.
 #
-# Deliberately bare-metal end to end, NOT the Docker image (see
-# docs/bare-metal-vs-container-decision.md for the full reasoning): the container role
-# proven by HIL only ever wraps the raw `mission_runner.py --day` ROS2 loop, never
-# tools/mission2_day.py's judging/telemetry/VLM-canary logic — running the container
-# here would mean the mission runs but nothing gets judged or logged. Get the exact
-# HIL-tested commit onto this checkout with `scripts/hil_stage.sh sync <sha>` BEFORE
-# relying on this script (see RealRobotStartup.md Part A) — this script always runs
-# whatever is currently checked out and built here, same as nav2_up() always has.
+# No `docker pull`, no tag-selection scheme: whatever image is already sitting in
+# this Jetson's local `docker images` cache is the image that runs — the one
+# `scripts/hil_stage.sh sync <sha>` last checked out here, which is the SAME sha
+# that image is tagged with (stage-3-arm64 tags every build with the commit sha).
+# Get the exact HIL-tested commit onto this checkout BEFORE relying on this script
+# (see RealRobotStartup.md Part A) — this script always runs whatever is currently
+# checked out here, same as it always has.
 #
 # NOT yet exercised by CI/HIL — a power cycle can't be simulated there. Run this
 # manually over SSH first and confirm a full mission2 day passes with your own eyes-on
@@ -26,52 +24,37 @@
 set -euo pipefail
 
 REPO="$HOME/autonomous-fleet-testbed"
+cd "$REPO"
+
+SHA=$(git rev-parse HEAD)
+IMAGE="ghcr.io/sdfinn/autonomous-fleet-testbed:${SHA}"
+
+echo "=== [robot-boot] checking image ${IMAGE} is already local (no pull, ever) ==="
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "FATAL: ${IMAGE} is not present locally — this checkout's sha (${SHA}) was" >&2
+  echo "never pulled here by a green stage-4-hil run. Sync to a sha that WAS:" >&2
+  echo "  scripts/hil_stage.sh sync <the last green run's commit sha>  (from the workstation)" >&2
+  exit 1
+fi
+
 LOG_DIR="$HOME/fleet-ci-data/robot_boot_logs"
 mkdir -p "$LOG_DIR"
 TS=$(date +%Y%m%dT%H%M%S)
-NAV2_LOG="$LOG_DIR/nav2_${TS}.log"
 
-cd "$REPO"
-
-echo "=== [robot-boot] regenerating CycloneDDS interface config ==="
-# Same script, same reasoning as nav2_up() (scripts/hil_stage.sh): a statically listed
-# down interface makes CycloneDDS hard-fail outright, not fall back gracefully. This
-# makes Nav2 come up correctly whichever interface (WiFi, here) happens to be up at
-# boot, with no manual step needed.
-bash scripts/regen_cyclonedds_config.sh
-
-echo "=== [robot-boot] launching Nav2 + EKF + ball_detector (bare — matches nav2_up()) ==="
-source /opt/ros/jazzy/setup.bash
-source "$REPO/install/setup.bash"
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export ROS_DOMAIN_ID=0
-export CYCLONEDDS_URI="file://$HOME/cyclonedds-hil.xml"
-# Same (subshell) + < /dev/null pattern nav2_up() uses and documents: without the
-# parens, `&` binds the whole preceding &&-chain, and the backgrounded job inherits
-# this script's own stdout/stderr, holding the boot service "running" forever instead
-# of handing off to the launched process. < /dev/null stops it inheriting stdin.
-rm -f "$NAV2_LOG"
-(nohup ros2 launch nav_fleet robot_launch.py > "$NAV2_LOG" 2>&1 < /dev/null &)
-
-echo "=== [robot-boot] waiting up to 120s for Nav2 to report active ==="
-deadline=$((SECONDS + 120))
-count=0
-until [ "$count" -ge 2 ]; do
-  if (( SECONDS >= deadline )); then
-    echo "FATAL: Nav2 not active within 120s — see $NAV2_LOG" >&2
-    tail -n 40 "$NAV2_LOG" >&2 || true
-    exit 1
-  fi
-  sleep 3
-  count=$(grep -c 'Managed nodes are active' "$NAV2_LOG" 2>/dev/null || echo 0)
-done
-echo "=== [robot-boot] Nav2 active — starting mission2 day (operator ball placement) ==="
-
-# RUNNER_TYPE=real_robot matches the convention every other real-robot telemetry row in
-# this project already uses (tests/test_navigation.py's own invocation, pre-mission2-
-# target). --no-launch: Nav2 is already up (above), don't have this tool try to launch
-# a sim stack. --hold-s 10: hold in place after the red leg so it's visually obvious
-# the day is done, not mid-frame.
-RUNNER_TYPE=real_robot python -m tools.mission2_day \
-  --ball-ops operator --no-launch --hold-s 10 \
-  --log "$LOG_DIR/mission2_day_${TS}.log"
+echo "=== [robot-boot] running ${IMAGE} (real-robot context, operator ball placement) ==="
+# RUNNER_TYPE=real_robot matches the convention every other real-robot telemetry row
+# in this project already uses. MISSION2_SELF_REPORT=1: no ground-truth judging (no
+# Gazebo on the real robot) — mission_runner logs each leg's own self-reported
+# PASS/FAIL instead; analysis of the resulting logs/photos happens after, manually.
+docker rm -f robot_mission 2>/dev/null || true
+mkdir -p "$REPO/reports"
+docker run --rm --name robot_mission --network host --ipc host \
+  -v "$REPO/reports:/ros2_ws/reports" \
+  -v "$HOME/fleet-ci-data:/root/fleet-ci-data" \
+  -e USE_SIM_TIME=false \
+  -e HSV_CONFIG_FILE=hsv_realcam.yaml \
+  -e NAV2_MAP_FILE=bedroom_real.yaml \
+  -e MISSION2_SELF_REPORT=1 \
+  -e RUNNER_TYPE=real_robot \
+  "$IMAGE" bash /ros2_ws/scripts/container_entrypoint.sh \
+  2>&1 | tee "$LOG_DIR/robot_boot_${TS}.log"

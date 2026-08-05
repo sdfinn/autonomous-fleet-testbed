@@ -503,9 +503,6 @@ jobs:
                                   # Gotchas); removing the calls, not just picking a number,
                                   # is what actually removes the failure class.
       STATE_DIR: /tmp/hil_stage
-      # phase 2 (Task 12): the day orchestrator runs mission2 inside the arm64 image stage-3
-      # built, consuming the arm64→HIL pipeline edge (see tools/mission2_day.JetsonExecutor).
-      HIL_CONTAINER: "1"
       HIL_IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
       # The day's JUDGED verdict rows (mission2_no_ball / _yellow / _red) are logged HERE on
       # the workstation (where the judge runs) directly into the shared drift DB — no SSH row-
@@ -521,7 +518,7 @@ jobs:
           echo "JETSON_IP=${JETSON_IP}" >> $GITHUB_ENV
           echo "Jetson at ${JETSON_IP}"
 
-      - name: Sync + build the commit under test on the Jetson
+      - name: Sync the commit under test on the Jetson
         run: scripts/hil_stage.sh sync ${{ github.sha }}
 
       - name: Pull the stage-3 arm64 image onto the Jetson (phase 2 — mission runs in-container)
@@ -555,13 +552,11 @@ jobs:
       - name: Fetch Jetson Nav2 logs (the autopsy — MUST precede the artifact upload)
         if: always()
         run: |
-          # The per-run Nav2 logs live only in the Jetson's /tmp (wiped on reboot) and were
-          # never uploaded — the 2026-07-18 yellow-bug crash autopsies were lost exactly this
-          # way, twice. clean_state wipes stale copies at stack-up, so anything fetched here
-          # belongs to this run (or survived on the Jetson from a run whose evidence we want
-          # anyway — per-run names keep them apart). Best-effort: never fail the job.
-          scp -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JETSON_USER}@${JETSON_IP}:/tmp/nav2_hil_*.log /tmp/hil_stage/ || true
-          ls -la /tmp/hil_stage/nav2_hil_*.log 2>/dev/null || echo "no Jetson nav2 logs fetched"
+          # The per-run Nav2 logs are now written directly into the container's reports/
+          # bind-mount and land in the Jetson's ~/autonomous-fleet-testbed/reports/ with
+          # a timestamp suffix. Best-effort: never fail the job.
+          scp -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JETSON_USER}@${JETSON_IP}:~/autonomous-fleet-testbed/reports/nav2_container_*.log /tmp/hil_stage/ || true
+          ls -la /tmp/hil_stage/nav2_container_*.log 2>/dev/null || echo "no Jetson nav2 logs fetched"
 
       - name: Ingest on-Jetson VLM canary result (real on-device inference, 2026-07-31)
         # JetsonExecutor spawns the actual classification ON THE JETSON (its own Ollama/
@@ -591,7 +586,7 @@ jobs:
             /tmp/hil_stage/sim.log
             /tmp/hil_stage/mission2_day.log
             /tmp/hil_stage/day.out
-            /tmp/hil_stage/nav2_hil_*.log
+            /tmp/hil_stage/nav2_container_*.log
             /tmp/hil_stage/vlm_canary_last_result.json
             reports/photos/*.png
             reports/failure_bags/**
