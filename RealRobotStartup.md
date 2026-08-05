@@ -199,8 +199,8 @@ just install and verify:
   systemd unit yet. Watch it: image-present check → container starts → DDS regen →
   Nav2/EKF/`ball_detector` come up (inside the container) → "Managed nodes are
   active" ×2 → `mission_runner --day` starts, self-reporting each leg's PASS/FAIL
-  (no ground-truth judging — the real robot has none). Place the red ball, then the
-  yellow ball, at the right moments (see A7) and confirm the whole day runs to
+  (no ground-truth judging — the real robot has none). Place the yellow ball, then the
+  red ball, at the right moments (see A7) and confirm the whole day runs to
   completion.
 - [ ] Only once that manual run has actually passed: install the systemd unit so
   power-on triggers it automatically.
@@ -223,13 +223,13 @@ prompting exists in operator mode; watch the robot and act on your own judgment*
 - [ ] The day starts with the **no_ball** leg — no ball out yet. The robot navigates
   out, finds nothing, returns home.
 - [ ] **While the robot is heading home** on that first return leg (behind it, it
-  won't see you place it), put the **red ball** at the marker position.
-- [ ] The **yellow leg** starts automatically — actually the ball placed is meant to
-  trigger a "yellow" reaction; place whichever ball your day's ordering expects at
-  that point (see `tools/mission2_day.py`'s `run_ball_choreography`/`BALL_AT_SPHERE_XY`
-  if you need to double check the exact sequence and marker coordinates).
+  won't see you place it), put the **yellow ball** at the marker position.
+- [ ] The robot reacts to yellow (stops ~0.8 m short, photographs it) and heads home
+  again.
 - [ ] **While the robot is heading home** on that leg's return, swap the ball for
-  **red**, same way.
+  **red**, same way (see `tools/mission2_day.py`'s `run_ball_choreography`/
+  `BALL_AT_SPHERE_XY` if you need to double check the exact sequence and marker
+  coordinates).
 - [ ] The final leg reacts to red and the day ends — the mission_runner process
   exits with no artificial pause, so watch for the container's own exit and check
   the log's final lines to confirm the mission completed normally.
