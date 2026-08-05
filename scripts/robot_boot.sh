@@ -46,6 +46,8 @@ echo "=== [robot-boot] running ${IMAGE} (real-robot context, operator ball place
 # in this project already uses. MISSION2_SELF_REPORT=1: no ground-truth judging (no
 # Gazebo on the real robot) — mission_runner logs each leg's own self-reported
 # PASS/FAIL instead; analysis of the resulting logs/photos happens after, manually.
+docker rm -f robot_mission 2>/dev/null || true
+mkdir -p "$REPO/reports"
 docker run --rm --name robot_mission --network host --ipc host \
   -v "$REPO/reports:/ros2_ws/reports" \
   -v "$HOME/fleet-ci-data:/root/fleet-ci-data" \

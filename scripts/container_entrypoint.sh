@@ -37,6 +37,12 @@ source /opt/ros/jazzy/setup.bash
 source /ros2_ws/install/setup.bash
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export ROS_DOMAIN_ID=0
+# GraphicsMagick (nav2 map_server's image loader) SIGSEGVs on the Jetson's ARM build
+# under threading — killed Nav2 twice on 2026-07-18 (see hil_stage.sh's own comment
+# near its now-deleted JENV for the full story). Carried over here since map_server
+# now runs inside this container instead of nav2_up()'s old bare host process — this
+# is the ONLY place that workaround needs to live now.
+export MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1
 
 # Fixed, non-$HOME path (the design's DDS-fix gap): a container's default $HOME
 # is /root, not /home/mike — pinning this explicitly means the regenerated
@@ -50,10 +56,9 @@ bash /ros2_ws/scripts/regen_cyclonedds_config.sh
 mkdir -p /ros2_ws/reports
 NAV2_LOG="/ros2_ws/reports/nav2_container_$(date +%Y%m%dT%H%M%S).log"
 rm -f "$NAV2_LOG"
-# Same (subshell) + < /dev/null pattern hil_stage.sh's nav2_up()/robot_boot.sh
-# both already use and document: without the parens the backgrounded job
-# inherits this script's own stdout/stderr and holds the shell open forever;
-# < /dev/null stops it inheriting stdin.
+# Same (subshell) + < /dev/null pattern robot_boot.sh already uses and documents:
+# without the parens the backgrounded job inherits this script's own stdout/stderr
+# and holds the shell open forever; < /dev/null stops it inheriting stdin.
 (nohup ros2 launch nav_fleet nav2_only_launch.py \
    use_sim_time:="${USE_SIM_TIME}" \
    hsv_config:="/ros2_ws/src/nav_fleet/config/${HSV_CONFIG_FILE}" \

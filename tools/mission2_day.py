@@ -77,17 +77,8 @@ STACK_READY_TIMEOUT_S = 150.0
 SPAWN_APPEAR_SETTLE_S = 2.0                     # llvmpipe: new model takes ~1.5 s in-frame
 RETREAT_DROP_M = 0.4                            # y-drop below peak that means "retreating"
 
-# Jetson connection (HIL executor) — MUST stay in sync with scripts/hil_stage.sh's JENV
-# (pinned cross-reference; CR-16 caught these two drifting: the MAGICK/OMP knobs existed
-# only in the bash copy). Non-interactive SSH skips .bashrc, so every remote ROS command
-# must source its own env. MAGICK_THREAD_LIMIT/OMP: GraphicsMagick single-threading —
-# the known workaround for its ARM SIGSEGV under threading (see hil_stage.sh).
 JETSON_USER = os.environ.get('JETSON_USER', 'mike')
 JETSON_REPO = '~/autonomous-fleet-testbed'
-JENV = ('source /opt/ros/jazzy/setup.bash && '
-        'source ~/autonomous-fleet-testbed/install/setup.bash && '
-        'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 '
-        'MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1')
 STATE_DIR = os.environ.get('STATE_DIR', '/tmp/hil_stage')
 POWER_MODE_LABEL = os.environ.get('POWER_MODE', '25W')
 

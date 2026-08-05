@@ -16,8 +16,6 @@
 #                     ball ops + ground-truth judging stay workstation-side. Judged verdicts +
 #                     per-waypoint checklists print per run; photos land in reports/photos/ AND
 #                     STATE_DIR (CI evidence). This is the ONE stage-4 test step.
-#   reset-home        drive the robot to home_base (go_home mission) — RETAINED for manual
-#                     use, but NOT a CI step: the day's no_ball/yellow missions self-return.
 #   teardown          kill both sides (safe to run any time; used by CI's if:always() step)
 #   restore-checkout  checkout main on the Jetson (run once at the very end)
 set -euo pipefail
@@ -137,9 +135,10 @@ sync() {
   require_ip
   local sha="${1:?usage: hil_stage.sh sync <git-sha>}"
   jssh "cd ${JETSON_REPO} && git fetch origin ${sha} && git checkout --detach FETCH_HEAD"
-  # No bare colcon build any more (docker-brain unification, 2026-08) — nothing
-  # bare launches nav_fleet code on the Jetson; the checkout only needs to exist
-  # here for regen_cyclonedds_config.sh and to identify the tested commit.
+  # No bare colcon build any more (docker-brain unification, 2026-08) — the checkout
+  # persists here for two reasons: (a) it's the bind-mount target for reports/
+  # (HIL's photo/log evidence lands here), and (b) robot_boot.sh reads `git rev-parse
+  # HEAD` from this exact checkout to pick which image tag to run.
 }
 
 clean_state() {
@@ -148,7 +147,7 @@ clean_state() {
   # artifact and can even satisfy a judge's photo-presence check with stale data. Wipe first.
   mkdir -p "$STATE_DIR"
   rm -f "$STATE_DIR"/*.png "$STATE_DIR"/*.out "$STATE_DIR"/*.json \
-        "$STATE_DIR"/nav2_hil_*.log "$STATE_DIR"/mission2_day.log 2>/dev/null || true
+        "$STATE_DIR"/mission2_day.log 2>/dev/null || true
 }
 
 sim_up() {
@@ -224,40 +223,6 @@ ws_source() {
   export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0
 }
 
-reset_home() {
-  echo '=== [reset-home] drive the robot back to home_base (mirrors the sim janitor) ==='
-  require_ip
-  ws_source
-  # RETAINED for manual use (Task 13): under Option B the nominal/yellow missions self-return
-  # home, so CI no longer runs this between rungs. When invoked manually it drives the robot
-  # to home_base via the go_home mission (a single navigate leg; mission_runner clears both
-  # costmaps first). Teleporting is forbidden: it breaks AMCL + the costmaps.
-  # Bare-metal on the Jetson (a plain nav needs no container image). 180s: one nav leg.
-  # Retry up to 3x: go_home is a COLD first goal (fresh mission_runner process, idle Nav2),
-  # the case most exposed to a transient flake where bt_navigator's FollowPath call times
-  # out waiting for the cold controller_server to acknowledge — the plan succeeds but the
-  # handoff misses its ack window (observed live 2026-07-18: ~2 of 3 cold home-goal attempts
-  # flaked; a warm goal in an already-running process, e.g. yellow's retreat, does not). Each
-  # failed attempt aborts in ~0.2 s, so the retries are cheap. This is an UNJUDGED reset leg,
-  # so retrying is safe — it never masks a react-rung regression (those stay single-shot).
-  local rc=0 attempt
-  for attempt in 1 2 3; do
-    rc=0
-    timeout 180 ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${JETSON_USER}@${JETSON_IP}" \
-      "$JENV && cd ${JETSON_REPO} && RUNNER_TYPE=hil_jetson POWER_MODE=${POWER_MODE_LABEL} python3 -m nav_fleet.mission_runner go_home" \
-      2>&1 | tee "$STATE_DIR/reset_home.out" || rc=$?
-    [ "$rc" -eq 0 ] && break
-    echo "WARN: drive-home reset attempt ${attempt} failed (rc=${rc}) — retry after 5s settle" >&2
-    sleep 5
-  done
-  if [ "$rc" -ne 0 ]; then
-    echo "FATAL: drive-home reset failed after retries (rc=${rc})" >&2
-    return "$rc"
-  fi
-  # Confirm the robot actually reached home before the next rung runs off a bad pose.
-  python3 -m tools.mission2_harness assert-home
-}
-
 teardown() {
   echo '=== [teardown] both sides ==='
   if [ -n "${JETSON_IP:-}" ]; then
@@ -326,7 +291,7 @@ restore_checkout() {
   echo '=== [restore-checkout] Jetson repo back on main (fast-forwarded when reachable) ==='
 }
 
-cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|day|reset-home|teardown|restore-checkout}"
+cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|day|teardown|restore-checkout}"
 shift || true
 case "$cmd" in
   discover)         discover ;;
@@ -334,7 +299,6 @@ case "$cmd" in
   sync)             sync "$@" ;;
   run)              run ;;
   day)              day ;;
-  reset-home)       reset_home ;;
   teardown)         teardown ;;
   restore-checkout) restore_checkout ;;
   *) echo "FATAL: unknown subcommand '$cmd'" >&2; exit 1 ;;

@@ -4,8 +4,8 @@
 #
 # Regenerates ~/cyclonedds-hil.xml (or $CYCLONEDDS_CONFIG_PATH) from THIS machine's
 # real current link state — Ethernet preferred over WiFi, whichever physical
-# interface is actually up right now. Runs unmodified on both the Jetson
-# (hil_stage.sh's nav2_up(), over SSH, every HIL day, before Nav2 launches) and the
+# interface is actually up right now. Runs unmodified on both the Jetson (called by
+# container_entrypoint.sh inside the container for both HIL and real robot) and the
 # workstation (sim_up(), before the Gazebo/bridge launch) — auto-detects physical vs
 # virtual interfaces instead of hardcoding names per machine, since the two
 # machines' real interface names differ (enP8p1s0/wlP1p1s0 vs enp6s0/wlp5s0).

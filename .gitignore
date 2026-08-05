@@ -36,6 +36,9 @@ reports/mission_plan.json
 # telemetry DB) since the Piece 4 absolute-path fix; never repo-relative again
 reports/photos/
 
+# Nav2 crash-autopsy logs (container_entrypoint.sh) — root-owned, accumulate forever
+reports/nav2_container_*.log
+
 # Failure-bag evidence (rosbag2 dirs) — BAG_DIR is deliberately checkout-relative
 # (failure_bag.py), unlike photos/DB, but still shouldn't be committed
 reports/failure_bags/
