@@ -39,7 +39,8 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export ROS_DOMAIN_ID=0
 # GraphicsMagick (nav2 map_server's image loader) SIGSEGVs on the Jetson's ARM build
 # under threading — killed Nav2 twice on 2026-07-18 (see hil_stage.sh's own comment
-# near its now-deleted JENV for the full story). Carried over here since map_server
+# near its JENV for the full story — that copy still exists there; it was only
+# tools/mission2_day.py's now-dead copy that got deleted). Carried over here since map_server
 # now runs inside this container instead of nav2_up()'s old bare host process — this
 # is the ONLY place that workaround needs to live now.
 export MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1
