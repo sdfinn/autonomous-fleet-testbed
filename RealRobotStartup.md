@@ -15,11 +15,13 @@ from the ground up, both worth knowing before reading further:
    real-robot drift detection are explicitly R2 scope, not R1. The gate is: the mission
    runs, passes per leg (same PASS/FAIL judging HIL already does), and you visually
    confirm it — nothing more automated than that.
-2. **Nav2/EKF/`ball_detector` run bare-metal, not containerized.** See
-   `docs/bare-metal-vs-container-decision.md` for the full story — short version: the
-   container role HIL actually proved was always narrower (just the raw mission loop,
-   never Nav2 itself), and running Nav2 in a container was never the thing that got
-   hardened across weeks of real HIL runs.
+2. **Nav2/EKF/`ball_detector`/`mission_runner` run INSIDE the container** (reversed
+   2026-08-03 — see `docs/superpowers/specs/
+   2026-08-03-docker-brain-real-robot-hil-unification-design.md`, which supersedes
+   `docs/bare-metal-vs-container-decision.md`'s conclusion). Ball placement and
+   ground-truth judging stay workstation-side for HIL (that harness never runs on the
+   real robot either way); the real robot self-reports each leg's PASS/FAIL with no
+   ground-truth check at all — analysis of logs/photos happens after, manually.
 
 **WiFi is proven, not just assumed.** The Jetson's WiFi + CycloneDDS + mDNS have all
 been hardened and live-verified (multiple full reboots, zero regressions) — see
@@ -168,94 +170,38 @@ camera.** `hsv_gazebo.yaml`'s thresholds are tuned for Gazebo's rendered ball ma
   on. Don't trust the tool's numbers unverified.
 - [ ] Commit `hsv_realcam.yaml`.
 
-### A5. Create `src/nav_fleet/launch/robot_launch.py`
+### A5. No new launch file needed
 
-Bare vendor driver + bare brain — matches `nav2_only_launch.py`/`nav2_up()`'s exact
-proven pattern (`use_composition`/`use_namespace` are hard Jazzy requirements; the EKF
-node fixes the measured ~30% wheel-odom rotation over-report; `ball_detector` stays
-always-on, now on the real-camera HSV profile from A4):
-
-```python
-# Copyright 2026 Mike. Licensed under Apache 2.0.
-"""Launch Nav2 on the real ugv_pt robot (Jetson, no simulation, no Gazebo bridge)."""
-import os
-import pathlib
-
-from ament_index_python.packages import get_package_share_directory
-from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch_ros.actions import Node
-
-PKG = pathlib.Path(__file__).parent.parent
-
-
-def generate_launch_description():
-    ekf_node = Node(
-        package='robot_localization',
-        executable='ekf_node',
-        name='ekf_filter_node',
-        output='screen',
-        parameters=[str(PKG / 'config' / 'ekf.yaml'), {'use_sim_time': False}],
-        remappings=[
-            ('/tf', '/robot_001/tf'),
-            ('/tf_static', '/robot_001/tf_static'),
-            ('odometry/filtered', '/robot_001/odometry/filtered'),
-        ],
-    )
-
-    ball_detector = Node(
-        package='nav_fleet',
-        executable='ball_detector',
-        name='ball_detector',
-        output='screen',
-        parameters=[{'use_sim_time': False,
-                     'hsv_config': str(PKG / 'config' / 'hsv_realcam.yaml')}],
-    )
-
-    nav2_bringup_dir = get_package_share_directory('nav2_bringup')
-    nav2 = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(nav2_bringup_dir, 'launch', 'bringup_launch.py')
-        ),
-        launch_arguments={
-            'namespace': 'robot_001',
-            'use_namespace': 'true',
-            'use_sim_time': 'false',
-            'params_file': str(PKG / 'config' / 'nav2_params.yaml'),
-            'map': str(PKG / 'maps' / 'bedroom_real.yaml'),
-            'use_composition': 'True',
-            'autostart': 'true',
-        }.items(),
-    )
-
-    return LaunchDescription([ekf_node, ball_detector, nav2])
-```
-
-- [ ] Sanity-check it directly first: `bash scripts/regen_cyclonedds_config.sh` then
-  `ros2 launch nav_fleet robot_launch.py`, both on the Jetson host. Confirm "Managed
-  nodes are active" (×2) in the output before moving on — this is the exact same
-  invocation `scripts/robot_boot.sh` (A6) will run automatically, so proving it works
-  by hand here is proving the real boot path, not a separate debug path.
-- [ ] Commit `robot_launch.py`.
+Superseded 2026-08 by the docker-brain unification (docs/superpowers/specs/
+2026-08-03-docker-brain-real-robot-hil-unification-design.md): `robot_launch.py` is
+never created. `src/nav_fleet/launch/nav2_only_launch.py` — the same file HIL already
+uses — is reused directly, parameterized by three launch arguments
+(`use_sim_time:=false hsv_config:=.../hsv_realcam.yaml map:=.../bedroom_real.yaml`),
+passed in by `scripts/container_entrypoint.sh` (see A6). Nothing to write here.
 
 ### A6. Build the power-on boot sequence
 
-`scripts/robot_boot.sh` and `scripts/robot-mission.service` already exist in the repo
-— nothing to write here, just install and verify:
+`scripts/robot_boot.sh`, `scripts/robot-mission.service`, and
+`scripts/container_entrypoint.sh` already exist in the repo — nothing to write here,
+just install and verify:
 
 - [ ] Get the exact HIL-tested commit onto this checkout (from the workstation):
   ```bash
   scripts/hil_stage.sh sync <the green run's commit sha>
   ```
-  This is the same mechanism every HIL run already uses to get tested code onto the
-  Jetson — `git fetch` + `colcon build` directly on the host. Nothing here uses the
-  Docker image; see `docs/bare-metal-vs-container-decision.md` for why.
+  This ALSO determines which container image `robot_boot.sh` runs — it derives the
+  image tag from this checkout's own `git rev-parse HEAD`, and stage-3-arm64 tags
+  every build with its commit sha. No `docker pull` ever happens here: the image
+  must already be cached locally from when `stage-4-hil` pulled it for this exact
+  commit during CI. `robot_boot.sh` checks this and fails loudly (naming the
+  missing tag) rather than trying to fetch it.
 - [ ] Run `scripts/robot_boot.sh` **manually over SSH** first — don't install the
-  systemd unit yet. Watch it: DDS regen → Nav2/EKF/`ball_detector` come up bare →
-  "Managed nodes are active" ×2 → `tools.mission2_day --ball-ops operator` starts.
-  Place the red ball, then the yellow ball, at the right moments (see A7) and confirm
-  the whole day runs to completion.
+  systemd unit yet. Watch it: image-present check → container starts → DDS regen →
+  Nav2/EKF/`ball_detector` come up (inside the container) → "Managed nodes are
+  active" ×2 → `mission_runner --day` starts, self-reporting each leg's PASS/FAIL
+  (no ground-truth judging — the real robot has none). Place the red ball, then the
+  yellow ball, at the right moments (see A7) and confirm the whole day runs to
+  completion.
 - [ ] Only once that manual run has actually passed: install the systemd unit so
   power-on triggers it automatically.
   ```bash
