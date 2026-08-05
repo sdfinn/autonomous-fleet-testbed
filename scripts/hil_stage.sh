@@ -5,9 +5,9 @@
 # Subcommands:
 #   discover          print the Jetson's current IP (mDNS first, ip-neigh fallback), verify SSH
 #   power-mode        set nvpmodel mode $POWER_MODE_ID on the Jetson and print it
-#   sync <sha>        fetch+checkout <sha> on the Jetson and colcon build --base-paths src
+#   sync <sha>        fetch+checkout <sha> on the Jetson (no build — the checkout only identifies which commit is under test)
 #   run               HIL STACK GATE (Task 13b): clean STATE_DIR, then sim-up (workstation
-#                     Gazebo) -> nav2-up (Jetson). NO mission, NO retry — a mission failure
+#                     Gazebo). Nav2 bring-up happens later inside the container as part of day(). NO mission, NO retry — a mission failure
 #                     must be RED (the in-process nav_runner cold-goal retry, Task 13a, is the
 #                     only retry left; harness-level whole-mission retries were removed).
 #   day               THE Mission 2 day (Task 13d): runs tools/mission2_day.py in HIL mode
@@ -26,9 +26,6 @@ JETSON_USER="${JETSON_USER:-mike}"
 POWER_MODE_ID="${POWER_MODE_ID:-1}"
 STATE_DIR="${STATE_DIR:-/tmp/hil_stage}"
 SIM_LOG="${STATE_DIR}/sim.log"
-# Per-run log name (2026-07-18): a fixed name let a later nav2-up OVERWRITE the crash
-# evidence of the run before it — a Nav2 SIGSEGV autopsy was lost exactly that way.
-NAV2_LOG="/tmp/nav2_hil_$(date +%Y%m%d_%H%M%S).log"   # on the Jetson
 JETSON_REPO='~/autonomous-fleet-testbed'
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Ghost-ball settle (CLAUDE.md Gotchas, 2026-07-17): the headless llvmpipe renderer keeps a
