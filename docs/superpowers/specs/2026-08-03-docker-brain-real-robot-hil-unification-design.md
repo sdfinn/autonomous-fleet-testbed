@@ -1,6 +1,22 @@
 # Docker Brain: Unifying Real-Robot and HIL Deployment
 
-Status: approved design, not yet planned/implemented.
+Status: **implemented and merged to `main` 2026-08-04** — live-validated end to end,
+including a real `stage-4-hil` run on the actual Jetson (see root `CLAUDE.md`'s
+2026-08-04 NEXT SESSION entry for the full result). This doc still describes the
+ORIGINAL, wider idea as written 2026-08-03 — **two real deviations were decided live
+with Mike during implementation and are NOT reflected below.** The plan doc's own
+"Global Constraints" section (`docs/superpowers/plans/
+2026-08-03-docker-brain-real-robot-hil-unification-plan.md`) has the real, current,
+binding decision — read that section, not this doc's prose, if the two disagree:
+1. Ball placement, ground-truth reading, and judging (`tools/mission2_harness.py`)
+   stay workstation-side for HIL, unchanged — NOT moved into the container's own
+   self-orchestration as this doc originally proposed.
+2. The real robot gets no ground-truth judging at all (impossible — no Gazebo, no
+   oracle) — it self-reports each leg's own PASS/FAIL; analysis happens after,
+   manually, not in real time.
+Left in place as historical context for the design reasoning, which is otherwise
+still accurate.
+
 Written 2026-08-03.
 
 ## Context

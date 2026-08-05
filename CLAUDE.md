@@ -10,7 +10,83 @@ alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean 
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
 
-## NEXT SESSION — START HERE (2026-08-03 evening — docker-brain implementation, Tasks 1-4 of 9 done)
+## NEXT SESSION — START HERE (2026-08-04 — docker-brain unification SHIPPED, merged, live-validated on real hardware; Task 9 closed)
+
+**The whole docker-brain-unification effort (all 9 tasks) is done and merged to
+`main`.** Implemented via subagent-driven-development in an isolated worktree (Tasks
+1-8, each independently reviewed, plus two rounds of whole-branch review), merged
+`feat/docker-brain-unification` → `main` same day, then pushed straight to CI
+(deliberate call, skipping the plan's own manual-first Task 9 steps — see below for
+why that was still the right call). Nav2/EKF/`ball_detector`/`mission_runner` now run
+identically, via one container/one entrypoint (`scripts/container_entrypoint.sh`), on
+both HIL and the eventual real robot — differing only by env-var values
+(`use_sim_time`/`hsv_config`/`map`/self-report vs. judged).
+
+- **First-ever fully green CI run including a real, live `stage-4-hil` on the actual
+  Jetson** (run `30970690023`) — the container-based HIL path, container-based real-
+  robot path, and the whole convergence this branch exists for are now proven on real
+  hardware, not just on paper.
+- **Pushing straight to CI (skipping manual Task 9 verification first) found 2 real
+  bugs a manual-only path might have taken longer to catch** — both fixed live,
+  same day, re-verified green:
+  1. A stale pre-existing unit test (`tests/test_pipeline_matrix.py`) outside every
+     diff any reviewer looked at, still asserting the pre-branch `bedroom_nav`
+     scenario — `config/pipeline_matrix.yaml`'s `real` stage was correctly changed by
+     Task 4, the test just never got updated. `stage-1-quality` caught it correctly.
+  2. **`container_entrypoint.sh` crashed immediately (1.7s, before Nav2 ever started)**
+     — `/opt/ros/jazzy/setup.bash: line 8: AMENT_TRACE_SETUP_FILES: unbound variable`.
+     ROS2's own `setup.bash` isn't `set -u`-safe; `hil_stage.sh`'s `sim_up()`/
+     `ws_source()` already work around this exact issue (`set +u` bracketing the
+     source calls) — this brand-new file just never inherited that guard. Nothing in
+     Task 3's manual verification (`docker buildx build` succeeding) could have caught
+     this, since that only proves the image builds, not that the entrypoint runs. Fix:
+     same `set +u`/`set -u` bracket, matching the established pattern exactly.
+  A separate, one-off infra hiccup also hit `stage-3-arm64` mid-session: a GHCR push
+  got stuck on a genuinely dead, half-closed TCP connection (`FIN-WAIT-1`, confirmed
+  via `ss`) — not a code issue, not GHCR being down (direct `curl` to `ghcr.io/v2/`
+  was healthy throughout) — cancel + rerun fixed it immediately. Worth knowing this
+  failure mode exists if `stage-3-arm64` ever hangs post-build-step with no forward
+  log progress for several minutes.
+- **GUI-watched runs, both sim and HIL, done live with Mike watching, both fully
+  PASS** (all 3 legs, no_ball/yellow/red) — results saved for comparison at
+  `~/fleet-ci-data/{sim,hil}_gui_comparison_2026-08-04/` (log + photos + telemetry
+  rows each). Yellow leg's `home_photo_similarity` matched almost exactly between sim
+  and HIL (0.033 vs 0.034); `no_ball` diverged more (0.112 vs 0.029) — not flagged as
+  a problem by either run's own judging, just a real difference worth knowing exists.
+  Ollama/VLM canary fired successfully on all 4 runs checked (2 CI, 2 manual),
+  correctly identifying "a red ball" every time, zero errors — confirmed the
+  `--ingest-vlm-canary` step is CI-only, `hil_stage.sh day` doesn't call it on its own
+  (a manual HIL run's canary result needs that step run by hand or it's stranded on
+  the Jetson).
+- **Task 9 closed, deliberately, with Step 2 not completed — decided with Mike, not
+  a gap to revisit:** Steps 1/3/4 (build-on-Jetson / full HIL day / push+CI-proof) are
+  genuinely done, on real hardware. Step 2 (an isolated container run with
+  `MISSION2_SELF_REPORT=1`, no Gazebo, no real robot) was attempted twice — first
+  attempt was contaminated by a leftover HIL Gazebo simulation from an earlier
+  run that never got torn down (a real process-hygiene mistake, not a product bug —
+  the still-running workstation Gazebo's live camera bridge fed the "isolated"
+  container a real detection of its own leftover red ball); teardown fixed that, but
+  the clean rerun then hit a genuine wall: **Nav2 never reaches "active" at all with
+  zero sensor input of any kind** (no camera, no lidar, no odometry — `local_costmap`
+  times out after 120s unable to get the `map` transform, since AMCL/EKF have nothing
+  to localize against). Building a stub sensor source just to unblock this would
+  amount to reinventing Gazebo badly — Mike's call, and the right one: not worth it.
+  `mission_runner`'s actual self-report telemetry code path (the thing Step 2 was
+  meant to validate) was therefore never exercised by either attempt — genuinely
+  inconclusive, not proven, not a real risk either (the actual deployed robot will
+  have real sensors, so this specific "zero sensors at all" failure mode shouldn't
+  occur there). The self-report path's real validation waits for the actual physical
+  robot.
+
+**What's next (no urgency, no firm date — whenever the physical robot is ready):**
+`RealRobotStartup.md` Part A (one-time setup: real SLAM map, real-camera HSV
+calibration via `calibrate_hsv_realcam.py`, install `robot_boot.sh` +
+`robot-mission.service`) then Part B (day-to-day operation) — this is the only
+remaining piece that needs the actual hardware. Nothing else is blocking. Older,
+lower-priority backlog items (Release 1→2 branching/tagging, self-hosted-runner CI
+docs) are unrelated carryover from before this session, still open, not urgent.
+
+## (superseded 2026-08-04) PREVIOUS (2026-08-03 evening — docker-brain implementation, Tasks 1-4 of 9 done)
 **Spec reviewed/approved earlier this session** (with two real deviations from the
 original spec text, decided live with Mike — see below), **implementation plan
 written and execution started via subagent-driven-development, 4 of 9 tasks
