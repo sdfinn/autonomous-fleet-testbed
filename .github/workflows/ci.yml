@@ -21,6 +21,15 @@ on:
 # machine. Machine re-verified clear (no stray gz sim/robot_state_publisher processes,
 # no in-flight CI). This comment forces a real full-pipeline run to confirm clean vs.
 # a genuine regression.
+#
+# 2026-08-05: the docker-brain unification merge (HIL/real-robot converge onto one
+# container) landed in one push, then a same-day one-line test fix landed in the NEXT
+# push — paths-filter diffs each push against the ref it lands on, so the fix's push
+# (touching only tests/) correctly found nothing in docker/src/tools/scripts changed
+# and skipped stage-3-arm64/stage-4-hil, even though the actual container code (in the
+# FIRST push, which never reached stage-3/4 because stage-1 failed there) has still
+# never been run through them. This comment forces that real run, same pattern as the
+# two entries above.
 concurrency:
   group: fleet-ci-shared-hardware
   cancel-in-progress: false
