@@ -289,8 +289,8 @@ class JetsonExecutor(MissionExecutor):
     def _spawn_vlm_canary_on_jetson(self, leg):
         """The real on-device classification (2026-07-31) — spawned ON THE JETSON using
         its own Ollama/CUDA install, using the ORIGINAL remote photo path (via
-        _remote_photo_path, the same translation _pull_photos_from_paths already relies
-        on for bare-metal vs container mode). Mirrors _maybe_spawn_vlm_canary's own
+        _remote_photo_path, the same container-path translation _pull_photos_from_paths
+        already relies on). Mirrors _maybe_spawn_vlm_canary's own
         red-reaction filter exactly — hardcodes run_context='red' rather than threading
         a leg name through, since that filter can only ever match the 'red' variant
         (hil_variant_names()'s fixed declared shape: only the red leg ever carries a
