@@ -56,12 +56,12 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
 ### A1. Pre-flight, still on the bench (Ethernet, connected to workstation)
 
 - [ ] Confirm the **whole** last run on `main` is green — `gh run list`, or the
-  dashboard — not just `stage-3-arm64`. `stage-3-arm64` builds and pushes `:latest`
-  *before* `stage-4-hil` even runs and doesn't wait on it, so a green build stage alone
-  doesn't mean that commit's mission actually passed. This manual check is the entire
-  gate for "is `:latest` trustworthy" — there's no automated re-verification beyond it,
-  deliberately (see `docs/bare-metal-vs-container-decision.md`'s closing note on this
-  session's simplification).
+  dashboard — not just `stage-3-arm64`. The commit you're about to sync is the one
+  `robot_boot.sh` will run: it derives the container image tag from `git rev-parse HEAD`
+  on the Jetson checkout, so the image must have been cached locally from when
+  `stage-4-hil` pulled it during CI testing. `robot_boot.sh` checks for image presence
+  and fails loudly if it's missing. This manual check for a green run is the entire
+  gate — there's no automated re-verification beyond it, deliberately.
 - [ ] Confirm the Jetson's power mode: `nvpmodel -q` should read 25W. Do not run
   `nvpmodel -m` to "fix" this unless it's genuinely wrong — see the power-mode note
   above.
@@ -230,16 +230,17 @@ prompting exists in operator mode; watch the robot and act on your own judgment*
   if you need to double check the exact sequence and marker coordinates).
 - [ ] **While the robot is heading home** on that leg's return, swap the ball for
   **red**, same way.
-- [ ] The final leg reacts to red and the day ends; the script holds 10s so you can
-  see it's actually done, not mid-frame.
+- [ ] The final leg reacts to red and the day ends — the mission_runner process
+  exits with no artificial pause, so watch for the container's own exit and check
+  the log's final lines to confirm the mission completed normally.
 - [ ] **Ground-truth check — do this every time, not just this once:** visually
   confirm what the robot actually did (reacted to the right color, at roughly the
-  right point, returned home cleanly) matches the logged PASS/FAIL per leg before
-  trusting it. There's no software oracle for this on real hardware — your own
+  right point, returned home cleanly) matches the self-reported PASS/FAIL per leg
+  before trusting it. There's no software oracle for this on real hardware — your own
   observation is the accepted mitigation, same as it's always been for GUI-watched
   sim/HIL runs.
 - [ ] Check the result: `python -m tools.fleet_status --stage real` (or just read the
-  log at `~/fleet-ci-data/robot_boot_logs/mission2_day_<timestamp>.log`). All 3 legs
+  log at `~/fleet-ci-data/robot_boot_logs/robot_boot_<timestamp>.log`). All 3 legs
   PASS + your own eyes-on confirmation = the mission worked.
 
 ### A8. Tag and commit
@@ -249,17 +250,17 @@ prompting exists in operator mode; watch the robot and act on your own judgment*
   git tag r1-complete
   git push origin r1-complete
   ```
-- [ ] Commit everything from Part A (map, `hsv_realcam.yaml`, `robot_launch.py`):
+- [ ] Commit everything from Part A (map, `hsv_realcam.yaml`):
   ```bash
   git add .
-  git commit -m "feat: real robot deploy — SLAM map, HSV calibration, robot_launch.py, r1-complete"
+  git commit -m "feat: real robot deploy — SLAM map, HSV calibration, r1-complete"
   git push
   ```
 
-**Part A complete when:** `bedroom_real.pgm`/`.yaml`, `hsv_realcam.yaml`, and
-`robot_launch.py` are all committed; `robot_boot.sh` has been run manually at least
-once and passed all 3 legs with your own eyes-on confirmation; the systemd unit is
-installed and enabled; `r1-complete` is tagged.
+**Part A complete when:** `bedroom_real.pgm`/`.yaml` and `hsv_realcam.yaml` are both
+committed; `robot_boot.sh` has been run manually at least once and passed all 3 legs
+with your own eyes-on confirmation; the systemd unit is installed and enabled;
+`r1-complete` is tagged.
 
 ---
 
@@ -270,9 +271,9 @@ installed and enabled; `r1-complete` is tagged.
 - [ ] Physically place the robot at the known starting position, facing the
   documented heading.
 - [ ] Power on. That's it — `robot-mission.service` handles everything from there:
-  waits for WiFi, regenerates the DDS config, brings up Nav2 bare, runs the mission2
-  day with operator ball placement. Step back and watch; place the balls per A7's
-  timing when the moment comes.
+  waits for WiFi, regenerates the DDS config, brings up the container (which runs
+  Nav2/EKF/`ball_detector` inside), and runs the mission2 day with operator ball
+  placement. Step back and watch; place the balls per A7's timing when the moment comes.
 - [ ] Ground-truth check by eye, every time.
 
 ### B2. After a mission — evidence stays local, nothing pushes automatically
@@ -282,7 +283,7 @@ this is manual, by design** (log/result analysis and real-robot drift detection 
 explicitly R2 scope, not R1):
 
 - [ ] The mission's own log sits at
-  `~/fleet-ci-data/robot_boot_logs/mission2_day_<timestamp>.log` on the Jetson, and the
+  `~/fleet-ci-data/robot_boot_logs/robot_boot_<timestamp>.log` on the Jetson, and the
   telemetry row is already in the Jetson's own local `fleet_runs.db` — both stay there
   until you choose to look, no push happens on their own.
 - [ ] If you want to pull ROS2 logs to the workstation: `python -m tools.pull_ros_logs
@@ -300,8 +301,9 @@ One Jetson, no separate CI runner — this is a physical swap, every time:
   doesn't collide with the boot-time unit trying to start its own mission at the same
   time) — `sudo systemctl enable` it again before B4's reinstall.
 - [ ] Re-run `scripts/hil_stage.sh day` / the normal CI pipeline as usual.
-- [ ] Re-check `~/fleet-ci-data` ownership before the NEXT bare-metal real-robot run
-  (container-mode HIL will re-poison it — see A1's check).
+- [ ] Re-check `~/fleet-ci-data` ownership before the next real-robot run (the
+  container runs as root and will re-poison the directory with root-owned files —
+  see A1's check).
 
 ### B4. Code passed CI/CD — redeploy to the real robot
 
