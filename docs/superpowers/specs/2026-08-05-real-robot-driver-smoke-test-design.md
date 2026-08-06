@@ -129,21 +129,37 @@ Orchestrator, same tier as `mission2_day.py`. Sequence:
 2. **Photo (fully automatic).** One `take_picture` call (reuses
    `image_io.image_msg_to_png`, same primitive Mission 2 already uses); PASS if the
    file exists and isn't degenerate.
-3. **Lidar + camera physical correlation (semi-automatic — operator provides the
-   physical event, the tool detects it).** This is the answer to "operator can't
-   really read lidar": prompt the operator to hold the actual red or yellow ball
-   within ~1 m of the robot's front for a short window, then poll two things
-   automatically during that window — a near-range dip in the forward arc of
-   `/robot_001/scan`, and a matching-color hit on `/robot_001/detections`
-   (`ball_detector` is already running as part of `sensors_only_launch.py`). One
-   physical action, two independent automatic confirmations — proves the lidar is
-   measuring real distances (not stuck/cached) and that the HSV calibration pipeline
-   (`hsv_realcam.yaml`, from A4) works end-to-end, not just that raw frames arrive.
+3. **Lidar + camera correlation at a known distance (automatic verdict once placed).**
+   This is the answer to "operator can't really read lidar" — and, placed at a
+   *known* distance rather than just waved into view, it becomes a real accuracy
+   check instead of a presence/absence one. Prompt the operator to place the actual
+   **yellow** ball 12 inches (~0.305 m) directly in front of the robot, then poll and
+   report three numbers during a short window:
+   - the minimum range in the forward arc of `/robot_001/scan` (directly measured),
+   - `/robot_001/detections`'s reported color (expect `yellow_ball`) and its
+     estimated range — `hyp.pose.pose.position.x`, i.e. `range_k / width_px`, per
+     `hsv_detect.py` — this field is already published today, nothing new to add,
+   - the known 12" ground truth the operator was told to place at.
+
+   **PASS requires:** the lidar's measured range agrees with 12" within a placement-
+   imprecision tolerance (e.g. ±4"/~100 mm), AND a `yellow_ball` detection is present
+   during the window. **The camera's estimated range is reported, not gated** —
+   `hsv_realcam.yaml`'s `range_k` hasn't been calibrated against a real camera yet (A4
+   only produces color thresholds, not range), so this check can't fairly demand
+   accuracy from a number that's known-uncalibrated. It's genuinely useful data
+   anyway: a known-distance real-camera reading is the first real data point toward
+   calibrating real-camera `range_k`, the same way `tools/calibrate_ball_range.py`
+   already does against Gazebo's ground truth — worth logging even though it isn't a
+   pass/fail gate here.
+
    **Reuses the existing `BallOps` abstraction** (`tools/mission2_day.py`):
-   `GzBallOps` (`concurrent=True`) already exists for sim/HIL — CI spawns a ball
-   programmatically, no human needed. A new `OperatorWaveBallOps` (`concurrent=False`,
-   parallel to the existing `OperatorBallOps`) prints the prompt and waits for the
-   operator, for the real-robot case. Same interface, same pattern, not a new concept.
+   `GzBallOps` (`concurrent=True`) already exists for sim/HIL — CI spawns the ball
+   programmatically at the equivalent 12"-in-front coordinate, no human needed. A new
+   `OperatorPlaceBallOps` (`concurrent=False`) prints the placement prompt and waits
+   for the operator, for the real-robot case — a single `place()`, no `remove()`/swap
+   choreography needed (unlike Mission 2's day sequence), so it's a lighter interface
+   than the full `BallOps` contract, not a subclass forced to implement more than it
+   needs.
 4. **Motion (fully automatic verdict, operator watch recommended).** Two short,
    open-loop `cmd_vel` pulses — a small forward translation, then a ~15° turn — with
    `/robot_001/odom` read before and after each. PASS requires the measured delta to
@@ -178,8 +194,8 @@ be left set wrong. `scripts/hil_stage.sh smoke <sha>` is the new, only way to tr
 
 Adds a smoke-test-mode regression run to both stages, using each stage's existing
 sensor source (Gazebo's bridge in stage-2, Gazebo↔Jetson DDS in stage-4-hil) in place
-of real hardware, and `GzBallOps` for the wave-the-ball step (already exists, no new
-code). **This validates the smoke-test tooling's own logic — branching, Hz-checks,
+of real hardware, and `GzBallOps` for the known-distance ball-placement step (already
+exists, no new code). **This validates the smoke-test tooling's own logic — branching, Hz-checks,
 photo capture, detection-correlation, motion-delta math — not real ESP32/lidar/camera
 hardware**, which can't be exercised before Aug 11 regardless. Worth this doc being
 explicit about that distinction so a future green CI run is never mistaken for "real
@@ -211,7 +227,7 @@ never `runs`, so drift metrics are structurally unaffected either way.
 - `sensors_only_launch.py` — testable in sim right now (Gazebo's bridge already
   publishes everything it expects).
 - `tools/smoke_test.py`'s logic — Hz-threshold checks, photo-exists checks, odom-delta
-  math, the wave-ball-correlation polling — all testable against sim/HIL today via
+  math, the known-distance ball-correlation polling — all testable against sim/HIL today via
   `GzBallOps`.
 - `smoke_test_runs` logging + the isolated-table guarantee (never read by
   `baseline_monitor`) — fully testable now, same as `coverage_log.py`'s tests.
