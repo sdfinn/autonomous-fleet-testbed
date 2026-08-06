@@ -62,6 +62,16 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   `stage-4-hil` pulled it during CI testing. `robot_boot.sh` checks for image presence
   and fails loudly if it's missing. This manual check for a green run is the entire
   gate — there's no automated re-verification beyond it, deliberately.
+  **A green overall run is NOT enough by itself — check the JOB LIST, not just the
+  run's conclusion.** `dorny/paths-filter` correctly SKIPS `stage-3-arm64`/`stage-4-hil`
+  on a commit that touches no watched path (docs-only, tests-only, etc.) — confirmed
+  live 2026-08-06: the actual latest green run on `main` at the time had both stages
+  `skipped`, one commit after the last one that really built+pushed an image. Syncing
+  to a skipped-stage commit means no image was ever tagged for that sha —
+  `robot_boot.sh` fails loudly (correctly) rather than silently running stale code, but
+  better to catch this here than at power-on: `gh run view <run-id> --json jobs -q
+  '.jobs[] | "\(.name)\t\(.conclusion)"'` and pick the last sha where `Stage 3 — arm64
+  Native Build` AND the HIL stage both say `success`, not just the run as a whole.
 - [ ] Confirm the Jetson's power mode: `nvpmodel -q` should read 25W. Do not run
   `nvpmodel -m` to "fix" this unless it's genuinely wrong — see the power-mode note
   above.
@@ -88,14 +98,38 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
 - [ ] SSH in over WiFi: `ssh mike@jetson.local` (should resolve reliably — see the
   WiFi note above; fall back to the router admin page's DHCP lease list if not).
 - [ ] Check Jetson health: `nvidia-smi`, temp, `df -h` free space.
-- [ ] Evaluate Waveshare's `ugv_ws` ROS2 workspace (github.com/waveshareteam) — it may
-  cover the base driver + lidar + camera out of the box. Install/build it.
+- [ ] **Driver layer — resolved 2026-08-06, do NOT install `ugv_ws`.**
+  [`waveshareteam/ugv_ws`](https://github.com/waveshareteam/ugv_ws) only has Humble
+  branches (`ros2-humble-develop`, `ros2-humble-develop-251125`) — no Jazzy, official
+  or community-confirmed-working for Jetson Orin. Everything else in this project is
+  Jazzy-only. `robot_profiles/jetson_ugv_pt.yaml` already names the real hardware, and
+  it splits cleanly:
+  - **Lidar (D500 / STL-19P):** install
+    [`ldrobotSensorTeam/ldlidar_ros2`](https://github.com/ldrobotSensorTeam/ldlidar_ros2)
+    — vendor-maintained, confirmed working on ROS2 Jazzy independent of `ugv_ws`.
+  - **Camera (OAK-D Lite):** install
+    [`luxonis/depthai-ros`](https://github.com/luxonis/depthai-ros) — Luxonis-maintained,
+    confirmed working on Jazzy/24.04 independent of `ugv_ws`.
+  - **Odom + IMU + `cmd_vel`→wheels (ESP32 sub-controller, UART @921600 baud, per
+    `robot_profiles/jetson_ugv_pt.yaml`'s `sub_controller` block):** no vendor Jazzy
+    package exists for this piece. Write a small native driver node in this repo
+    against Waveshare's documented JSON-over-serial protocol (wiki +
+    [`ugv_base_general`](https://github.com/waveshareteam/ugv_base_general)/
+    [`ugv_base_ros`](https://github.com/waveshareteam/ugv_base_ros) reference
+    firmware/examples — protocol-level, not ROS-distro-specific) — publishing
+    `/robot_001/odom` + `/robot_001/imu/data`, subscribing `/robot_001/cmd_vel`. Not
+    yet built as of this writing — see the project's own planning notes for status
+    before assuming it exists.
 - [ ] **Verify all four real topics report, before anything else:**
   ```bash
   ros2 topic hz /robot_001/odom
   ros2 topic hz /robot_001/scan
   ros2 topic hz /robot_001/camera/image_raw
+  ros2 topic hz /robot_001/imu/data
   ```
+  (the 4th, IMU, is easy to miss but real — `config/ekf.yaml`'s `imu0` input fuses
+  yaw-rate from this exact topic; a silently-missing IMU degrades the EKF fusion the
+  6-wheel-skid-steer mitigation below depends on, without an obvious error anywhere)
   and confirm `teleop_twist_keyboard`/`teleop_twist_joy` physically drives the wheels.
   (`ball_detector` subscribes to the camera topic and stays silently uninitialized,
   not crashed, if it's missing — check explicitly rather than discovering it later.)
@@ -107,12 +141,18 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   `LaserScanRangeFilter`/equivalent clearing the mast's known bearing range) —
   do this before the SLAM mapping step, not after; an unmasked scan corrupts the
   map, not just the costmap.
-- [ ] Confirm — don't re-measure from scratch — the URDF footprint against the vendor
-  drawing (`docs/img/waveshare_ugv_pt_dimensions.png`): 253×231 mm footprint, 289 mm
-  height w/ mast, 126 mm wheelbase, 25 mm ground clearance. Current URDF (230×252 mm)
-  is already close — geometry is not the gap. (6-wheel skid-steer vs. the URDF's
-  4-wheel diff-drive model IS a real gap — the EKF node in A5 below is the mitigation,
-  not a new task here.)
+- [ ] Confirm the URDF footprint against the vendor drawing
+  (`docs/img/waveshare_ugv_pt_dimensions.png`): 253×231 mm footprint, 289 mm height
+  w/ mast, 126 mm wheelbase, 25 mm ground clearance. **This doc previously claimed the
+  URDF was "230×252 mm, already close" — checked against the actual code 2026-08-05
+  and that's wrong: `ugv_pt.urdf.xacro`'s `base_length`/`base_width` are 0.35/0.30 m
+  (350×300 mm), unchanged since Session 9, and Nav2's real costmap footprint is a
+  circular `robot_radius: 0.24` (480 mm diameter) — not a rectangle at all. Whether
+  350×300 mm (or the 480 mm circular footprint) is "close enough" to the real
+  253×231 mm chassis hasn't actually been re-verified — do that here, don't assume
+  the old "geometry is not the gap" conclusion still holds.** (6-wheel skid-steer vs.
+  the URDF's 4-wheel diff-drive model IS a separate, already-known real gap — the EKF
+  node in A5 below is the mitigation, not a new task here.)
 
 ### A3. Build the real-room SLAM map
 
@@ -136,6 +176,30 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   # Creates: maps/bedroom_real.pgm + maps/bedroom_real.yaml
   ```
 - [ ] Commit `bedroom_real.pgm`/`.yaml`.
+- [ ] **Determine and set the real AMCL seed pose — found 2026-08-05, not yet done
+  anywhere.** `nav2_params.yaml`'s `amcl.initial_pose` is ONE shared block for
+  sim/HIL/real robot; today it's hardcoded to the SIM map's coordinates
+  (`x: -1.276, y: 1.2, yaw: 1.5708`, commented "hallway entrance — robot_001 spawn
+  point" — `living_room.yaml`'s frame, meaningless once `bedroom_real.yaml` exists).
+  `set_initial_pose: true` means this value is what AMCL seeds from on EVERY boot,
+  unattended — no RViz "2D Pose Estimate" click happens in the automated systemd
+  flow, so this IS the entire localization strategy, not a one-time nicety.
+  Procedure:
+  1. Physically mark the exact spot + facing direction the robot will always start
+     from day-to-day — this becomes B1's "known starting position, documented
+     heading." Write it down / tape a mark; don't rely on memory.
+  2. With `bedroom_real.yaml` loaded, bring up Nav2 on the Jetson
+     (`nav2_only_launch.py use_sim_time:=false map:=.../bedroom_real.yaml ...`); run
+     RViz2 from the workstation over WiFi against the robot's topics (same
+     remote-viz pattern as any GUI-watched HIL run).
+  3. Place the robot at the marked spot, give AMCL a rough seed via RViz's "2D Pose
+     Estimate," let the particle cloud converge (drive a short loop if needed).
+  4. Read the converged pose: `ros2 topic echo /robot_001/amcl_pose --once` (or read
+     it off RViz) — record x, y, yaw.
+  5. Update `nav2_params.yaml`'s `amcl.initial_pose` block with these real values,
+     and fix the stale `# Map: maps/living_room.pgm` / `# Initial pose: hallway
+     entrance` comments above it to describe the real map instead.
+  6. Commit the updated `nav2_params.yaml` alongside the map/HSV config.
 
 ### A4. Calibrate ball-color detection for the real camera
 
