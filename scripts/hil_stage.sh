@@ -18,6 +18,10 @@
 #                     STATE_DIR (CI evidence). This is the ONE stage-4 test step.
 #   teardown          kill both sides (safe to run any time; used by CI's if:always() step)
 #   restore-checkout  checkout main on the Jetson (run once at the very end)
+#   smoke <sha>       Bench smoke test (attended — prompts for ball placement over
+#                      this same SSH session). Real-robot-only (USE_SIM_TIME=false).
+#   smoke-ci <sha>     CI-only counterpart — non-interactive, GzBallOps, USE_SIM_TIME=true.
+#                      Never run by hand; ci.yml's stage-4-hil is the only caller.
 set -euo pipefail
 
 JETSON_USER="${JETSON_USER:-mike}"
@@ -223,6 +227,75 @@ ws_source() {
   export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0
 }
 
+smoke() {
+  # Bench smoke test (real-robot driver + smoke-test design spec, 2026-08-05/06):
+  # runs ROBOT_MODE=smoke_test on the Jetson, over SSH — the ONLY place this mode is
+  # ever triggered from. robot_boot.sh (power-on) hardcodes ROBOT_MODE=mission and
+  # never calls this — this is the deliberate, workstation-triggered counterpart.
+  # ATTENDED: this prompts you, via THIS terminal, to place the yellow ball.
+  require_ip
+  local sha="${1:?usage: hil_stage.sh smoke <git-sha>}"
+  sync "$sha"
+
+  local image="ghcr.io/sdfinn/autonomous-fleet-testbed:${sha}"
+  echo "=== [smoke] checking ${image} is present locally on the Jetson ==="
+  if ! jssh "docker image inspect ${image} >/dev/null 2>&1"; then
+    echo "FATAL: ${image} is not present locally on the Jetson — sync to a sha a" >&2
+    echo "green stage-3-arm64 run already pushed, or docker pull it by hand first." >&2
+    exit 1
+  fi
+
+  echo "=== [smoke] running ROBOT_MODE=smoke_test — you will be prompted to place"
+  echo "the yellow ball when the correlation check starts =="
+  # -t (this ssh) + -it (the remote docker run), unlike jssh() (every OTHER
+  # subcommand here is unattended) — so tools/smoke_test.py's operator prompt
+  # (design spec: 'interactive prompting is deliberate here') actually reaches you.
+  # SERIAL_DEVICE is passed BOTH as --device (the host->container device passthrough)
+  # AND as -e (container_entrypoint.sh's own smoke_test branch reads it from its
+  # environment to build the serial_device:= launch arg) — without the -e, an
+  # operator override of the default /dev/ttyUSB0 would map the right device into
+  # the container but the launch would still look for the wrong (default) path.
+  ssh -t -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
+    "${JETSON_USER}@${JETSON_IP}" \
+    "docker rm -f hil_smoke_test 2>/dev/null || true; \
+     docker run --rm --name hil_smoke_test --network host --ipc host -it \
+       --device=${SERIAL_DEVICE:-/dev/ttyUSB0} \
+       -v \$HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
+       -v \$HOME/fleet-ci-data:/root/fleet-ci-data \
+       -e USE_SIM_TIME=false -e HSV_CONFIG_FILE=hsv_realcam.yaml \
+       -e SERIAL_DEVICE=${SERIAL_DEVICE:-/dev/ttyUSB0} -e SERIAL_BAUD=${SERIAL_BAUD:-115200} \
+       -e ROBOT_MODE=smoke_test -e RUNNER_TYPE=real_robot \
+       ${image} bash /ros2_ws/scripts/container_entrypoint.sh"
+}
+
+smoke_ci() {
+  # CI-only counterpart to smoke() — non-interactive (no -t, no operator prompt):
+  # SMOKE_BALL_OPS=gz makes tools/smoke_test.py place the ball itself via GzBallOps,
+  # same mechanism mission2_day.py's own CI regression already uses. Never used from
+  # a human bench session — that's smoke(), above. USE_SIM_TIME=true so
+  # sensors_only_launch.py skips esp32_driver/ldlidar_ros2/depthai-ros entirely and
+  # relies on the WORKSTATION's Gazebo bridge reaching the Jetson over DDS — the
+  # same cross-machine pattern day()'s mission-mode container run already uses.
+  # Precondition: run() (sim_up) must already be up, same as day().
+  require_ip
+  local sha="${1:?usage: hil_stage.sh smoke-ci <git-sha>}"
+
+  local image="ghcr.io/sdfinn/autonomous-fleet-testbed:${sha}"
+  if ! jssh "docker image inspect ${image} >/dev/null 2>&1"; then
+    echo "FATAL: ${image} is not present locally on the Jetson" >&2
+    exit 1
+  fi
+
+  jssh "docker rm -f hil_smoke_test_ci 2>/dev/null || true; \
+        docker run --rm --name hil_smoke_test_ci --network host --ipc host \
+          -v \$HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
+          -v \$HOME/fleet-ci-data:/root/fleet-ci-data \
+          -e USE_SIM_TIME=true -e HSV_CONFIG_FILE=hsv_gazebo.yaml \
+          -e ROBOT_MODE=smoke_test -e SMOKE_BALL_OPS=gz -e RUNNER_TYPE=hil_jetson \
+          -e COMMIT_SHA=${sha} -e CI_RUN_NUMBER=${CI_RUN_NUMBER:-} \
+          ${image} bash /ros2_ws/scripts/container_entrypoint.sh"
+}
+
 teardown() {
   echo '=== [teardown] both sides ==='
   if [ -n "${JETSON_IP:-}" ]; then
@@ -243,7 +316,11 @@ teardown() {
     # host-side pkill above. A fixed --name (hil_mission) lets teardown reach it directly.
     # Best-effort: no-op when docker is absent or nothing is running, and must never fail
     # teardown itself.
-    jssh "command -v docker >/dev/null 2>&1 && docker rm -f hil_mission hil_mission2 >/dev/null 2>&1 || true" || true
+    # hil_smoke_test/hil_smoke_test_ci added alongside (smoke/smoke-ci, 2026-08-06) —
+    # same reasoning: the container's own PID namespace hides it from the host-side
+    # pkill above, and a job cancelled mid-run (docker run --rm doesn't clean up if
+    # the ssh session dies abnormally) would otherwise leak an orphaned container.
+    jssh "command -v docker >/dev/null 2>&1 && docker rm -f hil_mission hil_mission2 hil_smoke_test hil_smoke_test_ci >/dev/null 2>&1 || true" || true
   fi
   # Safety net (Task 11): remove any Mission 2 ball still in the workstation Gazebo before
   # we kill it, so an aborted react run (Task 12+) never leaves a ball in the world for the
@@ -291,7 +368,7 @@ restore_checkout() {
   echo '=== [restore-checkout] Jetson repo back on main (fast-forwarded when reachable) ==='
 }
 
-cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|day|teardown|restore-checkout}"
+cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|day|teardown|restore-checkout|smoke <sha>|smoke-ci <sha>}"
 shift || true
 case "$cmd" in
   discover)         discover ;;
@@ -301,5 +378,7 @@ case "$cmd" in
   day)              day ;;
   teardown)         teardown ;;
   restore-checkout) restore_checkout ;;
+  smoke)            smoke "$@" ;;
+  smoke-ci)         smoke_ci "$@" ;;
   *) echo "FATAL: unknown subcommand '$cmd'" >&2; exit 1 ;;
 esac
