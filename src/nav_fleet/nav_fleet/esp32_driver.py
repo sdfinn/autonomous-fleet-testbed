@@ -63,6 +63,11 @@ class Esp32Driver(Node):
         self._last_base_info_time = None
         self._last_cmd_time = time.time()
         self._stopped = False
+        # Per-node stop signal for _read_loop — rclpy.ok() alone is process-global,
+        # so it never stops this node's own reader thread on destroy_node() (only on
+        # process exit, which happens to be the only case today since main() runs a
+        # single node per process — see review finding, Task 2 fix round).
+        self._stop_event = threading.Event()
 
         self.odom_pub = self.create_publisher(Odometry, '/robot_001/odom', 10)
         self.imu_pub = self.create_publisher(Imu, '/robot_001/imu/data', 10)
@@ -104,8 +109,18 @@ class Esp32Driver(Node):
             self._send(encode_velocity_cmd(0.0, 0.0))
             self.get_logger().warn('esp32_driver: cmd_vel watchdog tripped — zero-velocity sent')
 
+    def destroy_node(self):
+        # Signal the reader thread to stop and wait for it before tearing down the
+        # node it depends on (get_clock()/get_logger() via _publish_odom/_publish_imu)
+        # — join happens BEFORE super().destroy_node() so the thread never touches a
+        # half-destroyed node. Bounded by the mocked/real serial readline's own
+        # timeout=1.0s, so this is a short, deterministic wait, not an indefinite one.
+        self._stop_event.set()
+        self._reader_thread.join(timeout=1.5)
+        super().destroy_node()
+
     def _read_loop(self):
-        while rclpy.ok():
+        while rclpy.ok() and not self._stop_event.is_set():
             try:
                 raw = self._ser.readline()
             except serial.SerialException as exc:
