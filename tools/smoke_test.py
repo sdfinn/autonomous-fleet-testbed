@@ -157,7 +157,15 @@ def check_ball_correlation(node, ball_ops, known_distance_m=KNOWN_DISTANCE_M,
         # rather than inventing a new one; see calibrate_ball_range.py's own
         # "facing north" comment.
         truth = get_ground_truth_xy()
-        assert truth is not None, 'sim not up / no ground truth available for GzBallOps placement'
+        if truth is None:
+            return {
+                'pass': False,
+                'reason': 'no ground truth available (Gazebo not running?)',
+                'lidar_min_range_m': None,
+                'known_distance_m': known_distance_m,
+                'yellow_ball_detected': False,
+                'camera_estimated_range_m': None,
+            }
         rx, ry = truth
         ryaw = math.pi / 2
         bx, by = compute_ball_placement_xy(rx, ry, ryaw, known_distance_m)
