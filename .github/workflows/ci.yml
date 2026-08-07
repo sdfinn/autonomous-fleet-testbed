@@ -363,6 +363,90 @@ jobs:
           path: /tmp/stage2_mission2_day/mission2_day.log
           if-no-files-found: warn
 
+      # Real-robot driver + bench smoke-test regression (2026-08-06, Task 10 of the
+      # esp32_driver/sensors_only_launch.py/tools.smoke_test plan): proves the
+      # smoke-test MACHINERY still runs end-to-end (topic sanity, photo, known-
+      # distance ball correlation, motion, summary+exit) against sim — never real
+      # ESP32/lidar/camera hardware, which can't be exercised in CI at all. The sweep
+      # step below tears down the heavier sim_launch.py (Gazebo+Nav2) stack the
+      # earlier steps in this job brought up, since the smoke test needs only the
+      # lighter sensors_only_launch.py stack (no Nav2/AMCL) — matching
+      # sensors_only_launch.py's own design intent.
+      - name: Sweep stale sim processes before smoke-test regression
+        run: |
+          pkill -9 -f "parameter_bridge|component_container_isolated|ekf_node|ball_detector" || true
+          pkill -9 -f "static_transform_publisher|robot_state_publisher" || true
+          pkill -f "gz sim" || true
+          sleep 3
+
+      - name: Bring up sim + sensors-only stack (smoke-test regression, sim)
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          bash scripts/regen_cyclonedds_config.sh
+          export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0
+          setsid ros2 launch src/nav_fleet/launch/sim_only_launch.py \
+            > /tmp/smoke_sim.log 2>&1 &
+          deadline=$((SECONDS + 60))
+          until grep -q 'gz.msgs.Clock' /tmp/smoke_sim.log 2>/dev/null; do
+            if (( SECONDS >= deadline )); then
+              echo "FATAL: sim/bridge not up within 60s" >&2
+              tail -n 40 /tmp/smoke_sim.log >&2 || true
+              exit 1
+            fi
+            sleep 2
+          done
+          sleep 3
+          setsid ros2 launch src/nav_fleet/launch/sensors_only_launch.py \
+            use_sim_time:=true > /tmp/smoke_sensors.log 2>&1 &
+          deadline=$((SECONDS + 30))
+          until grep -q 'ball_detector up' /tmp/smoke_sensors.log 2>/dev/null; do
+            if (( SECONDS >= deadline )); then
+              echo "FATAL: sensors_only_launch.py not up within 30s" >&2
+              tail -n 40 /tmp/smoke_sensors.log >&2 || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Run smoke-test machinery regression (sim)
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          source ~/fleet-env/bin/activate   # coverage isn't on PATH otherwise — GHA
+                                             # steps don't source .bashrc (same reason
+                                             # the pytest step above needs this)
+          coverage run -a -m tools.smoke_test --ball-ops gz --runner-type local \
+            --commit-sha ${{ github.sha }} --ci-run-number ${{ github.run_number }}
+
+      - name: Show smoke-test regression logs on failure
+        if: failure()
+        run: |
+          echo '--- sim log ---'; tail -n 60 /tmp/smoke_sim.log || true
+          echo '--- sensors log ---'; tail -n 60 /tmp/smoke_sensors.log || true
+
+      - name: Teardown smoke-test regression stack
+        if: always()
+        run: |
+          # Resolve the real PID via pgrep AFTER the fact (bracket trick avoids
+          # self-match — see src/nav_fleet/CLAUDE.md's pkill/pgrep self-match gotcha
+          # and hil_stage.sh's teardown(), which uses this identical pattern) —
+          # NOT bash's own $! from the launch step. Verified live (2026-08-06): a
+          # `setsid cmd &` background job's $! is the setsid wrapper's own PID, which
+          # forks and exits immediately — it is NOT the real launched process's PID/
+          # PGID, so `kill -INT -$!` silently signals nothing. setsid still gives the
+          # real process pid == pgid, which is what makes `kill -INT -- "-$pid"` work.
+          sensors_pid=$(pgrep -f '[s]ensors_only_launch' | head -1 || true)
+          if [ -n "$sensors_pid" ]; then
+            kill -INT -- "-${sensors_pid}" 2>/dev/null || true
+          fi
+          sleep 2
+          sim_pid=$(pgrep -f '[s]im_only_launch' | head -1 || true)
+          if [ -n "$sim_pid" ]; then
+            kill -INT -- "-${sim_pid}" 2>/dev/null || true
+          fi
+          sleep 3
+
       # Combined stage-1+stage-2 coverage (2026-08-01, pure-local) — see the matching
       # comment in stage-1-quality. This stage's .coverage already includes both the
       # pytest integration tests AND the mission2_day in-process run (coverage run -a
@@ -551,6 +635,23 @@ jobs:
 
       - name: "Mission 2 day (HIL orchestrator: no_ball → yellow → red, Task 13d)"
         run: scripts/hil_stage.sh day
+
+      - name: Run smoke-test machinery regression (HIL container)
+        # Real-robot driver + bench smoke-test regression (2026-08-06, Task 10):
+        # non-interactive counterpart to `hil_stage.sh smoke` — SMOKE_BALL_OPS=gz
+        # places the ball itself (no operator prompt), USE_SIM_TIME=true so
+        # sensors_only_launch.py skips esp32_driver/ldlidar_ros2/depthai-ros and
+        # relies on the workstation's Gazebo bridge, same cross-machine pattern the
+        # day's mission-mode container run already uses. Placed right after `day`
+        # (not after `run`) so it reuses the exact same up stack `day` just used —
+        # `smoke-ci`'s own precondition (hil_stage.sh) is "run() (sim_up) must
+        # already be up, same as day()", which still holds here since teardown
+        # doesn't happen until the job's very last "Teardown (both sides,
+        # unconditional)" step, well after this one.
+        env:
+          CI_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          scripts/hil_stage.sh smoke-ci ${{ github.sha }}
 
       - name: Record HIL timing
         if: always()
