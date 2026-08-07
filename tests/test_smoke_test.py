@@ -24,7 +24,7 @@ from tools.smoke_test import (check_ball_correlation, check_motion, check_photo,
                               check_topic, compute_ball_placement_xy, is_degenerate_scan,
                               load_robot_profile, OperatorPlaceBallOps, is_degenerate_image,
                               _is_degenerate_imu, _is_degenerate_image_msg,
-                              _is_degenerate_odom, _print_summary)
+                              _is_degenerate_odom, _print_summary, run_smoke_test)
 
 
 def _make_test_image_msg(width=4, height=4, color=None):
@@ -366,3 +366,111 @@ def test_print_summary_reports_pass_and_fail(capsys):
     assert '[PASS] odom:' in captured.out
     assert '[FAIL] motion:' in captured.out
     assert '=== Overall: FAIL ===' in captured.out
+
+
+# --- run_smoke_test orchestration tests -------------------------------------
+#
+# run_smoke_test() calls rclpy.init()/rclpy.shutdown() itself, which would
+# conflict with this file's own module-scoped, autouse `ros_context` fixture
+# (already holding a live rclpy context for the whole file) if it actually ran.
+# Patching the WHOLE `tools.smoke_test.rclpy` module reference to a MagicMock
+# makes every rclpy.* call inside run_smoke_test (init/create_node/shutdown) a
+# no-op mock call instead — no second real init, no real node. The individual
+# check_* functions (which already have their own real-publisher tests above)
+# are stubbed via unittest.mock.patch so these tests exercise ONLY
+# run_smoke_test's own orchestration logic: call order/completeness, the
+# overall_pass computation, and the log_smoke_test_run call — not the checks
+# themselves.
+
+def test_run_smoke_test_all_checks_pass_yields_overall_pass_true():
+    with patch('tools.smoke_test.rclpy') as mock_rclpy, \
+         patch('tools.smoke_test.smoke_test_log') as mock_log, \
+         patch('tools.smoke_test.check_topic', return_value={'pass': True}) as mock_check_topic, \
+         patch('tools.smoke_test.check_photo', return_value={'pass': True}) as mock_check_photo, \
+         patch('tools.smoke_test.check_ball_correlation',
+               return_value={'pass': True}) as mock_check_ball, \
+         patch('tools.smoke_test.check_motion', return_value={'pass': True}) as mock_check_motion:
+        mock_rclpy.create_node.return_value = MagicMock()
+        result = run_smoke_test('robot_profiles/jetson_ugv_pt.yaml', ball_ops=MagicMock(),
+                                runner_type='local', commit_sha='abc123', ci_run_number=42,
+                                db_path='/tmp/fake_smoke.db')
+
+    assert result is True
+    assert mock_check_topic.call_count == 4  # odom, scan, camera, imu
+    mock_check_photo.assert_called_once()
+    mock_check_ball.assert_called_once()
+    mock_check_motion.assert_called_once()
+
+    mock_log.log_smoke_test_run.assert_called_once()
+    _, kwargs = mock_log.log_smoke_test_run.call_args
+    assert kwargs['overall_pass'] is True
+    assert set(kwargs['checks'].keys()) == {
+        'odom', 'scan', 'camera', 'imu', 'photo', 'ball_correlation', 'motion'}
+
+
+def test_run_smoke_test_runs_every_check_even_after_early_failure():
+    # The most important orchestration requirement (design spec §5, and the
+    # implementation's own docstring): "run every check regardless of earlier
+    # failures." Making the FIRST checks (the 4 check_topic calls) all fail
+    # and then asserting photo/ball_correlation/motion were STILL each called
+    # exactly once is what actually distinguishes this from a short-circuiting
+    # implementation -- a test that only inspected the final overall_pass
+    # boolean would pass identically either way.
+    with patch('tools.smoke_test.rclpy') as mock_rclpy, \
+         patch('tools.smoke_test.smoke_test_log') as mock_log, \
+         patch('tools.smoke_test.check_topic', return_value={'pass': False}) as mock_check_topic, \
+         patch('tools.smoke_test.check_photo', return_value={'pass': True}) as mock_check_photo, \
+         patch('tools.smoke_test.check_ball_correlation',
+               return_value={'pass': True}) as mock_check_ball, \
+         patch('tools.smoke_test.check_motion', return_value={'pass': True}) as mock_check_motion:
+        mock_rclpy.create_node.return_value = MagicMock()
+        result = run_smoke_test('robot_profiles/jetson_ugv_pt.yaml', ball_ops=MagicMock())
+
+    assert result is False
+    assert mock_check_topic.call_count == 4
+    mock_check_photo.assert_called_once()
+    mock_check_ball.assert_called_once()
+    mock_check_motion.assert_called_once()
+    mock_log.log_smoke_test_run.assert_called_once()
+    assert mock_log.log_smoke_test_run.call_args.kwargs['overall_pass'] is False
+
+
+def test_run_smoke_test_logs_full_checks_dict_and_passthrough_args():
+    topic_results = [
+        {'pass': True, 'measured_hz': 51.0},   # odom
+        {'pass': True, 'measured_hz': 12.0},   # scan
+        {'pass': False, 'measured_hz': 2.0},   # camera -- fails
+        {'pass': True, 'measured_hz': 100.0},  # imu
+    ]
+    photo_result = {'pass': True, 'path': '/tmp/x.png', 'degenerate': False}
+    ball_result = {'pass': True, 'lidar_min_range_m': 0.3}
+    motion_result = {'pass': True, 'forward_delta_m': 0.05, 'turn_delta_rad': 0.2}
+
+    with patch('tools.smoke_test.rclpy') as mock_rclpy, \
+         patch('tools.smoke_test.smoke_test_log') as mock_log, \
+         patch('tools.smoke_test.check_topic', side_effect=topic_results), \
+         patch('tools.smoke_test.check_photo', return_value=photo_result), \
+         patch('tools.smoke_test.check_ball_correlation', return_value=ball_result), \
+         patch('tools.smoke_test.check_motion', return_value=motion_result):
+        mock_rclpy.create_node.return_value = MagicMock()
+        result = run_smoke_test('robot_profiles/jetson_ugv_pt.yaml', ball_ops=MagicMock(),
+                                runner_type='hil_jetson', commit_sha='deadbeef',
+                                ci_run_number=7, db_path='/tmp/other_smoke.db')
+
+    assert result is False  # camera check failed -> overall FAIL
+    mock_log.log_smoke_test_run.assert_called_once()
+    kwargs = mock_log.log_smoke_test_run.call_args.kwargs
+    assert kwargs['runner_type'] == 'hil_jetson'
+    assert kwargs['commit_sha'] == 'deadbeef'
+    assert kwargs['ci_run_number'] == 7
+    assert kwargs['db_path'] == '/tmp/other_smoke.db'
+    assert kwargs['overall_pass'] is False
+
+    checks = kwargs['checks']
+    assert checks['odom'] == topic_results[0]
+    assert checks['scan'] == topic_results[1]
+    assert checks['camera'] == topic_results[2]
+    assert checks['imu'] == topic_results[3]
+    assert checks['photo'] == photo_result
+    assert checks['ball_correlation'] == ball_result
+    assert checks['motion'] == motion_result
