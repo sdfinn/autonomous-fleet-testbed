@@ -34,6 +34,7 @@ setup(
             'nav_runner = nav_fleet.nav_runner:main',
             'metrics_collector = nav_fleet.metrics_collector:main',
             'ball_detector = nav_fleet.ball_detector:main',
+            'esp32_driver = nav_fleet.esp32_driver:main',
         ],
     },
 )

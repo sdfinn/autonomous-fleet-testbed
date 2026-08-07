@@ -11,6 +11,7 @@ SHELL ["/bin/bash", "-c"]
 # EKF now runs inside this image — previously only ever installed on bare hosts.
 RUN apt-get update && apt-get install -y \
     python3-pip \
+    python3-serial \
     ros-jazzy-navigation2 \
     ros-jazzy-nav2-bringup \
     ros-jazzy-rmw-cyclonedds-cpp \

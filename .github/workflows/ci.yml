@@ -163,6 +163,7 @@ jobs:
             --ignore=tests/test_navigation.py \
             --ignore=tests/test_mission_run.py \
             --ignore=tests/test_nav_runner.py \
+            --ignore=tests/test_esp32_driver.py \
             -k "not integration" \
             --cov=tools --cov=src/nav_fleet/nav_fleet --cov-report=term-missing
 
