@@ -226,6 +226,10 @@ class JetsonExecutor(MissionExecutor):
             "-v $HOME/fleet-ci-data:/root/fleet-ci-data "
             "-e USE_SIM_TIME=true -e HSV_CONFIG_FILE=hsv_gazebo.yaml "
             "-e NAV2_MAP_FILE=living_room.yaml "
+            # ROBOT_MODE is required by container_entrypoint.sh (2026-08-06 smoke-test
+            # plan, Task 8) — mission, always: this executor only ever runs the daily
+            # mission2 day, never the bench smoke test (that's hil_stage.sh smoke-ci).
+            "-e ROBOT_MODE=mission "
             f"-e RUNNER_TYPE=hil_jetson -e POWER_MODE={POWER_MODE_LABEL} "
             f"{self.image} bash /ros2_ws/scripts/container_entrypoint.sh")
         out_path = os.path.join(self.state_dir, 'day.out')

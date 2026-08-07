@@ -11,13 +11,17 @@
 # day, exit. One-shot — no long-lived container, no docker exec.
 #
 # Env vars the CALLER (tools/mission2_day.py's JetsonExecutor for HIL,
-# scripts/robot_boot.sh for the real robot) must set via `docker run -e`:
-#   USE_SIM_TIME       'true' (HIL) or 'false' (real robot)
-#   HSV_CONFIG_FILE    filename under src/nav_fleet/config/
-#                      (hsv_gazebo.yaml or hsv_realcam.yaml)
-#   NAV2_MAP_FILE      filename under src/nav_fleet/maps/
-#                      (living_room.yaml or bedroom_real.yaml)
-# Optional:
+# scripts/robot_boot.sh for the real robot, scripts/hil_stage.sh smoke/smoke-ci for
+# the bench smoke test) must set via `docker run -e`:
+#   ROBOT_MODE          'mission' or 'smoke_test' — REQUIRED, no implicit default
+#                        (design spec §ROBOT_MODE branching: standalone power-on can
+#                        never run a smoke test — robot_boot.sh hardcodes 'mission').
+#   USE_SIM_TIME        'true' (HIL) or 'false' (real robot) — both modes
+#   HSV_CONFIG_FILE     filename under src/nav_fleet/config/
+#                       (hsv_gazebo.yaml or hsv_realcam.yaml) — both modes
+#   NAV2_MAP_FILE       filename under src/nav_fleet/maps/
+#                       (living_room.yaml or bedroom_real.yaml) — mission mode only
+# Optional (mission mode):
 #   MISSION2_SELF_REPORT=1   real-robot only — mission_runner.py --day logs its
 #                            own self-reported PASS/FAIL per leg (no ground
 #                            truth, no judging — that harness never runs in this
@@ -25,6 +29,16 @@
 #                            workstation's JetsonExecutor judges from the
 #                            printed MISSION2_DAY_RESULT line instead.
 #   RUNNER_TYPE, POWER_MODE  passed through to telemetry (unchanged convention)
+# Optional (smoke_test mode only):
+#   SERIAL_DEVICE       ESP32 sub-controller serial device (default /dev/ttyUSB0)
+#   SERIAL_BAUD          (default 115200)
+#   LIDAR_LAUNCH_FILE    absolute path to ldlidar_ros2's launch file (default '' —
+#                        skipped even in real-hardware mode until wired in)
+#   CAMERA_LAUNCH_FILE   absolute path to depthai-ros's launch file (default '' —
+#                        skipped even in real-hardware mode until wired in)
+#   SMOKE_BALL_OPS       'operator' (default, real bench) or 'gz' (sim/CI regression)
+#   RUNNER_TYPE          forwarded to tools.smoke_test --runner-type (default 'local')
+#   COMMIT_SHA, CI_RUN_NUMBER   forwarded to tools.smoke_test when set (CI only)
 #
 # Must be run with `docker run --network host --ipc host` — shares the host's
 # network namespace, which is what lets regen_cyclonedds_config.sh see the
@@ -60,29 +74,91 @@ export CYCLONEDDS_URI="file://${CYCLONEDDS_CONFIG_PATH}"
 bash /ros2_ws/scripts/regen_cyclonedds_config.sh
 
 mkdir -p /ros2_ws/reports
-NAV2_LOG="/ros2_ws/reports/nav2_container_$(date +%Y%m%dT%H%M%S).log"
-rm -f "$NAV2_LOG"
-# Same (subshell) + < /dev/null pattern robot_boot.sh already uses and documents:
-# without the parens the backgrounded job inherits this script's own stdout/stderr
-# and holds the shell open forever; < /dev/null stops it inheriting stdin.
-(nohup ros2 launch nav_fleet nav2_only_launch.py \
-   use_sim_time:="${USE_SIM_TIME}" \
-   hsv_config:="/ros2_ws/src/nav_fleet/config/${HSV_CONFIG_FILE}" \
-   map:="/ros2_ws/src/nav_fleet/maps/${NAV2_MAP_FILE}" \
-   > "$NAV2_LOG" 2>&1 < /dev/null &)
 
-echo "=== [container-entrypoint] waiting up to 120s for Nav2 to report active ==="
-deadline=$((SECONDS + 120))
-until [ "${count:-0}" -ge 2 ]; do
-  if (( SECONDS >= deadline )); then
-    echo "FATAL: Nav2 not active within 120s — see $NAV2_LOG" >&2
-    tail -n 40 "$NAV2_LOG" >&2 || true
+# ROBOT_MODE is required, no implicit default — fail loudly if unset (design spec
+# §ROBOT_MODE branching: "Standalone power-on can never run a smoke test";
+# robot_boot.sh hardcodes ROBOT_MODE=mission, never a variable that could be left
+# set wrong).
+: "${ROBOT_MODE:?ROBOT_MODE must be set to 'mission' or 'smoke_test' — no implicit default}"
+
+case "$ROBOT_MODE" in
+  mission)
+    NAV2_LOG="/ros2_ws/reports/nav2_container_$(date +%Y%m%dT%H%M%S).log"
+    rm -f "$NAV2_LOG"
+    # Same (subshell) + < /dev/null pattern robot_boot.sh already uses and documents:
+    # without the parens the backgrounded job inherits this script's own stdout/stderr
+    # and holds the shell open forever; < /dev/null stops it inheriting stdin.
+    (nohup ros2 launch nav_fleet nav2_only_launch.py \
+       use_sim_time:="${USE_SIM_TIME}" \
+       hsv_config:="/ros2_ws/src/nav_fleet/config/${HSV_CONFIG_FILE}" \
+       map:="/ros2_ws/src/nav_fleet/maps/${NAV2_MAP_FILE}" \
+       > "$NAV2_LOG" 2>&1 < /dev/null &)
+
+    echo "=== [container-entrypoint] waiting up to 120s for Nav2 to report active ==="
+    deadline=$((SECONDS + 120))
+    until [ "${count:-0}" -ge 2 ]; do
+      if (( SECONDS >= deadline )); then
+        echo "FATAL: Nav2 not active within 120s — see $NAV2_LOG" >&2
+        tail -n 40 "$NAV2_LOG" >&2 || true
+        exit 1
+      fi
+      sleep 3
+      count=$(grep -c 'Managed nodes are active' "$NAV2_LOG" 2>/dev/null || true)
+      count="${count:-0}"
+    done
+    echo "=== [container-entrypoint] Nav2 active — starting mission2 day ==="
+    python3 -m nav_fleet.mission_runner --day
+    ;;
+
+  smoke_test)
+    # Real-robot driver + bench smoke-test design spec (2026-08-05/06): the THIRD
+    # ROBOT_MODE, no Nav2/map — proves the driver layer works before Nav2 ever
+    # trusts it. Never reached from robot_boot.sh (power-on) — only from
+    # scripts/hil_stage.sh's smoke/smoke-ci subcommands, deliberately.
+    SENSORS_LOG="/ros2_ws/reports/sensors_container_$(date +%Y%m%dT%H%M%S).log"
+    rm -f "$SENSORS_LOG"
+    # ros2 launch's own CLI arg parser hard-rejects any argument ending in ':=' (an
+    # empty value) — "malformed launch argument '...', expected format
+    # '<name>:=<value>'" (confirmed against /opt/ros/jazzy/.../ros2launch/api/api.py's
+    # parse_launch_arguments: count == 1 and argument.endswith(':=') raises). Since
+    # LIDAR_LAUNCH_FILE/CAMERA_LAUNCH_FILE are unset by design as of 2026-08-06
+    # (neither driver is wired in yet), passing them unconditionally would crash
+    # every smoke_test run in the current default configuration. Omit the arg
+    # entirely when empty instead — sensors_only_launch.py's own
+    # DeclareLaunchArgument(default_value='') already gives the same effect.
+    SENSORS_LAUNCH_ARGS=(
+      use_sim_time:="${USE_SIM_TIME}"
+      hsv_config:="/ros2_ws/src/nav_fleet/config/${HSV_CONFIG_FILE}"
+      serial_device:="${SERIAL_DEVICE:-/dev/ttyUSB0}"
+      serial_baud:="${SERIAL_BAUD:-115200}"
+    )
+    [ -n "${LIDAR_LAUNCH_FILE:-}" ] && SENSORS_LAUNCH_ARGS+=( lidar_launch_file:="${LIDAR_LAUNCH_FILE}" )
+    [ -n "${CAMERA_LAUNCH_FILE:-}" ] && SENSORS_LAUNCH_ARGS+=( camera_launch_file:="${CAMERA_LAUNCH_FILE}" )
+    (nohup ros2 launch nav_fleet sensors_only_launch.py \
+       "${SENSORS_LAUNCH_ARGS[@]}" \
+       > "$SENSORS_LOG" 2>&1 < /dev/null &)
+
+    echo "=== [container-entrypoint] waiting up to 60s for the sensors stack to report up ==="
+    deadline=$((SECONDS + 60))
+    until [ "${count:-0}" -ge 1 ]; do
+      if (( SECONDS >= deadline )); then
+        echo "FATAL: sensors_only_launch.py not up within 60s — see $SENSORS_LOG" >&2
+        tail -n 40 "$SENSORS_LOG" >&2 || true
+        exit 1
+      fi
+      sleep 2
+      count=$(grep -c 'ball_detector up' "$SENSORS_LOG" 2>/dev/null || true)
+      count="${count:-0}"
+    done
+    echo "=== [container-entrypoint] sensors up — running smoke test ==="
+    python3 -m tools.smoke_test --runner-type "${RUNNER_TYPE:-local}" \
+      --ball-ops "${SMOKE_BALL_OPS:-operator}" \
+      ${COMMIT_SHA:+--commit-sha "$COMMIT_SHA"} \
+      ${CI_RUN_NUMBER:+--ci-run-number "$CI_RUN_NUMBER"}
+    ;;
+
+  *)
+    echo "FATAL: ROBOT_MODE must be 'mission' or 'smoke_test', got '${ROBOT_MODE}'" >&2
     exit 1
-  fi
-  sleep 3
-  count=$(grep -c 'Managed nodes are active' "$NAV2_LOG" 2>/dev/null || true)
-  count="${count:-0}"
-done
-echo "=== [container-entrypoint] Nav2 active — starting mission2 day ==="
-
-python3 -m nav_fleet.mission_runner --day
+    ;;
+esac

@@ -272,6 +272,11 @@ def test_run_day_dispatches_the_container_entrypoint(monkeypatch, tmp_path):
     assert '-e USE_SIM_TIME=true' in ssh_cmd[-1]
     assert '-e HSV_CONFIG_FILE=hsv_gazebo.yaml' in ssh_cmd[-1]
     assert '-e NAV2_MAP_FILE=living_room.yaml' in ssh_cmd[-1]
+    # container_entrypoint.sh's ROBOT_MODE is now required (2026-08-06 smoke-test
+    # plan, Task 8) — without this, every HIL mission run dies immediately with
+    # "ROBOT_MODE must be set". mission mode, always — this executor only ever
+    # runs the daily mission2 day, never the bench smoke test.
+    assert '-e ROBOT_MODE=mission' in ssh_cmd[-1]
     assert 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef' in ssh_cmd[-1]
 
 

@@ -34,6 +34,11 @@ COPY src/ src/
 # the mission executor inside this image.
 COPY tools/ tools/
 
+# robot_profiles/ is tools/smoke_test.py's DEFAULT_PROFILE source (2026-08-06 smoke-
+# test plan) — REPO_DIR resolves to /ros2_ws inside this image, so without this COPY
+# `ROBOT_MODE=smoke_test` crashes immediately with FileNotFoundError on every run.
+COPY robot_profiles/ robot_profiles/
+
 # Entrypoint + the DDS-interface-regeneration script it calls — same script every bare
 # process (hil_stage.sh, robot_boot.sh) already uses, so the container gets the exact
 # same interface-selection behavior.

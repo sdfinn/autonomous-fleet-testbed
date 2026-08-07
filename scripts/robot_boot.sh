@@ -46,6 +46,9 @@ echo "=== [robot-boot] running ${IMAGE} (real-robot context, operator ball place
 # in this project already uses. MISSION2_SELF_REPORT=1: no ground-truth judging (no
 # Gazebo on the real robot) — mission_runner logs each leg's own self-reported
 # PASS/FAIL instead; analysis of the resulting logs/photos happens after, manually.
+# ROBOT_MODE=mission is hardcoded here, never a variable — standalone power-on can
+# never run a smoke test (design spec). Smoke test is only ever triggered from
+# scripts/hil_stage.sh smoke, run by hand from the workstation.
 docker rm -f robot_mission 2>/dev/null || true
 mkdir -p "$REPO/reports"
 docker run --rm --name robot_mission --network host --ipc host \
@@ -56,5 +59,6 @@ docker run --rm --name robot_mission --network host --ipc host \
   -e NAV2_MAP_FILE=bedroom_real.yaml \
   -e MISSION2_SELF_REPORT=1 \
   -e RUNNER_TYPE=real_robot \
+  -e ROBOT_MODE=mission \
   "$IMAGE" bash /ros2_ws/scripts/container_entrypoint.sh \
   2>&1 | tee "$LOG_DIR/robot_boot_${TS}.log"
