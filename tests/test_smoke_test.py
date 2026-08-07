@@ -14,13 +14,17 @@ import time
 import numpy as np
 import pytest
 import rclpy
-from sensor_msgs.msg import Image, LaserScan
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import Image, Imu, LaserScan
 from unittest.mock import MagicMock, patch
 
 from tools.mission2_day import GzBallOps
-from tools.smoke_test import (check_ball_correlation, check_photo, check_topic,
-                              compute_ball_placement_xy, is_degenerate_scan,
-                              load_robot_profile, OperatorPlaceBallOps, is_degenerate_image)
+from tools.smoke_test import (check_ball_correlation, check_motion, check_photo,
+                              check_topic, compute_ball_placement_xy, is_degenerate_scan,
+                              load_robot_profile, OperatorPlaceBallOps, is_degenerate_image,
+                              _is_degenerate_imu, _is_degenerate_image_msg,
+                              _is_degenerate_odom, _print_summary)
 
 
 def _make_test_image_msg(width=4, height=4, color=None):
@@ -265,3 +269,100 @@ def test_check_photo_degenerate_image_fails(tmp_path):
         stop_publishing.set()
         publisher_thread.join(timeout=2.0)
         node.destroy_node()
+
+
+def test_check_motion_detects_forward_and_turn_deltas():
+    node = rclpy.create_node('test_check_motion')
+    odom_pub = node.create_publisher(Odometry, '/robot_001/odom', 10)
+    cmd_pub = node.create_publisher(Twist, '/robot_001/cmd_vel', 10)
+    try:
+        # Simulate a driver publishing odom that visibly moves during the check —
+        # a background timer nudges x forward and yaw around so before/after differ.
+        state = {'x': 0.0, 'yaw': 0.0, 'tick': 0}
+
+        def _tick():
+            state['tick'] += 1
+            if state['tick'] > 3:
+                state['x'] += 0.02
+            if state['tick'] > 15:
+                state['yaw'] += 0.05
+            msg = Odometry()
+            msg.pose.pose.position.x = state['x']
+            msg.pose.pose.orientation.z = math.sin(state['yaw'] / 2.0)
+            msg.pose.pose.orientation.w = math.cos(state['yaw'] / 2.0)
+            odom_pub.publish(msg)
+
+        timer = node.create_timer(0.05, _tick)
+        result = check_motion(node, cmd_pub)
+        node.destroy_timer(timer)
+        assert result['pass'] is True
+        assert result['forward_delta_m'] > 0.0
+        assert result['turn_delta_rad'] > 0.0
+    finally:
+        node.destroy_node()
+
+
+def test_check_motion_no_odom_fails_cleanly():
+    node = rclpy.create_node('test_check_motion_no_odom')
+    cmd_pub = node.create_publisher(Twist, '/robot_001/cmd_vel', 10)
+    try:
+        result = check_motion(node, cmd_pub)
+        assert result['pass'] is False
+        assert 'reason' in result
+    finally:
+        node.destroy_node()
+
+
+def test_is_degenerate_odom_flags_nan_and_inf():
+    msg = Odometry()
+    msg.pose.pose.position.x = float('nan')
+    assert _is_degenerate_odom(msg) is True
+
+    msg2 = Odometry()
+    msg2.twist.twist.linear.x = float('inf')
+    assert _is_degenerate_odom(msg2) is True
+
+
+def test_is_degenerate_odom_all_zero_is_not_degenerate():
+    # A legitimately stationary robot has an all-zero pose/twist (this integrator
+    # starts at the origin) -- must NOT be flagged degenerate, only non-finite values
+    # should be (see the implementation's own docstring).
+    msg = Odometry()
+    assert _is_degenerate_odom(msg) is False
+
+
+def test_is_degenerate_imu_flags_nan_and_inf():
+    msg = Imu()
+    msg.angular_velocity.z = float('nan')
+    assert _is_degenerate_imu(msg) is True
+
+    msg2 = Imu()
+    msg2.linear_acceleration.x = float('inf')
+    assert _is_degenerate_imu(msg2) is True
+
+
+def test_is_degenerate_imu_real_readings_not_degenerate():
+    msg = Imu()
+    msg.angular_velocity.z = 0.01
+    msg.linear_acceleration.z = 9.81
+    assert _is_degenerate_imu(msg) is False
+
+
+def test_is_degenerate_image_msg_uniform_color_flagged():
+    assert _is_degenerate_image_msg(_make_test_image_msg(color=(60, 60, 60))) is True
+
+
+def test_is_degenerate_image_msg_real_content_not_flagged():
+    assert _is_degenerate_image_msg(_make_test_image_msg()) is False
+
+
+def test_print_summary_reports_pass_and_fail(capsys):
+    checks = {
+        'odom': {'pass': True, 'measured_hz': 51.0},
+        'motion': {'pass': False, 'reason': 'no odom before motion check'},
+    }
+    _print_summary(checks, overall_pass=False)
+    captured = capsys.readouterr()
+    assert '[PASS] odom:' in captured.out
+    assert '[FAIL] motion:' in captured.out
+    assert '=== Overall: FAIL ===' in captured.out

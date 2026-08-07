@@ -18,6 +18,8 @@ import time
 import numpy as np
 import rclpy
 import yaml
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, Imu, LaserScan
 from vision_msgs.msg import Detection2DArray
 
@@ -25,6 +27,7 @@ from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.image_io import image_msg_to_png, image_msg_to_rgb
 from tools.mission2_day import GzBallOps
 from tools.telemetry_logger import PHOTO_DIR
+from tools import smoke_test_log
 
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_PROFILE = str(REPO_DIR / 'robot_profiles' / 'jetson_ugv_pt.yaml')
@@ -205,3 +208,168 @@ def check_ball_correlation(node, ball_ops, known_distance_m=KNOWN_DISTANCE_M,
         'yellow_ball_detected': detection_present,
         'camera_estimated_range_m': det_state['yellow_range_m'],  # reported, not gated
     }
+
+
+MOTION_FORWARD_MPS = 0.15
+MOTION_FORWARD_S = 1.0
+MOTION_TURN_RADPS = 0.5
+MOTION_TURN_S = 1.0
+MOTION_MIN_DELTA_M = 0.03        # generous — sanity check, not calibration (design spec §4)
+MOTION_MIN_DELTA_RAD = math.radians(5)
+
+
+def _latest_odom(node, timeout_s=2.0):
+    state = {'msg': None}
+
+    def _cb(msg):
+        state['msg'] = msg
+
+    sub = node.create_subscription(Odometry, '/robot_001/odom', _cb, 10)
+    deadline = time.time() + timeout_s
+    while state['msg'] is None and time.time() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.1)
+    node.destroy_subscription(sub)
+    return state['msg']
+
+
+def _yaw_from_quat(q):
+    return math.atan2(2.0 * (q.w * q.z), 1.0 - 2.0 * (q.z * q.z))
+
+
+def _publish_for(node, cmd_pub, twist, duration_s, rate_hz=10.0):
+    deadline = time.time() + duration_s
+    period = 1.0 / rate_hz
+    while time.time() < deadline:
+        cmd_pub.publish(twist)
+        rclpy.spin_once(node, timeout_sec=period)
+
+
+def check_motion(node, cmd_pub):
+    """Design spec §4: two short open-loop cmd_vel pulses (forward, then a turn),
+    /robot_001/odom read before and after each. PASS requires a non-trivial delta in
+    the commanded direction — a generous sanity check, not a calibration. Operator
+    visual confirmation is recommended (catches e.g. wheels spinning but the chassis
+    stuck) but isn't required for this automated verdict."""
+    before = _latest_odom(node)
+    if before is None:
+        return {'pass': False, 'reason': 'no odom before motion check'}
+
+    forward = Twist()
+    forward.linear.x = MOTION_FORWARD_MPS
+    _publish_for(node, cmd_pub, forward, MOTION_FORWARD_S)
+    cmd_pub.publish(Twist())
+    time.sleep(0.5)
+    after_forward = _latest_odom(node)
+
+    turn = Twist()
+    turn.angular.z = MOTION_TURN_RADPS
+    _publish_for(node, cmd_pub, turn, MOTION_TURN_S)
+    cmd_pub.publish(Twist())
+    time.sleep(0.5)
+    after_turn = _latest_odom(node)
+
+    if after_forward is None or after_turn is None:
+        return {'pass': False, 'reason': 'no odom after motion pulses'}
+
+    dx = after_forward.pose.pose.position.x - before.pose.pose.position.x
+    dy = after_forward.pose.pose.position.y - before.pose.pose.position.y
+    forward_delta_m = math.hypot(dx, dy)
+
+    yaw_before_turn = _yaw_from_quat(after_forward.pose.pose.orientation)
+    yaw_after_turn = _yaw_from_quat(after_turn.pose.pose.orientation)
+    turn_delta_rad = abs(math.atan2(math.sin(yaw_after_turn - yaw_before_turn),
+                                    math.cos(yaw_after_turn - yaw_before_turn)))
+
+    return {'pass': bool(forward_delta_m >= MOTION_MIN_DELTA_M and
+                         turn_delta_rad >= MOTION_MIN_DELTA_RAD),
+            'forward_delta_m': round(forward_delta_m, 3),
+            'turn_delta_rad': round(turn_delta_rad, 3)}
+
+
+def _is_degenerate_odom(msg):
+    """NaN/inf in pose or twist — a genuinely broken publisher. A legitimately
+    stationary robot has an all-zero pose/twist (this integrator starts at the
+    origin), so all-zero is deliberately NOT treated as degenerate — only non-finite
+    values are."""
+    p, t = msg.pose.pose.position, msg.twist.twist
+    values = (p.x, p.y, p.z, t.linear.x, t.linear.y, t.linear.z,
+              t.angular.x, t.angular.y, t.angular.z)
+    return not all(math.isfinite(v) for v in values)
+
+
+def _is_degenerate_image_msg(msg):
+    return is_degenerate_image(image_msg_to_rgb(msg))
+
+
+def _is_degenerate_imu(msg):
+    values = (msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z,
+              msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z)
+    return not all(math.isfinite(v) for v in values)
+
+
+def _print_summary(checks, overall_pass):
+    print("=== Smoke test summary ===")
+    for name, result in checks.items():
+        status = 'PASS' if result.get('pass') else 'FAIL'
+        print(f"[{status}] {name}: {result}")
+    print(f"=== Overall: {'PASS' if overall_pass else 'FAIL'} ===")
+
+
+def run_smoke_test(profile_path, ball_ops, runner_type='local', commit_sha=None,
+                   ci_run_number=None, db_path=None):
+    """Design spec §5: run every check regardless of earlier failures (the checklist
+    IS the verdict, matching mission_runner's own philosophy), print an itemized
+    summary, log one row, return overall PASS/FAIL."""
+    profile = load_robot_profile(profile_path)
+    sensors = profile['sensors']
+
+    rclpy.init()
+    node = rclpy.create_node('smoke_test')
+    cmd_pub = node.create_publisher(Twist, '/robot_001/cmd_vel', 10)
+    checks = {}
+    try:
+        checks['odom'] = check_topic(node, sensors['odometry']['topic'], Odometry,
+                                     sensors['odometry']['hz_min'], _is_degenerate_odom)
+        checks['scan'] = check_topic(node, sensors['lidar']['topic'], LaserScan,
+                                     sensors['lidar']['hz_min'], is_degenerate_scan)
+        checks['camera'] = check_topic(node, sensors['camera']['topic'], Image,
+                                       sensors['camera']['hz_min'], _is_degenerate_image_msg)
+        checks['imu'] = check_topic(node, sensors['imu']['topic'], Imu,
+                                    sensors['imu']['hz_min'], _is_degenerate_imu)
+        checks['photo'] = check_photo(node)
+        checks['ball_correlation'] = check_ball_correlation(node, ball_ops)
+        checks['motion'] = check_motion(node, cmd_pub)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+    overall_pass = all(c.get('pass', False) for c in checks.values())
+    _print_summary(checks, overall_pass)
+
+    smoke_test_log.log_smoke_test_run(
+        runner_type=runner_type, overall_pass=overall_pass, checks=checks,
+        commit_sha=commit_sha, ci_run_number=ci_run_number,
+        db_path=db_path or smoke_test_log.DB_PATH)
+    return overall_pass
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Bench smoke test — driver-layer sanity check before Nav2 trusts it")
+    parser.add_argument('--profile', default=DEFAULT_PROFILE)
+    parser.add_argument('--ball-ops', choices=['gz', 'operator'], default='operator')
+    parser.add_argument('--runner-type', default='local')
+    parser.add_argument('--commit-sha', default=None)
+    parser.add_argument('--ci-run-number', type=int, default=None)
+    parser.add_argument('--db', default=None)
+    args = parser.parse_args()
+
+    ball_ops = GzBallOps() if args.ball_ops == 'gz' else OperatorPlaceBallOps()
+    overall_pass = run_smoke_test(
+        args.profile, ball_ops, runner_type=args.runner_type, commit_sha=args.commit_sha,
+        ci_run_number=args.ci_run_number, db_path=args.db)
+    sys.exit(0 if overall_pass else 1)
+
+
+if __name__ == '__main__':
+    main()
