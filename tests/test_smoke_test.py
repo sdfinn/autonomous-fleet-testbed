@@ -11,12 +11,16 @@ import math
 import threading
 import time
 
+import numpy as np
 import pytest
 import rclpy
 from sensor_msgs.msg import LaserScan
+from unittest.mock import MagicMock, patch
 
-from tools.smoke_test import (check_topic, compute_ball_placement_xy, is_degenerate_scan,
-                              load_robot_profile)
+from tools.mission2_day import GzBallOps
+from tools.smoke_test import (check_ball_correlation, check_topic, compute_ball_placement_xy,
+                              is_degenerate_scan, load_robot_profile, OperatorPlaceBallOps,
+                              is_degenerate_image)
 
 
 @pytest.fixture(scope='module', autouse=True)
@@ -97,3 +101,57 @@ def test_check_topic_no_messages_received():
         assert result['degenerate'] is None
     finally:
         node.destroy_node()
+
+
+def test_is_degenerate_image_uniform_black():
+    rgb = np.zeros((10, 10, 3), dtype=np.uint8)
+    assert is_degenerate_image(rgb) is True
+
+
+def test_is_degenerate_image_real_content():
+    rgb = np.zeros((10, 10, 3), dtype=np.uint8)
+    rgb[0, 0] = [255, 0, 0]
+    rgb[5, 5] = [0, 255, 0]
+    assert is_degenerate_image(rgb) is False
+
+
+def test_operator_place_ball_ops_prompts_with_inches(monkeypatch):
+    prompts = []
+    monkeypatch.setattr('builtins.input', lambda p: prompts.append(p) or '')
+    OperatorPlaceBallOps().place('yellow', 0.305)
+    assert len(prompts) == 1
+    assert 'yellow' in prompts[0]
+    assert '12' in prompts[0]  # 0.305 m -> ~12 inches
+
+
+def test_check_ball_correlation_gzballops_places_at_known_distance_from_ground_truth(monkeypatch):
+    # Regression test for a real bug found in this task: get_ground_truth_xy() (the
+    # real nav_fleet.ground_truth function, confirmed by reading its source) returns
+    # only (x, y) or None -- never a 3-tuple with yaw -- so check_ball_correlation
+    # must not try to unpack a yaw out of it. This exercises that GzBallOps branch
+    # end-to-end (no live Gazebo needed -- GzBallOps.place is monkeypatched) to prove
+    # it doesn't raise.
+    placed = []
+    monkeypatch.setattr(GzBallOps, 'place', lambda self, color, x, y: placed.append((color, x, y)))
+    monkeypatch.setattr('tools.smoke_test.get_ground_truth_xy', lambda: (1.0, 2.0))
+
+    node = rclpy.create_node('test_check_ball_correlation_gz')
+    try:
+        result = check_ball_correlation(node, GzBallOps(), known_distance_m=0.305,
+                                         tolerance_m=0.1, window_s=0.2)
+    finally:
+        node.destroy_node()
+
+    assert len(placed) == 1
+    color, bx, by = placed[0]
+    assert color == 'yellow'
+    # robot assumed to still be at its spawn heading (north, yaw=pi/2) -- see the
+    # implementation's own comment for why -- so the ball lands directly north of
+    # the ground-truth point, not east/west.
+    assert bx == pytest.approx(1.0, abs=1e-9)
+    assert by == pytest.approx(2.0 + 0.305)
+    # No scan/detection publishers exist in this test, so the correlation itself
+    # can't pass -- only proving the placement call succeeded without crashing.
+    assert result['pass'] is False
+    assert result['lidar_min_range_m'] is None
+    assert result['yellow_ball_detected'] is False
