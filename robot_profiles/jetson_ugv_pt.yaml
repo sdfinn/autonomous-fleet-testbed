@@ -22,7 +22,13 @@
       topic: /robot_001/camera/depth/points
     imu:
       topic: /robot_001/imu/data
-      hz_min: 200
+      # 50, corrected 2026-08-06 (Task 2 review) — 200 was never achievable on this
+      # link: raw IMU (T:1002) is one-shot-per-request over the SAME 115200-baud
+      # line as the continuous odom stream, and one T:1002 response is ~150 bytes,
+      # so 200 req/s alone needs ~30,000 B/s against an ~11,520 B/s physical
+      # ceiling (~2.6x over). 50 req/s (~7,500 B/s) is what the protocol can
+      # actually deliver — esp32_driver's imu_poll_hz default matches this.
+      hz_min: 50
     odometry:
       topic: /robot_001/odom
       hz_min: 50
@@ -30,7 +36,13 @@
   sub_controller:
     type: esp32
     interface: uart
-    baud: 921600
+    # 115200, confirmed 2026-08-06 against the actual vendor firmware source
+    # (waveshareteam/ugv_base_general, General_Driver.ino: `Serial.begin(115200)` —
+    # the only host-serial baud defined anywhere in that firmware tree; a separate
+    # Serial1 @ 1000000 exists but is the RoArm bus-servo link, unrelated). The
+    # previous value here (921600) had no basis found in the firmware — corrected,
+    # not guessed. Reconfirm live once real hardware exists (~2026-08-11).
+    baud: 115200
     watchdog_timeout_ms: 200
 
   deploy:
