@@ -117,6 +117,46 @@ def test_check_topic_measures_hz_and_flags_low_rate():
         node.destroy_node()
 
 
+def test_check_topic_tolerates_one_boundary_message_below_exact_hz_min():
+    # Real bug, found live in CI (run 31332673543, 2026-08-09): hz_min set to the
+    # EXACT nominal publish rate with zero tolerance means a single message landing
+    # just outside the measurement window (pure timing-phase luck vs a real sensor
+    # problem -- confirmed by re-running the identical stack and seeing it pass
+    # cleanly) flips PASS to FAIL. A camera genuinely publishing at ~10 Hz for the
+    # window's whole duration but yielding 29 messages instead of 30 in a 3.0s window
+    # (9.67 measured -- exactly the real CI failure) must still PASS -- this is what
+    # "we want the real robot with real sensors to work" means in practice. Mirrors
+    # the real bug's own window_s=3.0/hz_min=10 exactly, rather than an artificially
+    # short window -- a too-short window doesn't leave room for the tolerance itself
+    # to be exercised meaningfully.
+    node = rclpy.create_node('test_check_topic_boundary_tolerance')
+    pub = node.create_publisher(LaserScan, '/test_smoke_topic_boundary', 10)
+    stop_publishing = threading.Event()
+
+    def _publish_loop():
+        while not stop_publishing.is_set():
+            msg = LaserScan()
+            msg.ranges = [1.0, 1.0]  # non-empty, non-degenerate per is_degenerate_scan
+            pub.publish(msg)
+            time.sleep(0.1)  # ~10 Hz -- the real camera's own nominal rate
+
+    publisher_thread = threading.Thread(target=_publish_loop, daemon=True)
+    publisher_thread.start()
+    try:
+        result = check_topic(node, '/test_smoke_topic_boundary', LaserScan, hz_min=10,
+                             degenerate_fn=is_degenerate_scan, window_s=3.0)
+        # A real 10 Hz publisher over 3.0s realistically yields ~27-31 messages
+        # depending on timing-phase luck -- all of which must PASS under the new
+        # tolerance (>= hz_min * 0.9 * window_s = 27 messages). A message_count this
+        # low would only happen if the publisher genuinely wasn't running.
+        assert result['message_count'] >= 25
+        assert result['pass'] is True
+    finally:
+        stop_publishing.set()
+        publisher_thread.join(timeout=2.0)
+        node.destroy_node()
+
+
 def test_check_topic_no_messages_received():
     node = rclpy.create_node('test_check_topic_silent')
     try:

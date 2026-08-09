@@ -45,6 +45,16 @@ KNOWN_DISTANCE_M = 0.75
 DISTANCE_TOLERANCE_M = 0.102   # ~4 inches placement-imprecision tolerance — design spec §3
 FORWARD_ARC_HALF_WIDTH_RAD = math.radians(15)
 
+# check_topic()'s hz_min values (robot_profiles/*.yaml) are each sensor's own nominal
+# publish rate with zero slack -- found live in CI, 2026-08-09 (run 31332673543): a
+# genuinely-fine 10 Hz camera measured 9.67 Hz over a 3.0s window (29 msgs, not 30)
+# purely from timing-phase luck around the window boundary -- re-running the identical
+# stack passed cleanly. A real sensor problem (dead/hung publisher) reads as a rate
+# far below nominal, not 3% under it -- this tolerance absorbs window-boundary jitter
+# without hiding an actually-broken sensor. Applies to every check_topic() call
+# (odom/scan/camera/imu all hit this same zero-tolerance design, not just camera).
+HZ_TOLERANCE_FACTOR = 0.9
+
 # This robot's lidar (sim and the real ldlidar_ros2 hardware) is a 2D PLANAR lidar —
 # one fixed horizontal scan plane, no vertical resolution at all (confirmed live,
 # 2026-08-09: a ball resting on the floor was undetectable at any distance, even after
@@ -82,9 +92,10 @@ def compute_ball_placement_xy(robot_x, robot_y, robot_yaw, distance_m):
 
 def check_topic(node, topic, msg_type, hz_min, degenerate_fn, window_s=3.0):
     """Subscribe to `topic` for `window_s` seconds. PASS requires: message rate >=
-    hz_min AND the most recently received message is not degenerate per degenerate_fn.
-    Returns {'pass', 'measured_hz', 'message_count', 'degenerate' (None if zero
-    messages received)}."""
+    hz_min * HZ_TOLERANCE_FACTOR (absorbs window-boundary timing jitter — see that
+    constant's own comment) AND the most recently received message is not degenerate
+    per degenerate_fn. Returns {'pass', 'measured_hz', 'message_count', 'degenerate'
+    (None if zero messages received)}."""
     state = {'count': 0, 'last_msg': None}
 
     def _cb(msg):
@@ -99,7 +110,7 @@ def check_topic(node, topic, msg_type, hz_min, degenerate_fn, window_s=3.0):
 
     measured_hz = state['count'] / window_s
     degenerate = degenerate_fn(state['last_msg']) if state['last_msg'] is not None else None
-    passed = measured_hz >= hz_min and degenerate is False
+    passed = measured_hz >= hz_min * HZ_TOLERANCE_FACTOR and degenerate is False
     return {'pass': passed, 'measured_hz': round(measured_hz, 2),
             'message_count': state['count'], 'degenerate': degenerate}
 
