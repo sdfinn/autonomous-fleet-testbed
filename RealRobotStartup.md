@@ -389,8 +389,27 @@ explicitly R2 scope, not R1):
   `~/fleet-ci-data/robot_boot_logs/robot_boot_<timestamp>.log` on the Jetson, and the
   telemetry row is already in the Jetson's own local `fleet_runs.db` — both stay there
   until you choose to look, no push happens on their own.
-- [ ] If you want to pull ROS2 logs to the workstation: `python -m tools.pull_ros_logs
-  --host mike@jetson.local` (optional, whenever you actually want to look at them).
+- [ ] **For Nav2's own detailed launch output, `python -m tools.pull_ros_logs` is NOT
+  the right tool anymore — found + fixed in review, 2026-08-09.** That tool's entire
+  mechanism is resolving `~/.ros/log/latest` on the target host, which only ever
+  gets written by a BARE-METAL `ros2 launch` process. Since the docker-brain
+  unification, Nav2/EKF/`ball_detector` all run INSIDE the container (see the intro
+  note at the top of this doc), and the container's own internal `~/.ros/log` is
+  never bind-mounted out — `robot_boot.sh` only mounts `reports/` and
+  `fleet-ci-data/`. Running `pull_ros_logs.py` against the Jetson now will NOT error;
+  it will silently hand you whatever old bare-metal session happens to still be
+  sitting there (confirmed live: a session from 2026-08-01, over a week stale, on a
+  Jetson that had run several real missions since) — worse than doing nothing, since
+  it looks like it worked. The real, current mechanism: `container_entrypoint.sh`
+  redirects Nav2's own `ros2 launch` output to
+  `~/autonomous-fleet-testbed/reports/nav2_container_<timestamp>.log` on the
+  Jetson — inside the SAME bind-mounted `reports/` directory `robot_boot.sh` already
+  uses, so it lands on the Jetson's host filesystem automatically, no pull needed for
+  that first hop. To get it to the workstation: `scp mike@jetson.local:
+  ~/autonomous-fleet-testbed/reports/nav2_container_*.log .` (or just SSH in and
+  read it directly on the Jetson). `pull_ros_logs.py` itself isn't broken as code —
+  it still works correctly for bare-metal contexts (stage-2 sim, SLAM Toolbox in A3)
+  — it's specifically wrong for this container-mode real-robot path.
 - [ ] A rosbag evidence bag auto-captures to `reports/failure_bags/` on any FAIL — pull
   it the same way if you want it (`scp`), not required.
 
