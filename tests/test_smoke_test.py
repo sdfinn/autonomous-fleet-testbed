@@ -20,7 +20,9 @@ from sensor_msgs.msg import Image, Imu, LaserScan
 from unittest.mock import MagicMock, patch
 
 from tools.mission2_day import GzBallOps
-from tools.smoke_test import (check_ball_correlation, check_motion, check_photo,
+from tools.mission2_harness import LIDAR_BALL_SDF
+from tools.smoke_test import (KNOWN_DISTANCE_M, LIDAR_HEIGHT_M, LidarVisibleGzBallOps,
+                              check_ball_correlation, check_motion, check_photo,
                               check_topic, compute_ball_placement_xy, is_degenerate_scan,
                               load_robot_profile, OperatorPlaceBallOps, is_degenerate_image,
                               _is_degenerate_imu, _is_degenerate_image_msg,
@@ -153,16 +155,17 @@ def test_check_ball_correlation_gzballops_places_at_known_distance_from_ground_t
     # real nav_fleet.ground_truth function, confirmed by reading its source) returns
     # only (x, y) or None -- never a 3-tuple with yaw -- so check_ball_correlation
     # must not try to unpack a yaw out of it. This exercises that GzBallOps branch
-    # end-to-end (no live Gazebo needed -- GzBallOps.place is monkeypatched) to prove
-    # it doesn't raise.
+    # end-to-end (no live Gazebo needed -- LidarVisibleGzBallOps.place is
+    # monkeypatched) to prove it doesn't raise.
     placed = []
-    monkeypatch.setattr(GzBallOps, 'place', lambda self, color, x, y: placed.append((color, x, y)))
+    monkeypatch.setattr(LidarVisibleGzBallOps, 'place',
+                        lambda self, color, x, y: placed.append((color, x, y)))
     monkeypatch.setattr('tools.smoke_test.get_ground_truth_xy', lambda: (1.0, 2.0))
 
     node = rclpy.create_node('test_check_ball_correlation_gz')
     try:
-        result = check_ball_correlation(node, GzBallOps(), known_distance_m=0.305,
-                                         tolerance_m=0.1, window_s=0.2)
+        result = check_ball_correlation(node, LidarVisibleGzBallOps(), known_distance_m=0.305,
+                                        tolerance_m=0.1, window_s=0.2)
     finally:
         node.destroy_node()
 
@@ -188,13 +191,14 @@ def test_check_ball_correlation_gzballops_no_ground_truth_fails_gracefully(monke
     # try/except). Must degrade to a {'pass': False, ...} dict like every other
     # failure path in this file instead.
     placed = []
-    monkeypatch.setattr(GzBallOps, 'place', lambda self, color, x, y: placed.append((color, x, y)))
+    monkeypatch.setattr(LidarVisibleGzBallOps, 'place',
+                        lambda self, color, x, y: placed.append((color, x, y)))
     monkeypatch.setattr('tools.smoke_test.get_ground_truth_xy', lambda: None)
 
     node = rclpy.create_node('test_check_ball_correlation_no_truth')
     try:
-        result = check_ball_correlation(node, GzBallOps(), known_distance_m=0.305,
-                                         tolerance_m=0.1, window_s=0.1)
+        result = check_ball_correlation(node, LidarVisibleGzBallOps(), known_distance_m=0.305,
+                                        tolerance_m=0.1, window_s=0.1)
     finally:
         node.destroy_node()
 
@@ -204,6 +208,74 @@ def test_check_ball_correlation_gzballops_no_ground_truth_fails_gracefully(monke
     # Must fail before ever attempting a placement -- there's no point in the world to
     # place the ball relative to.
     assert placed == []
+
+
+def test_lidar_visible_gz_ball_ops_is_a_gzballops_subclass():
+    # check_ball_correlation's isinstance(ball_ops, GzBallOps) branch (the one that
+    # computes placement from ground truth) must still match -- LidarVisibleGzBallOps
+    # exists ONLY to override place() with a lidar-visible spawn, not to opt out of
+    # that branch.
+    assert issubclass(LidarVisibleGzBallOps, GzBallOps)
+
+
+def test_lidar_ball_sdf_has_collision_geometry_unlike_mission2s_camera_only_ball():
+    # This SDF gives the ball real <collision> geometry (Mission 2's own
+    # mission2_harness.spawn_ball() deliberately has none, so its robot never
+    # physically bumps a reaction ball) -- physical realism for a bench-test ball,
+    # not (per live testing, 2026-08-09) what actually fixes lidar visibility. See
+    # tools.smoke_test.LIDAR_HEIGHT_M for the real fix (this lidar is 2D/planar; a
+    # floor-level ball sits below its single scan plane regardless of collision).
+    sdf = LIDAR_BALL_SDF.format(name='ball_yellow', x=1.0, y=2.0, z=0.043, r=0.043,
+                                rgba='0.9 0.9 0.05 1')
+    assert '<collision' in sdf
+    assert '<sphere>' in sdf  # collision geometry present, not just declared
+
+
+def test_lidar_visible_gz_ball_ops_spawns_at_lidar_scan_height_not_floor_level(monkeypatch):
+    # Real root cause (2026-08-09, confirmed live): this robot's lidar is a 2D planar
+    # lidar -- one fixed scan height, no vertical resolution -- so a floor-level ball
+    # (spawn_lidar_ball's own z default, BALL_RADIUS) sits entirely below the scan
+    # plane and is undetectable at any distance. place() must spawn the ball's CENTER
+    # at LIDAR_HEIGHT_M instead of accepting the floor-level default.
+    calls = []
+
+    def _fake_spawn(color, x, y, z=None):
+        calls.append((color, x, y, z))
+        return 'ball_yellow'
+
+    monkeypatch.setattr('tools.smoke_test.spawn_lidar_ball', _fake_spawn)
+    monkeypatch.setattr('tools.smoke_test.time.sleep', lambda s: None)
+
+    LidarVisibleGzBallOps().place('yellow', 1.0, 2.0)
+
+    assert len(calls) == 1
+    color, x, y, z = calls[0]
+    assert (color, x, y) == ('yellow', 1.0, 2.0)
+    assert z == pytest.approx(LIDAR_HEIGHT_M)
+    assert z != pytest.approx(0.043)  # must NOT be the floor-level default
+
+
+def test_operator_place_ball_ops_prompts_with_riser_height(monkeypatch):
+    # A real physical bench test needs the operator to know to use a riser/box --
+    # otherwise a correctly-distance-placed but floor-level real ball hits the exact
+    # same 2D-lidar-scan-height problem the sim ball did.
+    prompts = []
+    monkeypatch.setattr('builtins.input', lambda p: prompts.append(p) or '')
+    OperatorPlaceBallOps().place('yellow', 0.75)
+    assert len(prompts) == 1
+    assert 'riser' in prompts[0].lower() or 'box' in prompts[0].lower()
+    assert '10' in prompts[0]  # 0.25 m -> ~10 inches
+
+
+def test_known_distance_m_clears_the_camera_field_of_view():
+    # Root cause, part 2 (2026-08-09): at the old 0.305 m (12"), a floor-level ball is
+    # geometrically outside the level-mounted camera's vertical FOV -- confirmed via
+    # the real URDF (camera 0.175 m forward of base, ~0.24 m high, level, ~23.4 deg
+    # vertical half-FOV): the required look-down angle at 0.305 m is ~56.6 deg, more
+    # than double the camera's own half-FOV. This just pins the fixed regression
+    # value (0.75 m, ~2.5 ft) so a future accidental edit back toward "12 inches"
+    # fails loudly here instead of silently reintroducing the camera-FOV bug.
+    assert KNOWN_DISTANCE_M == pytest.approx(0.75)
 
 
 def test_check_photo_saves_real_image_with_pixel_content(tmp_path):

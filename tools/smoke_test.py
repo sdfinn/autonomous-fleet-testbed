@@ -25,16 +25,36 @@ from vision_msgs.msg import Detection2DArray
 
 from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.image_io import image_msg_to_png, image_msg_to_rgb
-from tools.mission2_day import GzBallOps
+from tools.mission2_day import GzBallOps, SPAWN_APPEAR_SETTLE_S
+from tools.mission2_harness import spawn_lidar_ball
 from tools.telemetry_logger import PHOTO_DIR
 from tools import smoke_test_log
 
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_PROFILE = str(REPO_DIR / 'robot_profiles' / 'jetson_ugv_pt.yaml')
 
-KNOWN_DISTANCE_M = 0.305       # 12 inches — design spec §3
+# 0.75 m (~2.5 ft), not the design spec's original 12"/0.305 m -- raised 2026-08-09
+# after a confirmed root-cause: at 12", a floor-level ball sits geometrically outside
+# the level-mounted camera's vertical field of view (real URDF geometry: camera
+# 0.175 m forward of base, ~0.24 m high, ~23.4 deg vertical half-FOV -- the look-down
+# angle needed at 12" is ~56.6 deg, more than double that). 0.75 m keeps real margin
+# (~18-19 deg, comfortably inside the FOV) while staying well short of Mission 2's own
+# 0.8-1.3 m reaction range, so this stays a visually/physically distinct close-bench
+# check, not a copy of Mission 2's numbers.
+KNOWN_DISTANCE_M = 0.75
 DISTANCE_TOLERANCE_M = 0.102   # ~4 inches placement-imprecision tolerance — design spec §3
 FORWARD_ARC_HALF_WIDTH_RAD = math.radians(15)
+
+# This robot's lidar (sim and the real ldlidar_ros2 hardware) is a 2D PLANAR lidar —
+# one fixed horizontal scan plane, no vertical resolution at all (confirmed live,
+# 2026-08-09: a ball resting on the floor was undetectable at any distance, even after
+# adding real <collision> geometry — the beam was simply passing entirely over it).
+# The plane sits ~0.25 m off the ground: spawn z 0.15 m + the lidar joint's own 0.1 m
+# local mount offset (ugv_pt.urdf.xacro). Placing the ball's CENTER at that same height
+# means the scan plane passes straight through it, with the ball's own radius as
+# margin either side. On the real bench, this means an actual physical riser/box under
+# the ball — OperatorPlaceBallOps's prompt below says so explicitly.
+LIDAR_HEIGHT_M = 0.25
 
 
 def load_robot_profile(path):
@@ -91,8 +111,30 @@ class OperatorPlaceBallOps:
 
     def place(self, color, distance_m):
         inches = distance_m * 39.37
+        height_inches = LIDAR_HEIGHT_M * 39.37
         input(f"Place the {color} ball {inches:.0f} inches ({distance_m:.3f} m) "
-              f"directly in front of the robot, then press Enter: ")
+              f"directly in front of the robot, ON A RISER/BOX so its CENTER sits "
+              f"~{height_inches:.0f} inches ({LIDAR_HEIGHT_M:.2f} m) off the bench "
+              f"surface (the lidar's own scan height — a floor-level ball is below "
+              f"its single scan plane and won't be seen), then press Enter: ")
+
+
+class LidarVisibleGzBallOps(GzBallOps):
+    """check_ball_correlation's own sim/CI ball placement — a GzBallOps subclass so
+    check_ball_correlation's isinstance(ball_ops, GzBallOps) branch (ground-truth-based
+    placement math) still applies, but place() spawns via mission2_harness's
+    LIDAR_BALL_SDF/spawn_lidar_ball instead of Mission 2's own camera-only ball.
+    Root cause (2026-08-09, confirmed live): this robot's lidar is a 2D PLANAR lidar
+    (one fixed scan height, no vertical resolution) — a floor-level ball sits entirely
+    below its scan plane, undetectable at any distance regardless of collision/visual
+    geometry. Spawns the ball's center at LIDAR_HEIGHT_M (the lidar's own scan height)
+    instead of on the floor, matching the real bench test's riser/box requirement."""
+
+    def place(self, color, x, y):
+        name = spawn_lidar_ball(color, x, y, z=LIDAR_HEIGHT_M)
+        print(f'gz spawned lidar-visible {name} at ({x}, {y}, {LIDAR_HEIGHT_M})')
+        time.sleep(SPAWN_APPEAR_SETTLE_S)
+        return name
 
 
 def is_degenerate_image(rgb):
@@ -364,7 +406,7 @@ def main():
     parser.add_argument('--db', default=None)
     args = parser.parse_args()
 
-    ball_ops = GzBallOps() if args.ball_ops == 'gz' else OperatorPlaceBallOps()
+    ball_ops = LidarVisibleGzBallOps() if args.ball_ops == 'gz' else OperatorPlaceBallOps()
     overall_pass = run_smoke_test(
         args.profile, ball_ops, runner_type=args.runner_type, commit_sha=args.commit_sha,
         ci_run_number=args.ci_run_number, db_path=args.db)

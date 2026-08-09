@@ -157,6 +157,58 @@ BALL_SDF = """<?xml version="1.0"?>
 """
 BALL_RGBA = {'red': '0.9 0.05 0.05 1', 'yellow': '0.9 0.9 0.05 1'}
 
+# Used by tools/smoke_test.py's check_ball_correlation ONLY -- Mission 2's own
+# spawn_ball()/BALL_SDF above stay exactly as they are, untouched, on purpose.
+# Real root cause (2026-08-09, confirmed by live testing -- an EARLIER theory here,
+# "GPU lidar needs <collision>", was tried and directly disproven live: adding
+# <collision> alone changed nothing, lidar_min_range_m stayed ~1.1 m): this robot's
+# lidar (sim AND the real ldlidar_ros2 hardware) is a 2D PLANAR lidar -- one fixed
+# horizontal scan plane, zero vertical resolution (see ugv_pt.urdf.xacro's lidar
+# sensor block -- only a <horizontal> block, no <vertical> at all). The lidar's scan
+# plane sits ~0.25 m off the ground (spawn z 0.15 + the lidar joint's own 0.1 m local
+# offset); a ball resting on the floor tops out at 2*BALL_RADIUS = 0.086 m -- the beam
+# passes entirely over it, at any distance, regardless of collision/visual geometry.
+# The <collision> block below is kept anyway (harmless, and gives the sim ball real
+# physical presence like an actual bench-test ball would have) but is NOT what fixes
+# lidar visibility -- see tools/smoke_test.py's LIDAR_HEIGHT_M for the actual fix
+# (spawn the ball's CENTER at the lidar's own height, not on the floor). Never reuse
+# this for Mission 2's own reaction balls -- the whole point of spawn_ball()'s
+# no-collision, floor-level ball is that the robot must never physically bump it.
+LIDAR_BALL_SDF = """<?xml version="1.0"?>
+<sdf version="1.9">
+  <model name="{name}">
+    <static>true</static>
+    <pose>{x} {y} {z} 0 0 0</pose>
+    <link name="link">
+      <visual name="v">
+        <geometry><sphere><radius>{r}</radius></sphere></geometry>
+        <material><ambient>{rgba}</ambient><diffuse>{rgba}</diffuse></material>
+      </visual>
+      <collision name="c">
+        <geometry><sphere><radius>{r}</radius></sphere></geometry>
+      </collision>
+    </link>
+  </model>
+</sdf>
+"""
+
+
+def spawn_lidar_ball(color, x, y, z=BALL_RADIUS):
+    """Spawn a lidar-AND-camera-visible ball (has <collision>, unlike spawn_ball()'s
+    camera-only ball above) -- for tools/smoke_test.py's check_ball_correlation only.
+    z defaults to floor level (BALL_RADIUS) but callers needing the lidar's own 2D
+    scan plane to actually intersect the ball must pass their own z (see
+    tools/smoke_test.py's LIDAR_HEIGHT_M). Returns model name."""
+    name = f'ball_{color}'
+    sdf = LIDAR_BALL_SDF.format(name=name, x=x, y=y, z=z, r=BALL_RADIUS,
+                                rgba=BALL_RGBA[color])
+    with tempfile.NamedTemporaryFile('w', suffix='.sdf', delete=False) as f:
+        f.write(sdf)
+        path = f.name
+    _gz_service(f'/world/{WORLD}/create', 'gz.msgs.EntityFactory',
+                f'sdf_filename: "{path}"')
+    return name
+
 
 def _route_points(step=0.05):
     """The planned-route corridor, sampled: home -> doorway -> sphere approach."""
