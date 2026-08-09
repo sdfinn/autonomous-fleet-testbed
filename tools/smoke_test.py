@@ -8,6 +8,12 @@ ever trusted under Nav2. Interactive prompting is deliberate here (unlike
 mission_runner's hard no-prompting rule) — a human runs this standing at the bench.
 
 Run: python -m tools.smoke_test [--ball-ops operator|gz] [--runner-type local] ...
+
+2026-08-09: distance/height/tolerance/HIL-skip fixes landed and verified green on
+real Jetson hardware (see CLAUDE.md and RealRobotStartup.md for the full history) —
+this comment-only line exists solely to re-trigger the full CI pipeline (stage-3-arm64
++ stage-4-hil, which the docs-only commits right before it correctly skipped) for one
+more full end-to-end confirmation before the robot gets unpacked.
 """
 import argparse
 import math
