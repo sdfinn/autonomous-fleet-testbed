@@ -27,7 +27,7 @@ BaseInfo = collections.namedtuple(
     'BaseInfo', ['speed_l', 'speed_r', 'roll', 'pitch', 'yaw', 'temp', 'voltage'])
 ImuData = collections.namedtuple(
     'ImuData', ['roll', 'pitch', 'yaw', 'ax', 'ay', 'az', 'gx', 'gy', 'gz',
-               'mx', 'my', 'mz', 'temp'])
+                'mx', 'my', 'mz', 'temp'])
 
 _FEEDBACK_BASE_INFO = 1001
 _FEEDBACK_IMU_DATA = 1002
