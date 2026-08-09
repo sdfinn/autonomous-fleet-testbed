@@ -110,16 +110,18 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   - **Camera (OAK-D Lite):** install
     [`luxonis/depthai-ros`](https://github.com/luxonis/depthai-ros) — Luxonis-maintained,
     confirmed working on Jazzy/24.04 independent of `ugv_ws`.
-  - **Odom + IMU + `cmd_vel`→wheels (ESP32 sub-controller, UART @921600 baud, per
-    `robot_profiles/jetson_ugv_pt.yaml`'s `sub_controller` block):** no vendor Jazzy
-    package exists for this piece. Write a small native driver node in this repo
-    against Waveshare's documented JSON-over-serial protocol (wiki +
-    [`ugv_base_general`](https://github.com/waveshareteam/ugv_base_general)/
-    [`ugv_base_ros`](https://github.com/waveshareteam/ugv_base_ros) reference
-    firmware/examples — protocol-level, not ROS-distro-specific) — publishing
-    `/robot_001/odom` + `/robot_001/imu/data`, subscribing `/robot_001/cmd_vel`. Not
-    yet built as of this writing — see the project's own planning notes for status
-    before assuming it exists.
+  - **Odom + IMU + `cmd_vel`→wheels (ESP32 sub-controller, UART, per
+    `robot_profiles/jetson_ugv_pt.yaml`'s `sub_controller` block): built 2026-08-06,
+    no longer a gap.** `nav_fleet/esp32_protocol.py` (pure JSON encode/decode +
+    diff-drive odometry integration) + `nav_fleet/esp32_driver.py` (the ROS2 node —
+    serial bridge to the sub-controller) publish `/robot_001/odom` +
+    `/robot_001/imu/data` and subscribe `/robot_001/cmd_vel`, against Waveshare's
+    documented JSON-over-serial protocol. Baud is 115200, not 921600 — the profile's
+    `imu.hz_min` was found to not be achievable at 921600 either way and was lowered
+    to 50 to match the driver's real default (see `CLAUDE.md`/the driver's own commit
+    history if the discrepancy matters later). Not yet run against the real ESP32 —
+    built and reviewed against the documented protocol only; the bench smoke test
+    below is the first real hardware exercise this driver gets.
 - [ ] **Verify all four real topics report, before anything else:**
   ```bash
   ros2 topic hz /robot_001/odom
@@ -153,6 +155,43 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   the old "geometry is not the gap" conclusion still holds.** (6-wheel skid-steer vs.
   the URDF's 4-wheel diff-drive model IS a separate, already-known real gap — the EKF
   node in A5 below is the mitigation, not a new task here.)
+- [ ] **Run the bench smoke test — do this before anything past this point relies on
+  the driver layer.** `tools/smoke_test.py` (built 2026-08-06) is a bench sanity check
+  for exactly this moment: it proves odom/scan/camera/imu are all publishing at real
+  rates, takes a photo, verifies a known-distance ball placement against BOTH the
+  lidar and the camera, and runs a small open-loop motion pulse (forward, then a
+  turn) — all BEFORE Nav2/SLAM/the mission is ever trusted to drive this robot.
+  From the workstation:
+  ```bash
+  scripts/hil_stage.sh smoke <the synced commit sha>
+  ```
+  This is attended, not automated — it will prompt you (in the same terminal) to
+  place the yellow ball. Two placement details matter, found live 2026-08-09 getting
+  this check to actually pass in sim:
+  - **Distance: ~2.5 ft (0.75 m) directly in front of the robot** — NOT the original
+    12"/0.305 m the design spec started with; 12" turned out to be geometrically
+    outside the camera's own field of view (confirmed via the real URDF geometry — a
+    floor-level object that close sits well below what a level, forward-mounted
+    camera can see). The prompt itself states the live distance, so this is a safety
+    note, not something you need to calculate by hand.
+  - **Height: on a riser/box, NOT the bare floor/bench surface** — this robot's lidar
+    (real hardware: `ldlidar_ros2`) is a 2D PLANAR lidar, one fixed scan height, zero
+    vertical resolution. A small ball sitting directly on the floor is entirely below
+    that scan plane and the lidar will never see it, at any distance. The ball's
+    CENTER needs to sit at roughly the lidar's own mount height (~10 in / 0.25 m off
+    the surface) — again, the prompt states the live number, use a box/riser under
+    the ball to get it there.
+  - **PASS requires every check to pass, including both sensors on the ball** — if it
+    FAILs, read which specific check failed before assuming the driver layer itself
+    is broken; a placement-distance/height miss looks identical to a real sensor
+    fault in the summary output, so double-check your physical placement first.
+  - **Don't run this back-to-back without resetting the robot's position.** The
+    motion check at the end physically moves the robot (a short forward pulse, then a
+    turn) — a SECOND smoke-test run right after, without physically repositioning the
+    robot back to its start spot/heading, will place the ball relative to the
+    robot's now-stale assumed heading and can fail for that reason alone, not a real
+    problem. Physically reset the robot's position between runs if you want to run it
+    more than once in a session.
 
 ### A3. Build the real-room SLAM map
 
@@ -376,3 +415,37 @@ One Jetson, no separate CI runner — this is a physical swap, every time:
 - [ ] `sudo systemctl enable robot-mission.service` (re-enable, if B3 disabled it).
 - [ ] Repeat A2's physical transplant steps to reinstall the Jetson into the robot.
 - [ ] Run B1's turn-on-and-go loop to confirm.
+
+### B5. Running the bench smoke test again, once `robot-mission.service` is enabled
+
+The smoke test (A2) isn't a one-time thing — run it again any time you want a quick
+driver-layer sanity check (after reconnecting a sensor, after a driver code change too
+small to warrant a full B3 HIL round-trip, etc.). Once `robot-mission.service` is
+installed and enabled, though, it's no longer automatically safe to just SSH in and
+run it — worth understanding why, not just following steps blindly:
+
+- **`robot-mission.service` starts the mission unconditionally, immediately, on every
+  single boot — there is no built-in check that waits for or defers to a smoke test.**
+  If the robot has just been power-cycled (or is about to be), the mission is either
+  already running or about to start the instant boot completes — there's no way to
+  SSH in fast enough to beat that, so don't try to race it.
+- [ ] **If you know ahead of time** you'll want to smoke-test after the next boot:
+  `sudo systemctl disable robot-mission.service` **before** power-cycling, not after —
+  disabling in advance means the mission never attempts to start on that boot at all,
+  no race involved.
+- [ ] **If the mission is already running** (you forgot to disable it first, or it
+  auto-started before you got to a terminal): stop it directly, don't reboot again to
+  try to catch a gap — `docker rm -f robot_mission` (or `sudo systemctl stop
+  robot-mission.service`) frees the hardware immediately, no timing involved. **Watch
+  the robot physically when you do this** — you're removing whatever is supervising
+  `cmd_vel` while the robot may still be mid-motion; don't assume it stops cleanly on
+  its own without checking.
+- [ ] Run the smoke test (A2's instructions — same command, same riser/height and
+  distance notes, same "don't run it back-to-back without repositioning" caution).
+- [ ] When done: `sudo systemctl enable robot-mission.service` again.
+- [ ] **Re-enabling alone does NOT run anything — `systemctl enable` only arms the
+  service for the *next* boot, it doesn't start it now.** Don't consider this closed
+  out until you've actually confirmed a real mission run afterward — either let the
+  next natural power-cycle do it, or run B1's turn-on-and-go loop directly to confirm
+  now. This mirrors B4's own last step for exactly the same reason: config alone
+  proves nothing ran.
