@@ -248,6 +248,33 @@ def test_check_ball_correlation_gzballops_no_ground_truth_fails_gracefully(monke
     # Must fail before ever attempting a placement -- there's no point in the world to
     # place the ball relative to.
     assert placed == []
+    # Real gap, found live in CI (stage-4-hil run 31333381064, 2026-08-09):
+    # smoke_ci's HIL container runs on the Jetson, which can never reach Gazebo's
+    # ground truth (that only exists on the workstation) -- this is a structural
+    # limitation of that specific path, not a real sensor/driver fault, and
+    # ball_correlation is already exercised for real with real ground truth by
+    # stage-2-gazebo (sim). 'skipped' distinguishes "couldn't judge" from "judged
+    # and failed" so run_smoke_test's overall_pass can treat it accordingly.
+    assert result['skipped'] is True
+
+
+def test_check_ball_correlation_normal_failure_is_not_marked_skipped(monkeypatch):
+    # The 'skipped' marker must be specific to "no ground truth" -- a REAL
+    # correlation failure (ground truth WAS available, the ball genuinely wasn't
+    # detected) must still count as a real failure, not get silently excused.
+    monkeypatch.setattr(LidarVisibleGzBallOps, 'place', lambda self, color, x, y: None)
+    monkeypatch.setattr('tools.smoke_test.get_ground_truth_xy', lambda: (1.0, 2.0))
+
+    node = rclpy.create_node('test_check_ball_correlation_real_failure')
+    try:
+        result = check_ball_correlation(node, LidarVisibleGzBallOps(), known_distance_m=0.305,
+                                        tolerance_m=0.1, window_s=0.1)
+    finally:
+        node.destroy_node()
+
+    # No scan/detection publishers in this test -> a real, judged FAIL.
+    assert result['pass'] is False
+    assert result.get('skipped', False) is False
 
 
 def test_lidar_visible_gz_ball_ops_is_a_gzballops_subclass():
@@ -480,6 +507,19 @@ def test_print_summary_reports_pass_and_fail(capsys):
     assert '=== Overall: FAIL ===' in captured.out
 
 
+def test_print_summary_reports_skip_distinct_from_fail(capsys):
+    # A skipped check (couldn't judge -- e.g. no ground truth in HIL) must read
+    # differently from a real FAIL in the printed summary, not just in the DB.
+    checks = {
+        'ball_correlation': {'pass': False, 'skipped': True,
+                             'reason': 'no ground truth available (Gazebo not running?)'},
+    }
+    _print_summary(checks, overall_pass=True)
+    captured = capsys.readouterr()
+    assert '[SKIP] ball_correlation:' in captured.out
+    assert '[FAIL] ball_correlation:' not in captured.out
+
+
 # --- run_smoke_test orchestration tests -------------------------------------
 #
 # run_smoke_test() calls rclpy.init()/rclpy.shutdown() itself, which would
@@ -518,6 +558,30 @@ def test_run_smoke_test_all_checks_pass_yields_overall_pass_true():
     assert kwargs['overall_pass'] is True
     assert set(kwargs['checks'].keys()) == {
         'odom', 'scan', 'camera', 'imu', 'photo', 'ball_correlation', 'motion'}
+
+
+def test_run_smoke_test_overall_pass_ignores_a_skipped_ball_correlation():
+    # Real gap, found live in CI (stage-4-hil, run 31333381064, 2026-08-09): the
+    # HIL-container path can never reach Gazebo ground truth, so
+    # check_ball_correlation degrades to a 'skipped' result there -- that must NOT
+    # drag down overall_pass when every check that COULD run actually passed.
+    # ball_correlation is already exercised for real (with real ground truth) by
+    # stage-2-gazebo -- this keeps stage-4-hil's own smoke-test regression honest
+    # about what it can and can't judge, per Mike's call: keep it simple, gate 2
+    # already covers the real check.
+    with patch('tools.smoke_test.rclpy') as mock_rclpy, \
+         patch('tools.smoke_test.smoke_test_log') as mock_log, \
+         patch('tools.smoke_test.check_topic', return_value={'pass': True}), \
+         patch('tools.smoke_test.check_photo', return_value={'pass': True}), \
+         patch('tools.smoke_test.check_ball_correlation',
+               return_value={'pass': False, 'skipped': True,
+                             'reason': 'no ground truth available (Gazebo not running?)'}), \
+         patch('tools.smoke_test.check_motion', return_value={'pass': True}):
+        mock_rclpy.create_node.return_value = MagicMock()
+        result = run_smoke_test('robot_profiles/jetson_ugv_pt.yaml', ball_ops=MagicMock())
+
+    assert result is True
+    assert mock_log.log_smoke_test_run.call_args.kwargs['overall_pass'] is True
 
 
 def test_run_smoke_test_runs_every_check_even_after_early_failure():

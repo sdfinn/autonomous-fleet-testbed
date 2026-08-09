@@ -214,8 +214,18 @@ def check_ball_correlation(node, ball_ops, known_distance_m=KNOWN_DISTANCE_M,
         # "facing north" comment.
         truth = get_ground_truth_xy()
         if truth is None:
+            # 'skipped' (not just 'pass': False) distinguishes "couldn't judge" from
+            # "judged and failed" -- found live in CI, 2026-08-09 (stage-4-hil run
+            # 31333381064): the HIL-container path runs on the Jetson, which can
+            # never reach Gazebo's ground truth (that only exists on the
+            # workstation) -- a structural limitation of that specific path, not a
+            # real sensor/driver fault. ball_correlation is already exercised for
+            # real, with real ground truth, by stage-2-gazebo (sim) -- Mike's call:
+            # keep this simple, don't drag down overall_pass for a check that
+            # genuinely cannot run here.
             return {
                 'pass': False,
+                'skipped': True,
                 'reason': 'no ground truth available (Gazebo not running?)',
                 'lidar_min_range_m': None,
                 'known_distance_m': known_distance_m,
@@ -363,7 +373,12 @@ def _is_degenerate_imu(msg):
 def _print_summary(checks, overall_pass):
     print("=== Smoke test summary ===")
     for name, result in checks.items():
-        status = 'PASS' if result.get('pass') else 'FAIL'
+        if result.get('skipped'):
+            status = 'SKIP'
+        elif result.get('pass'):
+            status = 'PASS'
+        else:
+            status = 'FAIL'
         print(f"[{status}] {name}: {result}")
     print(f"=== Overall: {'PASS' if overall_pass else 'FAIL'} ===")
 
@@ -396,7 +411,10 @@ def run_smoke_test(profile_path, ball_ops, runner_type='local', commit_sha=None,
         node.destroy_node()
         rclpy.shutdown()
 
-    overall_pass = all(c.get('pass', False) for c in checks.values())
+    # Skipped checks (couldn't judge -- e.g. no ground truth reachable from the HIL
+    # container) don't count toward overall_pass either way; a real failure still
+    # does. See check_ball_correlation's own comment for why this exists.
+    overall_pass = all(c.get('pass', False) for c in checks.values() if not c.get('skipped'))
     _print_summary(checks, overall_pass)
 
     smoke_test_log.log_smoke_test_run(
