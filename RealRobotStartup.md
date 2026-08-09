@@ -135,10 +135,25 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   and confirm `teleop_twist_keyboard`/`teleop_twist_joy` physically drives the wheels.
   (`ball_detector` subscribes to the camera topic and stays silently uninitialized,
   not crashed, if it's missing — check explicitly rather than discovering it later.)
-- [ ] Command the pan-tilt gimbal to a fixed forward/level pose (exact mechanism
-  depends on what `ugv_ws` exposes — joint command or vendor service call). Verify
-  with a test photo. `take_picture` assumes camera-heading == robot-yaw; this only
-  holds if the gimbal is pinned forward first.
+- [ ] **Command the pan-tilt gimbal to a fixed forward/level pose — mechanism found,
+  not yet verified against real hardware (2026-08-09 review).** This doc previously
+  said this "depends on what `ugv_ws` exposes" — stale/contradictory leftover from
+  before the 2026-08-06 "do NOT install `ugv_ws`" decision above; there is no
+  `ugv_ws`-specific gimbal mechanism to depend on anymore. Per Waveshare's own
+  documented sub-controller JSON command set, the gimbal is driven over the SAME
+  serial link/protocol `esp32_protocol.py` already implements (its `T:13`/`T:126`/
+  `T:131`/`T:136`/`T:142` commands) — a `T:133` command: `{"T":133,"X":<pan_deg>,
+  "Y":<tilt_deg>,"SPD":0,"ACC":0}`. **Caveat: sourced from Waveshare's wiki via web
+  search — direct fetches of the actual wiki page 403'd twice, so this is
+  search-engine-indexed content, not a primary-source read.** Sanity-check the exact
+  field names/ranges against the real hardware (or Waveshare's docs directly, if
+  reachable) before trusting it blindly. Concrete next step once confirmed: a small
+  `encode_gimbal_cmd(pan_deg, tilt_deg)` added to `esp32_protocol.py`, mirroring the
+  existing encoders — this only needs to be sent ONCE to pin the gimbal forward/level
+  (not continuously driven), so no new ROS2 node/topic is needed, just a one-off
+  script or CLI invocation at setup time. Verify with a test photo once sent —
+  `take_picture` assumes camera-heading == robot-yaw; this only holds if the gimbal
+  is pinned forward first.
 - [ ] Add a scan FOV mask for the pan-tilt mast's rear self-occlusion (a
   `LaserScanRangeFilter`/equivalent clearing the mast's known bearing range) —
   do this before the SLAM mapping step, not after; an unmasked scan corrupts the
