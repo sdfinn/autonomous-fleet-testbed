@@ -233,6 +233,36 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     ros2 topic echo /scan   # bare /scan, NOT /robot_001/scan yet — see the
                             # remapping gap note below
     ```
+    **Two more real, live issues hit getting this far, confirmed working
+    2026-08-09 — this Jetson's actual D500 unit needs BOTH fixes:**
+    - **The lidar enumerates as `/dev/ttyACM0`, NOT `/dev/ttyUSB0`** — the launch
+      file's `port_name` is hardcoded (no `LaunchConfiguration`/CLI-override
+      support at all, confirmed via `--show-args` returning "No arguments").
+      `lsusb` showed a `QinHeng Electronics USB Single Serial` device (the CH340-
+      family chip actually used here) — that's the tell, if this comes up again on
+      a different unit. Fix (source is symlink-installed, takes effect immediately,
+      no rebuild needed):
+      ```bash
+      sed -i "s|'/dev/ttyUSB0'|'/dev/ttyACM0'|" ~/ros2_drivers_ws/src/ldlidar_ros2/launch/ld19.launch.py
+      ```
+    - **Permission denied opening `/dev/ttyACM0`** even once the path was right —
+      standard Linux serial-device permissions: `crw-rw---- root dialout`, and
+      `mike` wasn't in the `dialout` group on this Jetson. Fix, then **log out and
+      back in (or open a brand new SSH session) — group membership does NOT apply
+      to an already-open shell**:
+      ```bash
+      sudo usermod -a -G dialout mike
+      # new session required here — verify with: groups
+      ```
+      A fresh session also means re-sourcing both ROS2 and the drivers workspace
+      overlay (neither persists across a fresh login, same as the main project
+      workspace — see the native-build note above):
+      ```bash
+      source /opt/ros/jazzy/setup.bash
+      source ~/ros2_drivers_ws/install/setup.bash
+      ```
+    **Confirmed working end-to-end after both fixes** — real, varying range data
+    streams on `/scan`.
   - **Camera (OAK-D Lite):** [`luxonis/depthai-ros`](https://github.com/luxonis/depthai-ros)
     — apt package exists for Jazzy, no source build needed. Check:
 
