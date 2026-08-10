@@ -208,6 +208,13 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     colcon build --symlink-install --cmake-args=-DCMAKE_BUILD_TYPE=Release
     source install/setup.bash
     ```
+    **Confirmed working, 2026-08-09** — `colcon build` finishes clean
+    (`1 package finished`). It still prints stderr, but that's just a compiler
+    warning in the vendor's own demo executable (`serial_baudrate` used
+    uninitialized as a `declare_parameter` default) — harmless in real use, where
+    that parameter is always set explicitly via launch args, not left at its
+    default. Don't mistake "package had stderr output" in the colcon summary for
+    a failure — only "Failed <<<" / a nonzero package-failed count means that.
 
     D500/STL-19P uses the **`ld19.launch.py`** launch file (not `ld06`/`ld14`/`ld14p`
     — those are for other LD-series models). Raw sanity check before wiring it into
