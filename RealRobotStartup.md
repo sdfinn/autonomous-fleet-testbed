@@ -169,22 +169,27 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     colcon build --symlink-install --cmake-args=-DCMAKE_BUILD_TYPE=Release
     source install/setup.bash
     ```
-    **Two real errors hit live, 2026-08-09, both one-time/easy fixes — don't be
-    thrown by either:**
-    - `rosdep: your rosdep installation has not been initialized yet` — this Jetson
-      had never run rosdep before. One-time fix, then retry `rosdep install` above:
-      ```bash
-      sudo rosdep init
-      rosdep update
-      ```
-    - `CMake Error ... sdk does not contain a CMakeLists.txt file` — `ldlidar_ros2`'s
-      `sdk/` directory is a git SUBMODULE (points at a separate vendor SDK repo); a
-      plain `git clone` leaves it empty, which is exactly what this error means. Fix
-      without re-cloning, then retry `colcon build` above:
-      ```bash
-      cd ~/ros2_drivers_ws/src/ldlidar_ros2
-      git submodule update --init --recursive
-      ```
+    **On a fresh Jetson, both `rosdep install` AND `colcon build` above will FAIL —
+    confirmed live, 2026-08-09, two separate root causes, both one-time fixes.**
+    Do NOT just re-run one of the two failed steps individually — both actually
+    failed (0 packages built), so both need re-running after fixing their causes.
+    Full corrected sequence:
+    ```bash
+    # One-time fixes for both root causes:
+    sudo rosdep init                                          # rosdep was never
+    rosdep update                                             # initialized on this Jetson
+    cd ~/ros2_drivers_ws/src/ldlidar_ros2
+    git submodule update --init --recursive                  # sdk/ is a git submodule;
+                                                               # plain clone leaves it empty,
+                                                               # causing a CMake error citing
+                                                               # sdk/CMakeLists.txt missing
+
+    # THEN redo the full original sequence — both steps failed the first time:
+    cd ~/ros2_drivers_ws
+    rosdep install --from-paths src --ignore-src -r -y
+    colcon build --symlink-install --cmake-args=-DCMAKE_BUILD_TYPE=Release
+    source install/setup.bash
+    ```
 
     D500/STL-19P uses the **`ld19.launch.py`** launch file (not `ld06`/`ld14`/`ld14p`
     — those are for other LD-series models). Raw sanity check before wiring it into
