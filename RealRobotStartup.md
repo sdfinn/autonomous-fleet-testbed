@@ -219,9 +219,17 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     D500/STL-19P uses the **`ld19.launch.py`** launch file (not `ld06`/`ld14`/`ld14p`
     — those are for other LD-series models). Raw sanity check before wiring it into
     this repo:
+    **`ros2 launch` runs in the foreground and never returns on its own** — the
+    commands below are two SEPARATE terminals/SSH sessions, not one sequential
+    block:
     ```bash
+    # Terminal 1:
     ls /dev/ttyUSB*   # confirm the lidar's serial port
     ros2 launch ldlidar_ros2 ld19.launch.py
+    # leave this running — watch for "ldlidar communication is normal" /
+    # "start normal, pub lidar data" in its own output
+
+    # Terminal 2 (new SSH session, while Terminal 1's launch is still running):
     ros2 topic echo /scan   # bare /scan, NOT /robot_001/scan yet — see the
                             # remapping gap note below
     ```
