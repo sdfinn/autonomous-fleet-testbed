@@ -190,6 +190,24 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     colcon build --symlink-install --cmake-args=-DCMAKE_BUILD_TYPE=Release
     source install/setup.bash
     ```
+    **A THIRD error hits after both of those are fixed — vendor SDK bug, not this
+    Jetson's fault, confirmed 2026-08-09 against a known upstream GitHub issue**
+    (`ldrobotSensorTeam/ldlidar_stl_ros2` issue #23 — same underlying SDK code):
+    a real C++ compile error, `pthread_mutex_init`/`_lock`/`_unlock` "not declared
+    in this scope" in `sdk/src/log_module.cpp`. Root cause: `sdk/include/
+    ldlidar_driver/log_module.h` has `#include <pthread.h>` commented out on its
+    Linux branch (line 37 on the commit this project's clone pulled) — the vendor
+    SDK simply doesn't compile clean on a modern toolchain as shipped. Fix,
+    confirmed against this exact clone (verify the line number still matches
+    yours with `grep -n pthread.h sdk/include/ldlidar_driver/log_module.h` first,
+    in case the vendor repo changes upstream):
+    ```bash
+    sed -i '37s|^//#include <pthread.h>|#include <pthread.h>|' \
+      ~/ros2_drivers_ws/src/ldlidar_ros2/sdk/include/ldlidar_driver/log_module.h
+    cd ~/ros2_drivers_ws
+    colcon build --symlink-install --cmake-args=-DCMAKE_BUILD_TYPE=Release
+    source install/setup.bash
+    ```
 
     D500/STL-19P uses the **`ld19.launch.py`** launch file (not `ld06`/`ld14`/`ld14p`
     — those are for other LD-series models). Raw sanity check before wiring it into
