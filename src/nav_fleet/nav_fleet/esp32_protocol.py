@@ -68,6 +68,17 @@ def encode_get_imu_data():
     return {"T": 126}
 
 
+def encode_gimbal_cmd(pan_deg, tilt_deg):
+    """CMD_GIMBAL_CTRL_SIMPLE (T:133) — commands the pan-tilt mast to an absolute
+    pose in degrees. SPD/ACC are both 0 (firmware "as fast as possible" default) —
+    this only needs to be sent ONCE at setup time to pin the gimbal forward/level,
+    not driven continuously, so there's no need to expose speed/accel here.
+    Sourced from Waveshare's wiki via web search (direct fetches 403'd) — field
+    names/ranges are NOT yet verified against real hardware; see RealRobotStartup.md
+    A2's gimbal checklist item before trusting this on the real robot."""
+    return {"T": 133, "X": pan_deg, "Y": tilt_deg, "SPD": 0, "ACC": 0}
+
+
 def encode_set_heartbeat_timeout(timeout_ms):
     """CMD_HEART_BEAT_SET (T:136) — the firmware's OWN watchdog: zeroes speed if no
     speed command arrives within this many ms (default 3000 on the board). Independent

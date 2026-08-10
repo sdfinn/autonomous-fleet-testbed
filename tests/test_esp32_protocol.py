@@ -6,14 +6,18 @@ import math
 import pytest
 
 from nav_fleet.esp32_protocol import (BaseInfo, OrientationData, encode_enable_feedback_flow,
-                                      encode_feedback_flow_interval, encode_get_imu_data,
-                                      encode_set_heartbeat_timeout, encode_velocity_cmd,
-                                      integrate_odometry, parse_base_info, parse_feedback_line,
-                                      parse_orientation)
+                                      encode_feedback_flow_interval, encode_gimbal_cmd,
+                                      encode_get_imu_data, encode_set_heartbeat_timeout,
+                                      encode_velocity_cmd, integrate_odometry, parse_base_info,
+                                      parse_feedback_line, parse_orientation)
 
 
 def test_encode_velocity_cmd():
     assert encode_velocity_cmd(0.1, 0.3) == {"T": 13, "X": 0.1, "Z": 0.3}
+
+
+def test_encode_gimbal_cmd():
+    assert encode_gimbal_cmd(0, 0) == {"T": 133, "X": 0, "Y": 0, "SPD": 0, "ACC": 0}
 
 
 def test_encode_enable_feedback_flow_on():
