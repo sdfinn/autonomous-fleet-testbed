@@ -10,7 +10,103 @@ alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean 
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
 
-## NEXT SESSION — START HERE (2026-08-04 — docker-brain unification SHIPPED, merged, live-validated on real hardware; Task 9 closed)
+## NEXT SESSION — START HERE (2026-08-09 EOD — real physical robot arrived and bring-up
+started LIVE; CI-side smoke-test fixes shipped + proven; hardware bring-up genuinely
+in progress, one real blocker open)
+
+**Two distinct threads finished/progressed today — CI-side fixes (done, pushed,
+proven) and physical robot bring-up (started today, real progress, one open
+blocker, nothing pushed yet).**
+
+### Thread 1: check_ball_correlation + related CI fixes — DONE, pushed, proven green
+Fixed three real bugs found live in CI (first-ever real exercise of the smoke-test
+feature from the prior session): (1) camera FOV geometry at the original 12" distance
+— raised to 0.75m; (2) 2D-planar lidar can't see a floor-level ball — spawns at lidar
+height now; (3) check_topic()'s Hz gates had zero tolerance for real timing jitter —
+added a 10% tolerance; (4) HIL-container ball_correlation can't reach Gazebo ground
+truth (structural, not a bug) — now marked `skipped`, doesn't fail the run. **Full
+pipeline (sim + real Jetson HIL) confirmed green multiple times**, most recently run
+`31336300719`. Also: a live doc review found and fixed two real `RealRobotStartup.md`
+gaps (`pull_ros_logs.py` silently stale for container-mode Nav2; the gimbal-control
+section still said "do NOT install `ugv_ws`" 37 lines after also saying gimbal control
+"depends on `ugv_ws`" — resolved via research: it's a `T:133` command over the SAME
+serial protocol `esp32_protocol.py` already uses, not `ugv_ws`-specific, but not yet
+implemented). All pushed to `origin/main` (last pushed: `f09c949`).
+
+Also did a one-off Jetson cleanup this session (separate from the above): fixed
+root-owned `~/fleet-ci-data` (known recurring issue, symptom-fixed again, root cause
+— no `USER` in the Dockerfile — deliberately deferred, Mike's call, "everything's
+working, more interested in moving forward"), cleared `~/.ros/log` (4.5G→48K, dead
+since Nav2 moved into the container), pruned 5.7G of stale docker build cache.
+
+### Thread 2: physical robot bring-up — STARTED LIVE TODAY, genuinely in progress
+The robot physically arrived and Mike began `RealRobotStartup.md`'s A1/A2 live,
+checkbox by checkbox, terminal-in-hand, with Claude debugging in real time via SSH.
+**This found a LOT of real, previously-undocumented gaps — the doc went from "links
+and vague pointers" to concrete, hardware-verified commands, several rounds, live.**
+**10 commits, all doc-only (`RealRobotStartup.md`), all LOCAL ONLY — nothing from this
+thread has been pushed. Check `git log origin/main..HEAD` first thing next session.**
+
+Real findings, in the order hit:
+- **A1 done**: CI green confirmed, power mode confirmed, `~/fleet-ci-data` ownership
+  clean (from the cleanup above).
+- **Native workspace build was never documented as a real prerequisite** — this exact
+  Jetson checkout had genuinely never been `colcon build`'d (every prior HIL/CI run
+  used the pre-built container image instead). Added as an explicit new A2 step. Two
+  system packages it needs (`ros-jazzy-robot-localization`, `ros-jazzy-vision-msgs`)
+  were already installed — nothing to do there.
+- **Lidar (`ldlidar_ros2`) — fully verified working, real hardware, real data.** Three
+  real build/runtime bugs found + fixed, all now documented with exact commands:
+  rosdep never initialized on this Jetson; the SDK's `sdk/` dir is a git submodule a
+  plain clone leaves empty; a genuine vendor bug (`#include <pthread.h>` commented out
+  in the SDK's own `log_module.h`, confirmed against a known upstream GitHub issue).
+  Plus two hardware-specific gotchas: this unit enumerates as `/dev/ttyACM0` (not the
+  vendor's hardcoded default `/dev/ttyUSB0`), and needed the user added to the
+  `dialout` group (`crw-rw---- root:dialout` device perms).
+- **Camera (`depthai-ros`, OAK-D Lite) — fully verified working, real hardware, real
+  data.** apt-installed cleanly. Needed a udev rule for the Movidius USB device
+  (`03e7:2485`, same class of fix as `dialout` above, different mechanism) — confirmed
+  a power-cycle re-applies udev rules via the boot-time coldplug pass, no need to
+  physically find/replug the camera's jammed-in cable.
+- **Real, project-wide-relevant bug found: CycloneDDS doesn't deliver uncompressed
+  `sensor_msgs/Image` messages at all** (`ros2 topic hz` hangs indefinitely on
+  `/oak/rgb/image_raw`/`image_rect`, while compressed siblings work immediately) — a
+  known, documented ROS2/CycloneDDS large-message limitation, not a depthai-ros bug.
+  **This will hit the real deployed robot too** — `ball_detector.py` subscribes to
+  `/robot_001/camera/image_raw`, the identical topic class. Worked around for
+  bench-testing only (`sysctl` + a one-off CycloneDDS XML file) — **NOT yet folded
+  into `scripts/regen_cyclonedds_config.sh`, which is what the real container path
+  actually uses.** This is a real, scoped, not-yet-started TODO: fix the script,
+  re-verify via the FULL CI+HIL cycle (Ethernet-reconnected, same bar as Thread 1's
+  fixes) before trusting it on the real robot.
+- **`.bashrc` updated to auto-source both project workspaces** (matching the
+  workstation's own convention) — verified working, but ONLY via a proper interactive-
+  shell test (`bash -ic '...'`) — a naive `ssh host "command"` test gives a false
+  negative here, since Ubuntu's default `.bashrc` has the identical
+  `case $- in *i*) ;; *) return;; esac` early-exit guard documented elsewhere in this
+  file for the workstation. Don't re-litigate this as "broken" without using that same
+  test methodology.
+- **ESP32 driver / odom+IMU — UNRESOLVED, stopped here for the night.** Connects via
+  the Jetson's 40-pin header UART (`/dev/ttyTHS1` or `/dev/ttyTHS2`, not USB).
+  `ttyTHS1` shows genuine electrical activity (likely an ESP32 boot-reset burst) and
+  correct baud (115200, confirmed via `stty`) — yet `esp32_driver` run directly against
+  it still produces zero messages on `/robot_001/odom`. Full diagnostic trail and the
+  next-step plan (power-cycle first, untested — deliberately not attempted this late)
+  are in `RealRobotStartup.md` itself now, not just here.
+- **Not yet reached:** gimbal control (researched, not implemented — see Thread 1's
+  doc-review note), the `sensors_only_launch.py` topic-remapping gap (pre-existing,
+  still open), footprint verification, SLAM mapping, HSV calibration, and everything
+  else past A2.
+
+**Next session, in order:** (1) decide whether to push Thread 2's 10 local commits
+before or after resuming — they're pure documentation of real findings, low-risk to
+push anytime; (2) resume the ESP32/odom investigation starting with the power-cycle
+Mike already planned; (3) once odom+IMU are confirmed, finish A2 (gimbal, footprint,
+remapping fix — remapping needs the SAME full-CI+HIL treatment as the CycloneDDS fix,
+both touch `sensors_only_launch.py`, worth doing together); (4) A3 onward (SLAM map,
+HSV calibration) still untouched.
+
+## (superseded 2026-08-09) PREVIOUS (2026-08-04 — docker-brain unification SHIPPED, merged, live-validated on real hardware; Task 9 closed)
 
 **The whole docker-brain-unification effort (all 9 tasks) is done and merged to
 `main`.** Implemented via subagent-driven-development in an isolated worktree (Tasks
