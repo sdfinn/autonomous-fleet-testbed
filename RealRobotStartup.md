@@ -151,51 +151,52 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     ```bash
     ros2 pkg executables nav_fleet | grep esp32
     ```
-    **NOT YET WORKING against real hardware — stopped here 2026-08-09 EOD, resume
-    here next session.** The ESP32 connects via the Jetson's 40-pin header UART
-    (the "red wire → red pin" wiring from earlier in this doc), not USB — two
-    candidate devices exist on this Jetson, `/dev/ttyTHS1` and `/dev/ttyTHS2`
-    (`ls /dev/ttyTHS*`). Run directly (no launch-arg support was checked/needed,
-    just pass params on the CLI):
+    **WORKING against real hardware, confirmed 2026-08-10 — root-caused and
+    fixed.** Wiring/baud/UART device were never the problem (`/dev/ttyTHS1`,
+    115200, confirmed 2026-08-09). Run directly (no launch-arg support was
+    checked/needed, just pass params on the CLI):
     ```bash
     ros2 run nav_fleet esp32_driver --ros-args -p serial_device:=/dev/ttyTHS1 -p baud:=115200
     ```
     Then in a second terminal: `ros2 topic hz /robot_001/odom` /
-    `ros2 topic hz /robot_001/imu/data`.
+    `ros2 topic hz /robot_001/imu/data` — both now publish at ~19.8Hz.
 
-    **What's confirmed so far:**
-    - `ttyTHS2`: completely silent (`timeout 5 cat /dev/ttyTHS2` — zero bytes,
-      ever). Low priority to revisit unless `ttyTHS1` is ruled out entirely.
-    - `ttyTHS1`: genuine electrical activity confirmed (`timeout 5 cat
-      /dev/ttyTHS1` showed real bytes on the first read after opening the port —
-      most likely an ESP32 boot-reset message burst, a well-known behavior when a
-      serial port is first opened on boards with auto-reset circuitry; silent on
-      a second read, consistent with normal firmware needing an explicit
-      "start streaming" request before it continuously reports — which a bare
-      `cat` never sends, only `esp32_driver` itself does).
-    - Baud confirmed correct: `stty -F /dev/ttyTHS1` already reports
-      `115200 baud` — ruled out as the mismatch.
-    - **Despite all of the above pointing at `ttyTHS1` being the right physical
-      wire, `esp32_driver` run directly against it still produces ZERO messages
-      on `/robot_001/odom`** — genuinely unresolved, not yet root-caused.
-    - The driver's own startup log (`"esp32_driver up — /dev/ttyTHS1@115200..."`)
-      and its cmd_vel watchdog firing (`"watchdog tripped — zero-velocity sent"`)
-      do NOT prove real hardware communication — re-examined live and concluded
-      the watchdog is a local ROS2-topic-side timer (no `cmd_vel` received
-      recently), unrelated to whether the serial link itself is actually
-      talking to a real ESP32. Don't be misled by it again.
-
-    **Next step, untested, Mike's own hypothesis — try this FIRST next session:**
-    physically power-cycle the ESP32 sub-controller (or the whole robot) fresh,
-    then immediately retry `esp32_driver` against `ttyTHS1` before doing anything
-    else to it. Deliberately not attempted tonight (too late to safely power-cycle
-    hardware). If that doesn't resolve it, next things to check, in order: (1)
-    physically verify the UART TX/RX wires themselves are actually connected
-    (the earlier gimbal-wiring investigation this session was about POWER only,
-    never confirmed the separate DATA wires), (2) try `ttyTHS2` again fresh in
-    case `ttyTHS1`'s "real activity" was coincidental/unrelated, (3) check
-    whether `esp32_driver.py`'s own request/response handshake logic
-    (`encode_enable_feedback_flow`) has a real bug independent of wiring.
+    **Root cause (2026-08-09's "genuinely unresolved" ZERO-messages bug):**
+    `esp32_protocol.py`'s field-mapping for the two feedback messages
+    (reconstructed 2026-08-06 from firmware source) had the shapes backwards —
+    a real firmware-source-vs-runtime-JSON discrepancy, not a transcription
+    error. Confirmed by bypassing `esp32_driver`/ROS2 entirely and probing
+    `/dev/ttyTHS1` directly with raw pyserial: the ESP32 responds perfectly to
+    both `T:131` (enable stream) and `T:126` (IMU request) — wiring/protocol
+    commands were always fine. The bug: `T:1001` (continuous stream) actually
+    carries wheel speeds + RAW accel/gyro/mag + encoder ticks, NOT fused
+    roll/pitch/yaw/temp as assumed; `T:1002` (one-shot `T:126` reply) actually
+    carries fused roll/pitch/yaw + a quaternion, NOT raw IMU data as assumed.
+    `parse_base_info`/`parse_imu_data` were both hitting `KeyError` on every
+    real line and silently returning `None` — regardless of power state, which
+    is exactly why the untested power-cycle hypothesis below didn't fix it
+    when tried first this session (real information at the time: it ruled out
+    a stuck-firmware explanation, correctly pointing the investigation at the
+    driver's own parsing instead of the hardware).
+    A second real bug was caught by the same fix, before ever reaching hardware:
+    the real ESP32 sends whole-number readings as bare JSON ints (`"ax":-36`),
+    and `esp32_driver._publish_imu`'s direct field assignment into a ROS
+    `geometry_msgs/Vector3` has no arithmetic to coerce int→float the way
+    `_publish_odom`'s `/2.0` division accidentally does — an int there
+    hard-**aborts the whole process** (`rosidl`'s C converter asserts
+    `PyFloat_Check` rather than raising a catchable exception). Would have
+    crashed the real driver the instant it published a real IMU reading;
+    caught via TDD using the actual captured bytes as test fixtures before it
+    ever ran unguarded on hardware. Both fixes, plus regression tests built
+    from the real captures: `src/nav_fleet/nav_fleet/esp32_protocol.py`
+    (renamed `ImuData`/`parse_imu_data` → `OrientationData`/`parse_orientation`
+    to match what that message actually carries), `esp32_driver.py`,
+    `tests/test_esp32_protocol.py`, `tests/test_esp32_driver.py`.
+    **Known, deliberately deferred gap:** the real fused orientation
+    (`T:1002`'s quaternion) is parsed and cached (`driver._last_orientation`)
+    but NOT YET wired into the published `Imu` message's `orientation` field —
+    its axis convention (q0=w vs q0=x, Hamilton vs JPL) is unconfirmed against
+    real hardware rotation testing. Flagged in code, not guessed.
   - **Lidar (D500 / STL-19P):** [`ldrobotSensorTeam/ldlidar_ros2`](https://github.com/ldrobotSensorTeam/ldlidar_ros2)
     — vendor-maintained, no apt package, build from source. Confirmed against a guide
     written for this exact model + ROS2 Jazzy combo. Check:
