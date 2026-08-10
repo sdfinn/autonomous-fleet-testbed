@@ -89,6 +89,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
 - [X] Follow Waveshare's assembly video/wiki for the physical steps (screws, cable
   routing, Jetson seating) — fill in as you go, this doc can't verify hardware steps
   from a video:
+
   - [ ] ---
   - [ ] ---
   - [ ] ---
@@ -96,7 +97,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
 - [X] SSH in over WiFi: `ssh mike@jetson.local` (should resolve reliably — see the
   WiFi note above; fall back to the router admin page's DHCP lease list if not).
 - [X] Check Jetson health: `nvidia-smi`, temp, `df -h` free space.
-- [ ] **Build the native workspace — found missing 2026-08-09, first time this
+- [X] **Build the native workspace — found missing 2026-08-09, first time this
   checkout has ever needed a bare-metal build.** Every prior HIL/CI run on this
   Jetson used the pre-built CONTAINER image (`stage-3-arm64`'s output) — this exact
   native checkout (`~/autonomous-fleet-testbed`) has never actually been
@@ -107,6 +108,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   does NOT auto-source the workspace overlay (unlike the workstation's `.bashrc`,
   which does — this Jetson's is different, don't assume parity between the two
   machines' shell setups).
+
   ```bash
   # Two system packages this project needs that aren't in a base ROS2 install —
   # check first, only install if actually missing:
@@ -119,6 +121,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   colcon build --symlink-install
   source install/setup.bash
   ```
+
   If the build itself errors, that's a real problem to resolve here, not push
   past — don't proceed to the driver-layer step below until `colcon build`
   finishes clean.
@@ -130,6 +133,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   or community-confirmed-working for Jetson Orin. Everything else in this project is
   Jazzy-only. `robot_profiles/jetson_ugv_pt.yaml` already names the real hardware, and
   it splits cleanly:
+
   - **Odom + IMU + `cmd_vel`→wheels (ESP32 sub-controller, UART, per
     `robot_profiles/jetson_ugv_pt.yaml`'s `sub_controller` block): built 2026-08-06,
     no longer a gap.** `nav_fleet/esp32_protocol.py` (pure JSON encode/decode +
@@ -143,15 +147,18 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     this repo's own code, covered by the native workspace build above (NOT by A1's
     sync, which only fast-forwards git — see that new step if this comes back empty).
     Check:
+
     ```bash
     ros2 pkg executables nav_fleet | grep esp32
     ```
   - **Lidar (D500 / STL-19P):** [`ldrobotSensorTeam/ldlidar_ros2`](https://github.com/ldrobotSensorTeam/ldlidar_ros2)
     — vendor-maintained, no apt package, build from source. Confirmed against a guide
     written for this exact model + ROS2 Jazzy combo. Check:
+
     ```bash
     ros2 pkg list | grep ldlidar
     ```
+
     Install:
     ```bash
     mkdir -p ~/ros2_drivers_ws/src
@@ -162,6 +169,23 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     colcon build --symlink-install --cmake-args=-DCMAKE_BUILD_TYPE=Release
     source install/setup.bash
     ```
+    **Two real errors hit live, 2026-08-09, both one-time/easy fixes — don't be
+    thrown by either:**
+    - `rosdep: your rosdep installation has not been initialized yet` — this Jetson
+      had never run rosdep before. One-time fix, then retry `rosdep install` above:
+      ```bash
+      sudo rosdep init
+      rosdep update
+      ```
+    - `CMake Error ... sdk does not contain a CMakeLists.txt file` — `ldlidar_ros2`'s
+      `sdk/` directory is a git SUBMODULE (points at a separate vendor SDK repo); a
+      plain `git clone` leaves it empty, which is exactly what this error means. Fix
+      without re-cloning, then retry `colcon build` above:
+      ```bash
+      cd ~/ros2_drivers_ws/src/ldlidar_ros2
+      git submodule update --init --recursive
+      ```
+
     D500/STL-19P uses the **`ld19.launch.py`** launch file (not `ld06`/`ld14`/`ld14p`
     — those are for other LD-series models). Raw sanity check before wiring it into
     this repo:
@@ -173,14 +197,17 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     ```
   - **Camera (OAK-D Lite):** [`luxonis/depthai-ros`](https://github.com/luxonis/depthai-ros)
     — apt package exists for Jazzy, no source build needed. Check:
+
     ```bash
     dpkg -l | grep depthai
     ```
+
     Install:
     ```bash
     sudo apt update
     sudo apt install -y ros-jazzy-depthai-ros ros-jazzy-depthai-bridge ros-jazzy-depthai-examples
     ```
+
     **Launch file name unconfirmed — two different names found (`camera.launch.py`
     vs `driver.launch.py`), neither independently verified against the real
     installed package yet.** Check directly once installed:
@@ -203,6 +230,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     driver's actual topic names, not guessed in advance. Flag this to Claude once
     both drivers are confirmed running with their own default topics visible.
 - [ ] **Verify all four real topics report, before anything else:**
+
   ```bash
   ros2 topic hz /robot_001/odom
   ros2 topic hz /robot_001/scan
@@ -257,6 +285,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   lidar and the camera, and runs a small open-loop motion pulse (forward, then a
   turn) — all BEFORE Nav2/SLAM/the mission is ever trusted to drive this robot.
   From the workstation:
+
   ```bash
   scripts/hil_stage.sh smoke <the synced commit sha>
   ```
@@ -264,11 +293,12 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   This is attended, not automated — it will prompt you (in the same terminal) to
   place the yellow ball. Two placement details matter, found live 2026-08-09 getting
   this check to actually pass in sim:- **Distance: ~2.5 ft (0.75 m) directly in front of the robot** — NOT the original
-    12"/0.305 m the design spec started with; 12" turned out to be geometrically
-    outside the camera's own field of view (confirmed via the real URDF geometry — a
-    floor-level object that close sits well below what a level, forward-mounted
-    camera can see). The prompt itself states the live distance, so this is a safety
-    note, not something you need to calculate by hand.
+  12"/0.305 m the design spec started with; 12" turned out to be geometrically
+  outside the camera's own field of view (confirmed via the real URDF geometry — a
+  floor-level object that close sits well below what a level, forward-mounted
+  camera can see). The prompt itself states the live distance, so this is a safety
+  note, not something you need to calculate by hand.
+
   - **Height: on a riser/box, NOT the bare floor/bench surface** — this robot's lidar
     (real hardware: `ldlidar_ros2`) is a 2D PLANAR lidar, one fixed scan height, zero
     vertical resolution. A small ball sitting directly on the floor is entirely below
@@ -345,6 +375,7 @@ camera.** `hsv_gazebo.yaml`'s thresholds are tuned for Gazebo's rendered ball ma
 - [ ] Take a close-up photo of the real red ball with the robot's actual camera, under
   the actual deployment lighting, filling most of the frame. Repeat for yellow.
 - [ ] Get a suggested threshold from each photo:
+
   ```bash
   python -m tools.calibrate_hsv_realcam red_ball_photo.png --color red
   python -m tools.calibrate_hsv_realcam yellow_ball_photo.png --color yellow
@@ -355,6 +386,7 @@ camera.** `hsv_gazebo.yaml`'s thresholds are tuned for Gazebo's rendered ball ma
   Sanity-check the printed numbers look like real hue values (red near 0/360, yellow
   in the 40-75 range) before trusting them.
 - [ ] Create `src/nav_fleet/config/hsv_realcam.yaml`, same shape as `hsv_gazebo.yaml`:
+
   ```yaml
   colors:
     red:    {h: [<from tool>], s_min: <from tool>, v_min: <from tool>}
@@ -384,6 +416,7 @@ passed in by `scripts/container_entrypoint.sh` (see A6). Nothing to write here.
 just install and verify:
 
 - [ ] Get the exact HIL-tested commit onto this checkout (from the workstation):
+
   ```bash
   scripts/hil_stage.sh sync <the green run's commit sha>
   ```
@@ -403,6 +436,7 @@ just install and verify:
   completion.
 - [ ] Only once that manual run has actually passed: install the systemd unit so
   power-on triggers it automatically.
+
   ```bash
   sudo cp scripts/robot-mission.service /etc/systemd/system/
   sudo systemctl daemon-reload
