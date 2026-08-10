@@ -5,32 +5,43 @@ differential-drive odometry integration. No ROS2, no pyserial — the serial.Ser
 I/O boundary itself lives in esp32_driver.py and stays thin/untested until real
 hardware exists (same treatment this project already gives other hardware boundaries).
 
-Protocol reconstructed 2026-08-06 directly from the real vendor firmware source
-(waveshareteam/ugv_base_general, General_Driver/*.h) — NOT the host reference client
-scripts (ugv_rpi/ugv_jetson's base_ctrl.py), which turned out to just pass through raw
-JSON without parsing odom/IMU fields at all. See CMD_ROS_CTRL (json_cmd.h),
-baseInfoFeedback() (ugv_advance.h), getIMUData() (IMU_ctrl.h).
+Protocol commands (T:13/131/142/126/136) reconstructed 2026-08-06 directly from the
+real vendor firmware source (waveshareteam/ugv_base_general, General_Driver/*.h) —
+NOT the host reference client scripts (ugv_rpi/ugv_jetson's base_ctrl.py), which
+turned out to just pass through raw JSON without parsing odom/IMU fields at all. See
+CMD_ROS_CTRL (json_cmd.h), baseInfoFeedback() (ugv_advance.h), getIMUData() (IMU_ctrl.h).
 
-Command "T" codes used here: 13 (velocity), 131 (enable/disable the continuous
-telemetry stream), 142 (stream interval), 126 (one-shot raw IMU request), 136
-(firmware's own heartbeat/watchdog timeout).
-
-Feedback "T" codes: 1001 (FEEDBACK_BASE_INFO — wheel speeds L/R in m/s + fused
-roll/pitch/yaw, streamed continuously once enabled), 1002 (FEEDBACK_IMU_DATA — raw
-accel/gyro/mag, one-shot response to a T:126 request only, never part of the stream).
+**Feedback field SHAPES corrected 2026-08-10 against real hardware** — the
+2026-08-06 source read got the two feedback messages' actual field layout backwards
+(a genuine discrepancy between the firmware source and its real runtime JSON output,
+not a transcription error). Confirmed by directly probing the real ESP32 sub-
+controller over /dev/ttyTHS1 (root-cause investigation for the "esp32_driver
+produces zero /robot_001/odom or /robot_001/imu/data messages" bug) and capturing
+real bytes — see test_esp32_protocol.py's `_real_hardware_capture` tests, which use
+those exact captured lines as fixtures:
+- T:1001 (FEEDBACK_BASE_INFO, streamed continuously once enabled): wheel speeds
+  L/R (m/s) + RAW accel/gyro/mag + wheel encoder tick counts + voltage. NOT fused
+  roll/pitch/yaw/temp as originally assumed — those keys don't exist in this message.
+- T:1002 (FEEDBACK_IMU_DATA, one-shot response to a T:126 request only, never part
+  of the stream): fused roll/pitch/yaw (Euler) PLUS a quaternion. NOT raw
+  accel/gyro/mag/temp as originally assumed — those keys don't exist in this message
+  either; the raw IMU data is in T:1001 instead. BaseInfo/parse_base_info stayed
+  as-is (still the right message for L/R, plus a bonus of raw IMU fields);
+  ImuData/parse_imu_data renamed to OrientationData/parse_orientation to match what
+  this message actually carries.
 """
 import collections
 import json
 import math
 
 BaseInfo = collections.namedtuple(
-    'BaseInfo', ['speed_l', 'speed_r', 'roll', 'pitch', 'yaw', 'temp', 'voltage'])
-ImuData = collections.namedtuple(
-    'ImuData', ['roll', 'pitch', 'yaw', 'ax', 'ay', 'az', 'gx', 'gy', 'gz',
-                'mx', 'my', 'mz', 'temp'])
+    'BaseInfo', ['speed_l', 'speed_r', 'ax', 'ay', 'az', 'gx', 'gy', 'gz',
+                'mx', 'my', 'mz', 'odl', 'odr', 'voltage'])
+OrientationData = collections.namedtuple(
+    'OrientationData', ['roll', 'pitch', 'yaw', 'q0', 'q1', 'q2', 'q3'])
 
 _FEEDBACK_BASE_INFO = 1001
-_FEEDBACK_IMU_DATA = 1002
+_FEEDBACK_ORIENTATION = 1002
 
 
 def encode_velocity_cmd(linear_x, angular_z):
@@ -77,27 +88,52 @@ def parse_feedback_line(line):
 
 def parse_base_info(data):
     """T:1001 (FEEDBACK_BASE_INFO) -> BaseInfo, or None if `data` isn't this message
-    type or is missing an expected field."""
+    type or is missing an expected field.
+
+    speed_l/speed_r/ax/ay/az/gx/gy/gz are coerced to float — the real firmware sends
+    whole-number readings as bare JSON ints (e.g. "ax":-36, confirmed against a real
+    capture), and every one of these fields eventually reaches a ROS float64 message
+    field (Odometry.twist / Imu.linear_acceleration / Imu.angular_velocity).
+    esp32_driver._publish_imu's direct field assignment has no arithmetic to coerce
+    an int to float the way _publish_odom's `/2.0` division accidentally does —
+    passing an int straight to a geometry_msgs/Vector3 field hard-ABORTS the whole
+    process (rosidl's C converter asserts PyFloat_Check rather than raising a
+    catchable Python exception). Found 2026-08-10 the hard way: a real crash,
+    reproduced from the real captured bytes, not a hypothetical. mx/my/mz/odl/odr
+    aren't currently consumed by any ROS message field, so left as-is (ints from the
+    firmware, which is what encoder tick counts naturally are anyway)."""
     if not isinstance(data, dict) or data.get("T") != _FEEDBACK_BASE_INFO:
         return None
     try:
-        return BaseInfo(speed_l=data["L"], speed_r=data["R"], roll=data["r"],
-                        pitch=data["p"], yaw=data["y"], temp=data["temp"],
-                        voltage=data["v"])
+        return BaseInfo(speed_l=float(data["L"]), speed_r=float(data["R"]),
+                        ax=float(data["ax"]), ay=float(data["ay"]), az=float(data["az"]),
+                        gx=float(data["gx"]), gy=float(data["gy"]), gz=float(data["gz"]),
+                        mx=data["mx"], my=data["my"], mz=data["mz"],
+                        odl=data["odl"], odr=data["odr"], voltage=data["v"])
     except KeyError:
         return None
 
 
-def parse_imu_data(data):
-    """T:1002 (FEEDBACK_IMU_DATA) -> ImuData, or None if `data` isn't this message
-    type or is missing an expected field."""
-    if not isinstance(data, dict) or data.get("T") != _FEEDBACK_IMU_DATA:
+def parse_orientation(data):
+    """T:1002 (FEEDBACK_IMU_DATA, a one-shot reply to a T:126 request) -> fused
+    orientation (Euler + quaternion), or None if `data` isn't this message type or
+    is missing an expected field. Named for what this message actually carries
+    (fused orientation), not the firmware's own "IMU data" feedback-code name — see
+    this file's module docstring for why.
+
+    roll/pitch/yaw/q0-q3 are coerced to float for the same reason parse_base_info's
+    fields are (see its docstring) — a real capture showed these as bare JSON ints
+    too ("r":0 etc.). Not yet wired into a ROS message field (esp32_driver.py's
+    self._last_orientation is cached but unused — see its comment), but the same
+    hard-abort landmine would hit geometry_msgs/Quaternion the moment it is, so
+    fixed here now rather than left for whoever wires it in to rediscover."""
+    if not isinstance(data, dict) or data.get("T") != _FEEDBACK_ORIENTATION:
         return None
     try:
-        return ImuData(roll=data["r"], pitch=data["p"], yaw=data["y"],
-                       ax=data["ax"], ay=data["ay"], az=data["az"],
-                       gx=data["gx"], gy=data["gy"], gz=data["gz"],
-                       mx=data["mx"], my=data["my"], mz=data["mz"], temp=data["temp"])
+        return OrientationData(roll=float(data["r"]), pitch=float(data["p"]),
+                               yaw=float(data["y"]), q0=float(data["q0"]),
+                               q1=float(data["q1"]), q2=float(data["q2"]),
+                               q3=float(data["q3"]))
     except KeyError:
         return None
 

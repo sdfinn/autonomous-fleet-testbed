@@ -1,14 +1,15 @@
 # Copyright 2026 Mike
 # SPDX-License-Identifier: Apache-2.0
+import json
 import math
 
 import pytest
 
-from nav_fleet.esp32_protocol import (BaseInfo, ImuData, encode_enable_feedback_flow,
+from nav_fleet.esp32_protocol import (BaseInfo, OrientationData, encode_enable_feedback_flow,
                                       encode_feedback_flow_interval, encode_get_imu_data,
                                       encode_set_heartbeat_timeout, encode_velocity_cmd,
                                       integrate_odometry, parse_base_info, parse_feedback_line,
-                                      parse_imu_data)
+                                      parse_orientation)
 
 
 def test_encode_velocity_cmd():
@@ -48,11 +49,16 @@ def test_parse_feedback_line_empty_string_returns_none():
 
 
 def test_parse_base_info_valid():
-    data = {"T": 1001, "L": 0.1, "R": 0.12, "r": 0.0, "p": 0.0, "y": 1.5,
-            "temp": 30.0, "v": 11.8}
+    # Real T:1001 wire shape (see esp32_protocol.py's module docstring, corrected
+    # 2026-08-10) — wheel speeds + RAW accel/gyro/mag + encoder ticks + voltage.
+    # NOT roll/pitch/yaw/temp — that was the original (wrong) 2026-08-06 assumption.
+    data = {"T": 1001, "L": 0.1, "R": 0.12, "ax": 0.1, "ay": 0.2, "az": 9.8,
+            "gx": 0.01, "gy": 0.02, "gz": 0.03, "mx": 10, "my": 11, "mz": 12,
+            "odl": -1, "odr": 0, "v": 11.8}
     info = parse_base_info(data)
-    assert info == BaseInfo(speed_l=0.1, speed_r=0.12, roll=0.0, pitch=0.0,
-                            yaw=1.5, temp=30.0, voltage=11.8)
+    assert info == BaseInfo(speed_l=0.1, speed_r=0.12, ax=0.1, ay=0.2, az=9.8,
+                            gx=0.01, gy=0.02, gz=0.03, mx=10, my=11, mz=12,
+                            odl=-1, odr=0, voltage=11.8)
 
 
 def test_parse_base_info_wrong_type_returns_none():
@@ -63,16 +69,73 @@ def test_parse_base_info_missing_field_returns_none():
     assert parse_base_info({"T": 1001, "L": 0.1}) is None
 
 
-def test_parse_imu_data_valid():
-    data = {"T": 1002, "r": 0.0, "p": 0.0, "y": 0.0, "ax": 0.1, "ay": 0.2, "az": 9.8,
-            "gx": 0.01, "gy": 0.02, "gz": 0.03, "mx": 10, "my": 11, "mz": 12, "temp": 30.0}
-    info = parse_imu_data(data)
-    assert info == ImuData(roll=0.0, pitch=0.0, yaw=0.0, ax=0.1, ay=0.2, az=9.8,
-                           gx=0.01, gy=0.02, gz=0.03, mx=10, my=11, mz=12, temp=30.0)
+def test_parse_base_info_real_hardware_capture():
+    # Byte-for-byte from a live probe against the real ESP32 sub-controller over
+    # /dev/ttyTHS1, 2026-08-10 (root-cause investigation for the odom/imu-never-
+    # publishes bug) — not hand-written, so this can't silently drift from what the
+    # real firmware actually sends the way the 2026-08-06 reconstruction did.
+    data = json.loads(
+        '{"T":1001,"L":0,"R":0,"ax":-36,"ay":68,"az":8556,"gx":-8,"gy":16,"gz":0,'
+        '"mx":-555,"my":502,"mz":612,"odl":-1,"odr":0,"v":1203}')
+    info = parse_base_info(data)
+    assert info == BaseInfo(speed_l=0, speed_r=0, ax=-36, ay=68, az=8556, gx=-8,
+                            gy=16, gz=0, mx=-555, my=502, mz=612, odl=-1, odr=0,
+                            voltage=1203)
 
 
-def test_parse_imu_data_wrong_type_returns_none():
-    assert parse_imu_data({"T": 1001, "L": 0.1}) is None
+def test_parse_base_info_coerces_whole_number_fields_to_float():
+    # Real regression, not a hypothetical: the real firmware sends whole-number
+    # readings as bare JSON ints ("ax":-36), and esp32_driver._publish_imu assigns
+    # ax/ay/az/gx/gy/gz straight into a ROS Imu message's geometry_msgs/Vector3
+    # fields with no intervening arithmetic — an int there hard-ABORTS the whole
+    # process (rosidl's C converter asserts PyFloat_Check rather than raising a
+    # catchable exception). Reproduced live 2026-08-10 from these exact bytes before
+    # this coercion existed. speed_l/speed_r locked in too since they reach
+    # Odometry's float64 fields the same way, just via arithmetic that happens to
+    # coerce today — this test doesn't rely on that arithmetic staying in place.
+    data = json.loads(
+        '{"T":1001,"L":0,"R":0,"ax":-36,"ay":68,"az":8556,"gx":-8,"gy":16,"gz":0,'
+        '"mx":-555,"my":502,"mz":612,"odl":-1,"odr":0,"v":1203}')
+    info = parse_base_info(data)
+    for field in ('speed_l', 'speed_r', 'ax', 'ay', 'az', 'gx', 'gy', 'gz'):
+        assert isinstance(getattr(info, field), float), f'{field} must be float'
+
+
+def test_parse_orientation_valid():
+    # Real T:1002 wire shape (reply to a T:126 request) — fused roll/pitch/yaw PLUS
+    # a quaternion. NOT raw accel/gyro/mag/temp — that was the original (wrong)
+    # 2026-08-06 assumption; the raw IMU data actually lives in T:1001 (above).
+    data = {"T": 1002, "r": 0.0, "p": 0.0, "y": 1.5,
+            "q0": 1.0, "q1": 0.0, "q2": 0.0, "q3": 0.0}
+    info = parse_orientation(data)
+    assert info == OrientationData(roll=0.0, pitch=0.0, yaw=1.5,
+                                   q0=1.0, q1=0.0, q2=0.0, q3=0.0)
+
+
+def test_parse_orientation_wrong_type_returns_none():
+    assert parse_orientation({"T": 1001, "L": 0.1}) is None
+
+
+def test_parse_orientation_missing_field_returns_none():
+    assert parse_orientation({"T": 1002, "r": 0.0}) is None
+
+
+def test_parse_orientation_real_hardware_capture():
+    # Byte-for-byte from the same live probe as test_parse_base_info_real_hardware_
+    # capture above, 2026-08-10.
+    data = json.loads('{"T":1002,"r":0,"p":0,"y":0,"q0":0,"q1":0,"q2":0,"q3":0}')
+    info = parse_orientation(data)
+    assert info == OrientationData(roll=0, pitch=0, yaw=0, q0=0, q1=0, q2=0, q3=0)
+
+
+def test_parse_orientation_coerces_whole_number_fields_to_float():
+    # Same real bug class as test_parse_base_info_coerces_whole_number_fields_to_
+    # float above — not yet wired into a ROS message field today, but the same
+    # hard-abort landmine sits under geometry_msgs/Quaternion the moment it is.
+    data = json.loads('{"T":1002,"r":0,"p":0,"y":0,"q0":0,"q1":0,"q2":0,"q3":0}')
+    info = parse_orientation(data)
+    for field in ('roll', 'pitch', 'yaw', 'q0', 'q1', 'q2', 'q3'):
+        assert isinstance(getattr(info, field), float), f'{field} must be float'
 
 
 def test_integrate_odometry_straight_line():

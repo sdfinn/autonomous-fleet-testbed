@@ -18,7 +18,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 import rclpy
 from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
 from rclpy.time import Time
+from sensor_msgs.msg import Imu
 
 from nav_fleet.esp32_driver import Esp32Driver
 
@@ -30,10 +32,23 @@ def ros_context():
     rclpy.try_shutdown()
 
 
+def _idle_readline(*_args, **_kwargs):
+    # Real pyserial (timeout=1.0) BLOCKS for up to 1s when no data has arrived — a
+    # bare `return_value = b''` mock doesn't, so _read_loop's background thread
+    # hot-spins this call as fast as the interpreter allows for the test's whole
+    # lifetime. unittest.mock's internal call-tracking isn't thread-safe under that
+    # kind of concurrent hammering — found 2026-08-10 (esp32/odom root-cause fix
+    # session) as a real, reproducible `Fatal Python error: Aborted` crash once two
+    # driver instances' background threads overlapped. A short sleep here mirrors
+    # the real hardware boundary's actual blocking behavior and removes the hot-spin.
+    time.sleep(0.01)
+    return b''
+
+
 def _make_driver(**param_overrides):
     with patch('nav_fleet.esp32_driver.serial.Serial') as mock_serial_cls:
         mock_ser = MagicMock()
-        mock_ser.readline.return_value = b''  # no data — reader thread just idles
+        mock_ser.readline.side_effect = _idle_readline  # no data — reader thread just idles
         mock_serial_cls.return_value = mock_ser
         driver = Esp32Driver()
         for name, value in param_overrides.items():
@@ -113,8 +128,11 @@ def test_publish_odom_integrates_and_publishes(qos_capture=None):
         # Differing left/right speeds so the scenario has real curvature (omega != 0),
         # not just straight-line motion — exercises the full mid_yaw formula, not a
         # degenerate case where a broken dt/sign bug could coincidentally still pass.
-        info = BaseInfo(speed_l=0.1, speed_r=0.3, roll=0.0, pitch=0.0, yaw=0.0,
-                        temp=30.0, voltage=11.8)
+        # Non-speed fields are irrelevant to _publish_odom's own math (it only reads
+        # speed_l/speed_r) — zeroed rather than omitted since BaseInfo's real shape
+        # (corrected 2026-08-10) requires them.
+        info = BaseInfo(speed_l=0.1, speed_r=0.3, ax=0, ay=0, az=0, gx=0, gy=0, gz=0,
+                        mx=0, my=0, mz=0, odl=0, odr=0, voltage=11.8)
 
         # Control the node's clock across two calls so _publish_odom computes a
         # known, exact dt (0.5s). The FIRST call only seeds _last_base_info_time —
@@ -167,4 +185,87 @@ def test_publish_odom_integrates_and_publishes(qos_capture=None):
         assert second.pose.pose.orientation.w == pytest.approx(math.cos(expected_yaw / 2.0))
     finally:
         driver.destroy_subscription(sub)
+        driver.destroy_node()
+
+
+def test_publish_imu_reads_raw_accel_gyro_from_base_info():
+    # _publish_imu takes a BaseInfo now (corrected 2026-08-10) — the raw accel/gyro
+    # esp32_driver previously (and wrongly) expected from a separate T:1002 message
+    # actually lives in the SAME T:1001 message as the wheel speeds.
+    driver, mock_ser = _make_driver()
+    received = []
+    sub = driver.create_subscription(
+        Imu, '/robot_001/imu/data', lambda m: received.append(m), 10)
+    try:
+        # Built via parse_base_info (not a hand-constructed BaseInfo literal) so this
+        # test exercises the SAME int->float coercion the real code path does — a
+        # hand-written BaseInfo(ax=-36, ...) with bare int literals bypasses that
+        # coercion entirely and would miss the exact crash this fix addresses (a real
+        # `Fatal Python error: Aborted` hit developing this test, see
+        # esp32_protocol.py's parse_base_info docstring).
+        from nav_fleet.esp32_protocol import parse_base_info
+        info = parse_base_info({"T": 1001, "L": 0, "R": 0, "ax": -36, "ay": 68,
+                                "az": 8556, "gx": -8, "gy": 16, "gz": 0, "mx": -555,
+                                "my": 502, "mz": 612, "odl": -1, "odr": 0, "v": 1203})
+        driver._publish_imu(info)
+        deadline = time.monotonic() + 3.0
+        while len(received) < 1 and time.monotonic() < deadline:
+            rclpy.spin_once(driver, timeout_sec=0.5)
+        assert len(received) == 1
+        msg = received[0]
+        assert msg.linear_acceleration.x == pytest.approx(-36)
+        assert msg.linear_acceleration.y == pytest.approx(68)
+        assert msg.linear_acceleration.z == pytest.approx(8556)
+        assert msg.angular_velocity.x == pytest.approx(-8)
+        assert msg.angular_velocity.y == pytest.approx(16)
+        assert msg.angular_velocity.z == pytest.approx(0)
+        assert msg.orientation_covariance[0] == -1.0  # not yet wired in — see driver comment
+    finally:
+        driver.destroy_subscription(sub)
+        driver.destroy_node()
+
+
+def test_dispatch_line_real_hardware_base_info_publishes_odom_and_imu():
+    # Byte-for-byte capture from the live root-cause probe against the real ESP32
+    # over /dev/ttyTHS1, 2026-08-10 (same capture as
+    # test_esp32_protocol.test_parse_base_info_real_hardware_capture) — this is the
+    # actual reported bug: before the fix, this exact line produced zero messages
+    # on EITHER topic.
+    driver, mock_ser = _make_driver()
+    odom_received, imu_received = [], []
+    odom_sub = driver.create_subscription(
+        Odometry, '/robot_001/odom', lambda m: odom_received.append(m), 10)
+    imu_sub = driver.create_subscription(
+        Imu, '/robot_001/imu/data', lambda m: imu_received.append(m), 10)
+    try:
+        real_line = {"T": 1001, "L": 0, "R": 0, "ax": -36, "ay": 68, "az": 8556,
+                    "gx": -8, "gy": 16, "gz": 0, "mx": -555, "my": 502, "mz": 612,
+                    "odl": -1, "odr": 0, "v": 1203}
+        driver._dispatch_line(real_line)
+        deadline = time.monotonic() + 3.0
+        while ((len(odom_received) < 1 or len(imu_received) < 1)
+               and time.monotonic() < deadline):
+            rclpy.spin_once(driver, timeout_sec=0.5)
+        assert len(odom_received) == 1
+        assert len(imu_received) == 1
+        assert imu_received[0].linear_acceleration.x == pytest.approx(-36)
+    finally:
+        driver.destroy_subscription(odom_sub)
+        driver.destroy_subscription(imu_sub)
+        driver.destroy_node()
+
+
+def test_dispatch_line_orientation_is_cached_not_published():
+    # T:1002 (a T:126 reply) is fused orientation, not raw IMU data (corrected
+    # 2026-08-10) — it should update self._last_orientation and NOT publish
+    # anything on its own (no orientation topic; it's a cache for future use).
+    driver, mock_ser = _make_driver()
+    try:
+        assert driver._last_orientation is None
+        driver._dispatch_line({"T": 1002, "r": 0.1, "p": 0.2, "y": 0.3,
+                               "q0": 1.0, "q1": 0.0, "q2": 0.0, "q3": 0.0})
+        from nav_fleet.esp32_protocol import OrientationData
+        assert driver._last_orientation == OrientationData(
+            roll=0.1, pitch=0.2, yaw=0.3, q0=1.0, q1=0.0, q2=0.0, q3=0.0)
+    finally:
         driver.destroy_node()

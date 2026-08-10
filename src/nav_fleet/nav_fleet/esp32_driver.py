@@ -28,7 +28,7 @@ from sensor_msgs.msg import Imu
 
 from nav_fleet.esp32_protocol import (encode_enable_feedback_flow, encode_get_imu_data,
                                       encode_velocity_cmd, integrate_odometry,
-                                      parse_base_info, parse_feedback_line, parse_imu_data)
+                                      parse_base_info, parse_feedback_line, parse_orientation)
 
 
 class Esp32Driver(Node):
@@ -60,6 +60,13 @@ class Esp32Driver(Node):
         self._x = 0.0
         self._y = 0.0
         self._yaw = 0.0
+        # Latest fused orientation from a T:1002 reply (see esp32_protocol.py's
+        # module docstring, corrected 2026-08-10) — parsed and cached, but NOT yet
+        # wired into _publish_imu's msg.orientation: the quaternion's real axis
+        # convention (q0=w vs q0=x, Hamilton vs JPL) is unconfirmed against real
+        # hardware rotation testing. Flag, don't guess — same pattern this file
+        # already uses for the raw accel/gyro units below.
+        self._last_orientation = None
         self._last_base_info_time = None
         self._last_cmd_time = time.time()
         self._stopped = False
@@ -132,13 +139,24 @@ class Esp32Driver(Node):
             data = parse_feedback_line(raw.decode('utf-8', errors='replace'))
             if data is None:
                 continue
-            base_info = parse_base_info(data)
-            if base_info is not None:
-                self._publish_odom(base_info)
-                continue
-            imu_data = parse_imu_data(data)
-            if imu_data is not None:
-                self._publish_imu(imu_data)
+            self._dispatch_line(data)
+
+    def _dispatch_line(self, data):
+        # Split out from _read_loop so the dispatch logic is directly unit-testable
+        # without driving the background reader thread (matches this file's own
+        # existing pattern of pulling synchronous logic out of the thread loop, e.g.
+        # _publish_odom/_publish_imu below).
+        base_info = parse_base_info(data)
+        if base_info is not None:
+            # Both odom AND imu come off the SAME T:1001 message now (corrected
+            # 2026-08-10) — it carries wheel speeds (odom) plus raw accel/gyro (imu)
+            # in one line, not two separate messages as originally assumed.
+            self._publish_odom(base_info)
+            self._publish_imu(base_info)
+            return
+        orientation = parse_orientation(data)
+        if orientation is not None:
+            self._last_orientation = orientation
 
     def _publish_odom(self, info):
         now = self.get_clock().now()
@@ -164,6 +182,11 @@ class Esp32Driver(Node):
         self.odom_pub.publish(msg)
 
     def _publish_imu(self, info):
+        """info is a BaseInfo (T:1001) — corrected 2026-08-10, see esp32_protocol.py's
+        module docstring. Raw accel/gyro/mag live in the SAME continuous message as
+        the wheel speeds _publish_odom reads; there is no separate "IMU data" feedback
+        message despite T:126's name (its T:1002 reply is fused orientation only —
+        see _dispatch_line/self._last_orientation)."""
         msg = Imu()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'imu_link'
@@ -179,6 +202,10 @@ class Esp32Driver(Node):
         msg.angular_velocity.x = info.gx
         msg.angular_velocity.y = info.gy
         msg.angular_velocity.z = info.gz
+        # self._last_orientation (from a T:1002 reply, if one has arrived yet) is NOT
+        # used to populate msg.orientation here — its quaternion axis convention is
+        # unconfirmed against real hardware (see __init__'s comment). Real, scoped
+        # follow-up, not silently dropped.
         msg.orientation_covariance[0] = -1.0  # orientation not populated from this message
         self.imu_pub.publish(msg)
 
