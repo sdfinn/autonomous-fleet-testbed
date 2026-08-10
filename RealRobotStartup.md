@@ -151,13 +151,16 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     ```bash
     ros2 pkg executables nav_fleet | grep esp32
     ```
+
     **WORKING against real hardware, confirmed 2026-08-10 — root-caused and
     fixed.** Wiring/baud/UART device were never the problem (`/dev/ttyTHS1`,
     115200, confirmed 2026-08-09). Run directly (no launch-arg support was
     checked/needed, just pass params on the CLI):
+
     ```bash
     ros2 run nav_fleet esp32_driver --ros-args -p serial_device:=/dev/ttyTHS1 -p baud:=115200
     ```
+
     Then in a second terminal: `ros2 topic hz /robot_001/odom` /
     `ros2 topic hz /robot_001/imu/data` — both now publish at ~19.8Hz.
 
@@ -268,15 +271,53 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     a failure — only "Failed <<<" / a nonzero package-failed count means that.
 
     D500/STL-19P uses the **`ld19.launch.py`** launch file (not `ld06`/`ld14`/`ld14p`
-    — those are for other LD-series models). Raw sanity check before wiring it into
-    this repo:
+    — those are for other LD-series models).
+
+    **Two more real, live issues hit getting this far, confirmed working
+    2026-08-09 — this Jetson's actual D500 unit needs BOTH fixes. (Briefly lost
+    from this doc 2026-08-09 by a later same-day edit that accidentally deleted
+    this whole block instead of just adding the camera section next to it —
+    caught and restored 2026-08-10 via `git log -p`, not from memory. Lesson: a
+    large same-session edit can silently drop unrelated content it never meant
+    to touch — worth a quick `git show <commit> -- <file>` sanity check on any
+    edit that's supposed to be purely additive.)**
+    - **The lidar enumerates as `/dev/ttyACM0`, NOT `/dev/ttyUSB0`** — the launch
+      file's `port_name` is hardcoded (no `LaunchConfiguration`/CLI-override
+      support at all, confirmed via `--show-args` returning "No arguments" — don't
+      go looking for a `-p port_name:=...` override, it doesn't exist).
+      `lsusb` showed a `QinHeng Electronics USB Single Serial` device (the CH340-
+      family chip actually used here) — that's the tell, if this comes up again on
+      a different unit. Fix (source is symlink-installed, takes effect immediately,
+      no rebuild needed):
+      ```bash
+      ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null   # confirm which one shows up first
+      sed -i "s|'/dev/ttyUSB0'|'/dev/ttyACM0'|" ~/ros2_drivers_ws/src/ldlidar_ros2/launch/ld19.launch.py
+      ```
+    - **Permission denied opening `/dev/ttyACM0`** even once the path was right —
+      standard Linux serial-device permissions: `crw-rw---- root dialout`, and a
+      fresh user account won't be in the `dialout` group yet. Fix, then **log out
+      and back in (or open a brand new SSH session) — group membership does NOT
+      apply to an already-open shell**:
+      ```bash
+      sudo usermod -a -G dialout $USER
+      # new session required here — verify with: groups
+      ```
+      A fresh session also means re-sourcing both ROS2 and the drivers workspace
+      overlay (neither persists across a fresh login, same as the main project
+      workspace — see the native-build note above):
+      ```bash
+      source /opt/ros/jazzy/setup.bash
+      source ~/ros2_drivers_ws/install/setup.bash
+      ```
+
+    Raw sanity check before wiring it into this repo (do this AFTER both fixes
+    above, not before — an unfixed port/permission will just look like a hang):
     **`ros2 launch` runs in the foreground and never returns on its own** — the
     commands below are two SEPARATE terminals/SSH sessions, not one sequential
     block:
 
     ```bash
     # Terminal 1:
-    ls /dev/ttyUSB*   # confirm the lidar's serial port
     ros2 launch ldlidar_ros2 ld19.launch.py
     # leave this running — watch for "ldlidar communication is normal" /
     # "start normal, pub lidar data" in its own output
@@ -285,6 +326,8 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     ros2 topic echo /scan   # bare /scan, NOT /robot_001/scan yet — see the
                             # remapping gap note below
     ```
+    **Confirmed working end-to-end after both fixes** — real, varying range data
+    streams on `/scan`.
   - **Camera (OAK-D Lite):** [`luxonis/depthai-ros`](https://github.com/luxonis/depthai-ros)
     — apt package exists for Jazzy, no source build needed. Check:
 
@@ -302,9 +345,11 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     **Launch file confirmed 2026-08-09: `camera.launch.py`** (the other name found
     online, `driver.launch.py`, doesn't exist in the actually-installed package —
     checked directly: `ls /opt/ros/jazzy/share/depthai_ros_driver/launch/`).
+
     ```bash
     ros2 launch depthai_ros_driver camera.launch.py
     ```
+
     **Confirmed working end-to-end, 2026-08-09** — connects to the real OAK-D-LITE
     (`Camera with MXID: ... connected!`, `Device type: OAK-D-LITE`), real frames
     stream on `/oak/rgb/image_rect` once the CycloneDDS large-message fix below is
@@ -313,6 +358,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     Also needed, same as the lidar: the Movidius USB device (`03e7:2485` in
     `lsusb`) hits the identical "Insufficient permissions... X_LINK_UNBOOTED...
     Make sure udev rules are set" error until a udev rule is added:
+
     ```bash
     echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
     sudo udevadm control --reload-rules && sudo udevadm trigger
@@ -334,6 +380,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     purposes only (a one-off `~/cyclonedds_bigmsg.xml`, NOT part of this project's
     own `scripts/regen_cyclonedds_config.sh`-generated config, which is what
     `container_entrypoint.sh`/the real container path actually uses):
+
     ```bash
     sudo sysctl -w net.core.rmem_max=2147483647
     echo 'net.core.rmem_max=2147483647' | sudo tee /etc/sysctl.d/10-cyclone-max.conf
@@ -347,10 +394,10 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     echo '</CycloneDDS>' >> ~/cyclonedds_bigmsg.xml
     export CYCLONEDDS_URI=file://$HOME/cyclonedds_bigmsg.xml   # both publisher + subscriber terminals
     ```
+
     **TODO, not yet done — real code change, needs full CI+HIL verification before
     trusted (Ethernet-connected HIL, per this doc's own established bar for any
-    change touching the real container path):** fold the `<Internal><SocketReceive
-    BufferSize>` element into `scripts/regen_cyclonedds_config.sh`'s own generated
+    change touching the real container path):** fold the `<Internal><SocketReceive BufferSize>` element into `scripts/regen_cyclonedds_config.sh`'s own generated
     XML (additive to its existing `<Interfaces>` block, should not touch the
     interface-priority logic already proven there) — the `sysctl` half is already
     permanent/system-wide on this Jetson and doesn't need repeating, only the
@@ -369,7 +416,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     `IncludeLaunchDescription`, or equivalent) — verified against the real running
     driver's actual topic names, not guessed in advance. Flag this to Claude once
     both drivers are confirmed running with their own default topics visible.
-- [ ] **Verify all four real topics report, before anything else:**
+- [X] **Verify all four real topics report, before anything else:**
 
   ```bash
   ros2 topic hz /robot_001/odom
