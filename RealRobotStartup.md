@@ -151,6 +151,51 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     ```bash
     ros2 pkg executables nav_fleet | grep esp32
     ```
+    **NOT YET WORKING against real hardware — stopped here 2026-08-09 EOD, resume
+    here next session.** The ESP32 connects via the Jetson's 40-pin header UART
+    (the "red wire → red pin" wiring from earlier in this doc), not USB — two
+    candidate devices exist on this Jetson, `/dev/ttyTHS1` and `/dev/ttyTHS2`
+    (`ls /dev/ttyTHS*`). Run directly (no launch-arg support was checked/needed,
+    just pass params on the CLI):
+    ```bash
+    ros2 run nav_fleet esp32_driver --ros-args -p serial_device:=/dev/ttyTHS1 -p baud:=115200
+    ```
+    Then in a second terminal: `ros2 topic hz /robot_001/odom` /
+    `ros2 topic hz /robot_001/imu/data`.
+
+    **What's confirmed so far:**
+    - `ttyTHS2`: completely silent (`timeout 5 cat /dev/ttyTHS2` — zero bytes,
+      ever). Low priority to revisit unless `ttyTHS1` is ruled out entirely.
+    - `ttyTHS1`: genuine electrical activity confirmed (`timeout 5 cat
+      /dev/ttyTHS1` showed real bytes on the first read after opening the port —
+      most likely an ESP32 boot-reset message burst, a well-known behavior when a
+      serial port is first opened on boards with auto-reset circuitry; silent on
+      a second read, consistent with normal firmware needing an explicit
+      "start streaming" request before it continuously reports — which a bare
+      `cat` never sends, only `esp32_driver` itself does).
+    - Baud confirmed correct: `stty -F /dev/ttyTHS1` already reports
+      `115200 baud` — ruled out as the mismatch.
+    - **Despite all of the above pointing at `ttyTHS1` being the right physical
+      wire, `esp32_driver` run directly against it still produces ZERO messages
+      on `/robot_001/odom`** — genuinely unresolved, not yet root-caused.
+    - The driver's own startup log (`"esp32_driver up — /dev/ttyTHS1@115200..."`)
+      and its cmd_vel watchdog firing (`"watchdog tripped — zero-velocity sent"`)
+      do NOT prove real hardware communication — re-examined live and concluded
+      the watchdog is a local ROS2-topic-side timer (no `cmd_vel` received
+      recently), unrelated to whether the serial link itself is actually
+      talking to a real ESP32. Don't be misled by it again.
+
+    **Next step, untested, Mike's own hypothesis — try this FIRST next session:**
+    physically power-cycle the ESP32 sub-controller (or the whole robot) fresh,
+    then immediately retry `esp32_driver` against `ttyTHS1` before doing anything
+    else to it. Deliberately not attempted tonight (too late to safely power-cycle
+    hardware). If that doesn't resolve it, next things to check, in order: (1)
+    physically verify the UART TX/RX wires themselves are actually connected
+    (the earlier gimbal-wiring investigation this session was about POWER only,
+    never confirmed the separate DATA wires), (2) try `ttyTHS2` again fresh in
+    case `ttyTHS1`'s "real activity" was coincidental/unrelated, (3) check
+    whether `esp32_driver.py`'s own request/response handshake logic
+    (`encode_enable_feedback_flow`) has a real bug independent of wiring.
   - **Lidar (D500 / STL-19P):** [`ldrobotSensorTeam/ldlidar_ros2`](https://github.com/ldrobotSensorTeam/ldlidar_ros2)
     — vendor-maintained, no apt package, build from source. Confirmed against a guide
     written for this exact model + ROS2 Jazzy combo. Check:
