@@ -125,7 +125,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   If the build itself errors, that's a real problem to resolve here, not push
   past — don't proceed to the driver-layer step below until `colcon build`
   finishes clean.
-- [ ] **Driver layer — resolved 2026-08-06, do NOT install `ugv_ws`. Concrete
+- [X] **Driver layer — resolved 2026-08-06, do NOT install `ugv_ws`. Concrete
   check/install commands added 2026-08-09 (this section was found too vague on a
   live first pass — links only, no actual commands).**
   [`waveshareteam/ugv_ws`](https://github.com/waveshareteam/ugv_ws) only has Humble
@@ -160,6 +160,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     ```
 
     Install:
+
     ```bash
     mkdir -p ~/ros2_drivers_ws/src
     cd ~/ros2_drivers_ws/src
@@ -169,11 +170,13 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     colcon build --symlink-install --cmake-args=-DCMAKE_BUILD_TYPE=Release
     source install/setup.bash
     ```
+
     **On a fresh Jetson, both `rosdep install` AND `colcon build` above will FAIL —
     confirmed live, 2026-08-09, two separate root causes, both one-time fixes.**
     Do NOT just re-run one of the two failed steps individually — both actually
     failed (0 packages built), so both need re-running after fixing their causes.
     Full corrected sequence:
+
     ```bash
     # One-time fixes for both root causes:
     sudo rosdep init                                          # rosdep was never
@@ -190,17 +193,18 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     colcon build --symlink-install --cmake-args=-DCMAKE_BUILD_TYPE=Release
     source install/setup.bash
     ```
+
     **A THIRD error hits after both of those are fixed — vendor SDK bug, not this
     Jetson's fault, confirmed 2026-08-09 against a known upstream GitHub issue**
     (`ldrobotSensorTeam/ldlidar_stl_ros2` issue #23 — same underlying SDK code):
     a real C++ compile error, `pthread_mutex_init`/`_lock`/`_unlock` "not declared
-    in this scope" in `sdk/src/log_module.cpp`. Root cause: `sdk/include/
-    ldlidar_driver/log_module.h` has `#include <pthread.h>` commented out on its
+    in this scope" in `sdk/src/log_module.cpp`. Root cause: `sdk/include/ ldlidar_driver/log_module.h` has `#include <pthread.h>` commented out on its
     Linux branch (line 37 on the commit this project's clone pulled) — the vendor
     SDK simply doesn't compile clean on a modern toolchain as shipped. Fix,
     confirmed against this exact clone (verify the line number still matches
     yours with `grep -n pthread.h sdk/include/ldlidar_driver/log_module.h` first,
     in case the vendor repo changes upstream):
+
     ```bash
     sed -i '37s|^//#include <pthread.h>|#include <pthread.h>|' \
       ~/ros2_drivers_ws/src/ldlidar_ros2/sdk/include/ldlidar_driver/log_module.h
@@ -208,6 +212,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     colcon build --symlink-install --cmake-args=-DCMAKE_BUILD_TYPE=Release
     source install/setup.bash
     ```
+
     **Confirmed working, 2026-08-09** — `colcon build` finishes clean
     (`1 package finished`). It still prints stderr, but that's just a compiler
     warning in the vendor's own demo executable (`serial_baudrate` used
@@ -222,6 +227,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     **`ros2 launch` runs in the foreground and never returns on its own** — the
     commands below are two SEPARATE terminals/SSH sessions, not one sequential
     block:
+
     ```bash
     # Terminal 1:
     ls /dev/ttyUSB*   # confirm the lidar's serial port
@@ -233,36 +239,6 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     ros2 topic echo /scan   # bare /scan, NOT /robot_001/scan yet — see the
                             # remapping gap note below
     ```
-    **Two more real, live issues hit getting this far, confirmed working
-    2026-08-09 — this Jetson's actual D500 unit needs BOTH fixes:**
-    - **The lidar enumerates as `/dev/ttyACM0`, NOT `/dev/ttyUSB0`** — the launch
-      file's `port_name` is hardcoded (no `LaunchConfiguration`/CLI-override
-      support at all, confirmed via `--show-args` returning "No arguments").
-      `lsusb` showed a `QinHeng Electronics USB Single Serial` device (the CH340-
-      family chip actually used here) — that's the tell, if this comes up again on
-      a different unit. Fix (source is symlink-installed, takes effect immediately,
-      no rebuild needed):
-      ```bash
-      sed -i "s|'/dev/ttyUSB0'|'/dev/ttyACM0'|" ~/ros2_drivers_ws/src/ldlidar_ros2/launch/ld19.launch.py
-      ```
-    - **Permission denied opening `/dev/ttyACM0`** even once the path was right —
-      standard Linux serial-device permissions: `crw-rw---- root dialout`, and
-      `mike` wasn't in the `dialout` group on this Jetson. Fix, then **log out and
-      back in (or open a brand new SSH session) — group membership does NOT apply
-      to an already-open shell**:
-      ```bash
-      sudo usermod -a -G dialout mike
-      # new session required here — verify with: groups
-      ```
-      A fresh session also means re-sourcing both ROS2 and the drivers workspace
-      overlay (neither persists across a fresh login, same as the main project
-      workspace — see the native-build note above):
-      ```bash
-      source /opt/ros/jazzy/setup.bash
-      source ~/ros2_drivers_ws/install/setup.bash
-      ```
-    **Confirmed working end-to-end after both fixes** — real, varying range data
-    streams on `/scan`.
   - **Camera (OAK-D Lite):** [`luxonis/depthai-ros`](https://github.com/luxonis/depthai-ros)
     — apt package exists for Jazzy, no source build needed. Check:
 
@@ -271,18 +247,68 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     ```
 
     Install:
+
     ```bash
     sudo apt update
     sudo apt install -y ros-jazzy-depthai-ros ros-jazzy-depthai-bridge ros-jazzy-depthai-examples
     ```
 
-    **Launch file name unconfirmed — two different names found (`camera.launch.py`
-    vs `driver.launch.py`), neither independently verified against the real
-    installed package yet.** Check directly once installed:
+    **Launch file confirmed 2026-08-09: `camera.launch.py`** (the other name found
+    online, `driver.launch.py`, doesn't exist in the actually-installed package —
+    checked directly: `ls /opt/ros/jazzy/share/depthai_ros_driver/launch/`).
     ```bash
-    ros2 pkg prefix depthai_ros_driver
-    # then look in <that path>/share/depthai_ros_driver/launch/ for the real filename
+    ros2 launch depthai_ros_driver camera.launch.py
     ```
+    **Confirmed working end-to-end, 2026-08-09** — connects to the real OAK-D-LITE
+    (`Camera with MXID: ... connected!`, `Device type: OAK-D-LITE`), real frames
+    stream on `/oak/rgb/image_rect` once the CycloneDDS large-message fix below is
+    also applied (without it, the camera boots fine but delivers zero image
+    messages — a completely different, separate problem from the udev-rule one).
+    Also needed, same as the lidar: the Movidius USB device (`03e7:2485` in
+    `lsusb`) hits the identical "Insufficient permissions... X_LINK_UNBOOTED...
+    Make sure udev rules are set" error until a udev rule is added:
+    ```bash
+    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
+    sudo udevadm control --reload-rules && sudo udevadm trigger
+    # then unplug/replug the camera's USB cable (or power-cycle the whole robot --
+    # udevd's boot-time coldplug pass re-applies rules to already-connected
+    # devices too, confirmed live, no need to physically find/replug the cable)
+    ```
+  - **CycloneDDS large-message gap — found 2026-08-09, confirmed working around it
+    live, NOT yet fixed in the project's own permanent config.** Real, uncompressed
+    `sensor_msgs/Image` topics (`/oak/rgb/image_raw`, `/oak/rgb/image_rect`) publish
+    with zero delivery to any subscriber — `ros2 topic hz` on either hangs
+    indefinitely, while the SAME topics' compressed siblings
+    (`/oak/rgb/image_rect/compressed`) work immediately. This is a well-documented,
+    known ROS2/CycloneDDS limitation (official ROS docs' own DDS-tuning guide),
+    not a depthai-ros or project-specific bug. **This will also hit the real
+    robot/HIL path once the camera is wired into `sensors_only_launch.py`** —
+    `ball_detector.py` subscribes to `/robot_001/camera/image_raw`, the exact same
+    class of uncompressed Image topic. Worked around live for bench-testing
+    purposes only (a one-off `~/cyclonedds_bigmsg.xml`, NOT part of this project's
+    own `scripts/regen_cyclonedds_config.sh`-generated config, which is what
+    `container_entrypoint.sh`/the real container path actually uses):
+    ```bash
+    sudo sysctl -w net.core.rmem_max=2147483647
+    echo 'net.core.rmem_max=2147483647' | sudo tee /etc/sysctl.d/10-cyclone-max.conf
+    echo '<?xml version="1.0" encoding="UTF-8" ?>' > ~/cyclonedds_bigmsg.xml
+    echo '<CycloneDDS xmlns="https://cdds.io/config">' >> ~/cyclonedds_bigmsg.xml
+    echo '  <Domain id="any">' >> ~/cyclonedds_bigmsg.xml
+    echo '    <Internal>' >> ~/cyclonedds_bigmsg.xml
+    echo '      <SocketReceiveBufferSize min="10MB"/>' >> ~/cyclonedds_bigmsg.xml
+    echo '    </Internal>' >> ~/cyclonedds_bigmsg.xml
+    echo '  </Domain>' >> ~/cyclonedds_bigmsg.xml
+    echo '</CycloneDDS>' >> ~/cyclonedds_bigmsg.xml
+    export CYCLONEDDS_URI=file://$HOME/cyclonedds_bigmsg.xml   # both publisher + subscriber terminals
+    ```
+    **TODO, not yet done — real code change, needs full CI+HIL verification before
+    trusted (Ethernet-connected HIL, per this doc's own established bar for any
+    change touching the real container path):** fold the `<Internal><SocketReceive
+    BufferSize>` element into `scripts/regen_cyclonedds_config.sh`'s own generated
+    XML (additive to its existing `<Interfaces>` block, should not touch the
+    interface-priority logic already proven there) — the `sysctl` half is already
+    permanent/system-wide on this Jetson and doesn't need repeating, only the
+    CycloneDDS XML half is still bench-test-only.
   - **Remapping gap — confirmed 2026-08-09, not yet fixed.** `sensors_only_launch.py`
     includes both vendor launch files raw (`lidar_include`/`camera_include`), with
     **no topic remapping at all** — its own code comment already flagged this as
