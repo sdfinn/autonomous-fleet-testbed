@@ -16,8 +16,7 @@ from the ground up, both worth knowing before reading further:
    runs, passes per leg (same PASS/FAIL judging HIL already does), and you visually
    confirm it — nothing more automated than that.
 2. **Nav2/EKF/`ball_detector`/`mission_runner` run INSIDE the container** (reversed
-   2026-08-03 — see `docs/superpowers/specs/
-   2026-08-03-docker-brain-real-robot-hil-unification-design.md`, which supersedes
+   2026-08-03 — see `docs/superpowers/specs/ 2026-08-03-docker-brain-real-robot-hil-unification-design.md`, which supersedes
    `docs/bare-metal-vs-container-decision.md`'s conclusion). Ball placement and
    ground-truth judging stay workstation-side for HIL (that harness never runs on the
    real robot either way); the real robot self-reports each leg's PASS/FAIL with no
@@ -27,6 +26,7 @@ from the ground up, both worth knowing before reading further:
 been hardened and live-verified (multiple full reboots, zero regressions) — see
 `CLAUDE.md`'s dated Gotchas if you want the full incident history. Two things worth
 knowing going in:
+
 - `ssh mike@jetson.local` should resolve reliably. This depends on two **OS-level
   config changes on this exact Jetson** (`use-ipv6=no` in avahi's config;
   `systemd-time-wait-sync.service` gating avahi's start) that are **not in git** — if
@@ -55,7 +55,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
 
 ### A1. Pre-flight, still on the bench (Ethernet, connected to workstation)
 
-- [ ] Confirm the **whole** last run on `main` is green — `gh run list`, or the
+- [X] Confirm the **whole** last run on `main` is green — `gh run list`, or the
   dashboard — not just `stage-3-arm64`. The commit you're about to sync is the one
   `robot_boot.sh` will run: it derives the container image tag from `git rev-parse HEAD`
   on the Jetson checkout, so the image must have been cached locally from when
@@ -69,13 +69,11 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   `skipped`, one commit after the last one that really built+pushed an image. Syncing
   to a skipped-stage commit means no image was ever tagged for that sha —
   `robot_boot.sh` fails loudly (correctly) rather than silently running stale code, but
-  better to catch this here than at power-on: `gh run view <run-id> --json jobs -q
-  '.jobs[] | "\(.name)\t\(.conclusion)"'` and pick the last sha where `Stage 3 — arm64
-  Native Build` AND the HIL stage both say `success`, not just the run as a whole.
-- [ ] Confirm the Jetson's power mode: `nvpmodel -q` should read 25W. Do not run
+  better to catch this here than at power-on: `gh run view <run-id> --json jobs -q '.jobs[] | "\(.name)\t\(.conclusion)"'` and pick the last sha where `Stage 3 — arm64 Native Build` AND the HIL stage both say `success`, not just the run as a whole.
+- [X] Confirm the Jetson's power mode: `nvpmodel -q` should read 25W. Do not run
   `nvpmodel -m` to "fix" this unless it's genuinely wrong — see the power-mode note
   above.
-- [ ] Check for root-owned residue from prior container-mode HIL runs:
+- [X] Check for root-owned residue from prior container-mode HIL runs:
   ```bash
   ls -la ~/fleet-ci-data
   # If anything is root-owned:
@@ -88,28 +86,24 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
 
 ### A2. Physical transplant into the Waveshare UGV-PT
 
-- [ ] Follow Waveshare's assembly video/wiki for the physical steps (screws, cable
+- [X] Follow Waveshare's assembly video/wiki for the physical steps (screws, cable
   routing, Jetson seating) — fill in as you go, this doc can't verify hardware steps
   from a video:
-  - [ ] ______________________________________________
-  - [ ] ______________________________________________
-  - [ ] ______________________________________________
-- [ ] Power on. Connect to the robot's WiFi network (or confirm it joins yours).
-- [ ] SSH in over WiFi: `ssh mike@jetson.local` (should resolve reliably — see the
+  - [ ] ---
+  - [ ] ---
+  - [ ] ---
+- [X] Power on. Connect to the robot's WiFi network (or confirm it joins yours).
+- [X] SSH in over WiFi: `ssh mike@jetson.local` (should resolve reliably — see the
   WiFi note above; fall back to the router admin page's DHCP lease list if not).
-- [ ] Check Jetson health: `nvidia-smi`, temp, `df -h` free space.
-- [ ] **Driver layer — resolved 2026-08-06, do NOT install `ugv_ws`.**
+- [X] Check Jetson health: `nvidia-smi`, temp, `df -h` free space.
+- [ ] **Driver layer — resolved 2026-08-06, do NOT install `ugv_ws`. Concrete
+  check/install commands added 2026-08-09 (this section was found too vague on a
+  live first pass — links only, no actual commands).**
   [`waveshareteam/ugv_ws`](https://github.com/waveshareteam/ugv_ws) only has Humble
   branches (`ros2-humble-develop`, `ros2-humble-develop-251125`) — no Jazzy, official
   or community-confirmed-working for Jetson Orin. Everything else in this project is
   Jazzy-only. `robot_profiles/jetson_ugv_pt.yaml` already names the real hardware, and
   it splits cleanly:
-  - **Lidar (D500 / STL-19P):** install
-    [`ldrobotSensorTeam/ldlidar_ros2`](https://github.com/ldrobotSensorTeam/ldlidar_ros2)
-    — vendor-maintained, confirmed working on ROS2 Jazzy independent of `ugv_ws`.
-  - **Camera (OAK-D Lite):** install
-    [`luxonis/depthai-ros`](https://github.com/luxonis/depthai-ros) — Luxonis-maintained,
-    confirmed working on Jazzy/24.04 independent of `ugv_ws`.
   - **Odom + IMU + `cmd_vel`→wheels (ESP32 sub-controller, UART, per
     `robot_profiles/jetson_ugv_pt.yaml`'s `sub_controller` block): built 2026-08-06,
     no longer a gap.** `nav_fleet/esp32_protocol.py` (pure JSON encode/decode +
@@ -119,9 +113,67 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     documented JSON-over-serial protocol. Baud is 115200, not 921600 — the profile's
     `imu.hz_min` was found to not be achievable at 921600 either way and was lowered
     to 50 to match the driver's real default (see `CLAUDE.md`/the driver's own commit
-    history if the discrepancy matters later). Not yet run against the real ESP32 —
-    built and reviewed against the documented protocol only; the bench smoke test
-    below is the first real hardware exercise this driver gets.
+    history if the discrepancy matters later). Nothing to separately install — it's
+    this repo's own code, already built by A1's sync + colcon build. Check:
+    ```bash
+    ros2 pkg executables nav_fleet | grep esp32
+    ```
+  - **Lidar (D500 / STL-19P):** [`ldrobotSensorTeam/ldlidar_ros2`](https://github.com/ldrobotSensorTeam/ldlidar_ros2)
+    — vendor-maintained, no apt package, build from source. Confirmed against a guide
+    written for this exact model + ROS2 Jazzy combo. Check:
+    ```bash
+    ros2 pkg list | grep ldlidar
+    ```
+    Install:
+    ```bash
+    mkdir -p ~/ros2_drivers_ws/src
+    cd ~/ros2_drivers_ws/src
+    git clone https://github.com/ldrobotSensorTeam/ldlidar_ros2.git
+    cd ~/ros2_drivers_ws
+    rosdep install --from-paths src --ignore-src -r -y
+    colcon build --symlink-install --cmake-args=-DCMAKE_BUILD_TYPE=Release
+    source install/setup.bash
+    ```
+    D500/STL-19P uses the **`ld19.launch.py`** launch file (not `ld06`/`ld14`/`ld14p`
+    — those are for other LD-series models). Raw sanity check before wiring it into
+    this repo:
+    ```bash
+    ls /dev/ttyUSB*   # confirm the lidar's serial port
+    ros2 launch ldlidar_ros2 ld19.launch.py
+    ros2 topic echo /scan   # bare /scan, NOT /robot_001/scan yet — see the
+                            # remapping gap note below
+    ```
+  - **Camera (OAK-D Lite):** [`luxonis/depthai-ros`](https://github.com/luxonis/depthai-ros)
+    — apt package exists for Jazzy, no source build needed. Check:
+    ```bash
+    dpkg -l | grep depthai
+    ```
+    Install:
+    ```bash
+    sudo apt update
+    sudo apt install -y ros-jazzy-depthai-ros ros-jazzy-depthai-bridge ros-jazzy-depthai-examples
+    ```
+    **Launch file name unconfirmed — two different names found (`camera.launch.py`
+    vs `driver.launch.py`), neither independently verified against the real
+    installed package yet.** Check directly once installed:
+    ```bash
+    ros2 pkg prefix depthai_ros_driver
+    # then look in <that path>/share/depthai_ros_driver/launch/ for the real filename
+    ```
+  - **Remapping gap — confirmed 2026-08-09, not yet fixed.** `sensors_only_launch.py`
+    includes both vendor launch files raw (`lidar_include`/`camera_include`), with
+    **no topic remapping at all** — its own code comment already flagged this as
+    deferred ("NOT pinned by this project yet... until Mike wires this in"). Once
+    both drivers are installed and running, they'll publish to their own default
+    topic names (bare `/scan`, and whatever depthai-ros's own default is) — NOT
+    `/robot_001/scan` / `/robot_001/camera/image_raw`, which is what the rest of this
+    project's ROS graph (EKF, `ball_detector`, the smoke test's own checks) actually
+    expects. `ros2 topic hz /robot_001/scan` in the NEXT checklist item will hang
+    even with a fully working lidar until this is fixed. This needs a real code
+    change to `sensors_only_launch.py` (adding `remappings=[...]` to each
+    `IncludeLaunchDescription`, or equivalent) — verified against the real running
+    driver's actual topic names, not guessed in advance. Flag this to Claude once
+    both drivers are confirmed running with their own default topics visible.
 - [ ] **Verify all four real topics report, before anything else:**
   ```bash
   ros2 topic hz /robot_001/odom
@@ -129,6 +181,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   ros2 topic hz /robot_001/camera/image_raw
   ros2 topic hz /robot_001/imu/data
   ```
+
   (the 4th, IMU, is easy to miss but real — `config/ekf.yaml`'s `imu0` input fuses
   yaw-rate from this exact topic; a silently-missing IMU degrades the EKF fusion the
   6-wheel-skid-steer mitigation below depends on, without an obvious error anywhere)
@@ -142,8 +195,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   `ugv_ws`-specific gimbal mechanism to depend on anymore. Per Waveshare's own
   documented sub-controller JSON command set, the gimbal is driven over the SAME
   serial link/protocol `esp32_protocol.py` already implements (its `T:13`/`T:126`/
-  `T:131`/`T:136`/`T:142` commands) — a `T:133` command: `{"T":133,"X":<pan_deg>,
-  "Y":<tilt_deg>,"SPD":0,"ACC":0}`. **Caveat: sourced from Waveshare's wiki via web
+  `T:131`/`T:136`/`T:142` commands) — a `T:133` command: `{"T":133,"X":<pan_deg>, "Y":<tilt_deg>,"SPD":0,"ACC":0}`. **Caveat: sourced from Waveshare's wiki via web
   search — direct fetches of the actual wiki page 403'd twice, so this is
   search-engine-indexed content, not a primary-source read.** Sanity-check the exact
   field names/ranges against the real hardware (or Waveshare's docs directly, if
@@ -180,10 +232,10 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   ```bash
   scripts/hil_stage.sh smoke <the synced commit sha>
   ```
+
   This is attended, not automated — it will prompt you (in the same terminal) to
   place the yellow ball. Two placement details matter, found live 2026-08-09 getting
-  this check to actually pass in sim:
-  - **Distance: ~2.5 ft (0.75 m) directly in front of the robot** — NOT the original
+  this check to actually pass in sim:- **Distance: ~2.5 ft (0.75 m) directly in front of the robot** — NOT the original
     12"/0.305 m the design spec started with; 12" turned out to be geometrically
     outside the camera's own field of view (confirmed via the real URDF geometry — a
     floor-level object that close sits well below what a level, forward-mounted
@@ -251,8 +303,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   4. Read the converged pose: `ros2 topic echo /robot_001/amcl_pose --once` (or read
      it off RViz) — record x, y, yaw.
   5. Update `nav2_params.yaml`'s `amcl.initial_pose` block with these real values,
-     and fix the stale `# Map: maps/living_room.pgm` / `# Initial pose: hallway
-     entrance` comments above it to describe the real map instead.
+     and fix the stale `# Map: maps/living_room.pgm` / `# Initial pose: hallway entrance` comments above it to describe the real map instead.
   6. Commit the updated `nav2_params.yaml` alongside the map/HSV config.
 
 ### A4. Calibrate ball-color detection for the real camera
@@ -270,6 +321,7 @@ camera.** `hsv_gazebo.yaml`'s thresholds are tuned for Gazebo's rendered ball ma
   python -m tools.calibrate_hsv_realcam red_ball_photo.png --color red
   python -m tools.calibrate_hsv_realcam yellow_ball_photo.png --color yellow
   ```
+
   This is a suggestion tool, not a solver — there's no ground truth for a real photo's
   HSV band the way `tools/calibrate_ball_range.py` has Gazebo ground truth for range.
   Sanity-check the printed numbers look like real hue values (red near 0/360, yellow
@@ -307,6 +359,7 @@ just install and verify:
   ```bash
   scripts/hil_stage.sh sync <the green run's commit sha>
   ```
+
   This ALSO determines which container image `robot_boot.sh` runs — it derives the
   image tag from this checkout's own `git rev-parse HEAD`, and stage-3-arm64 tags
   every build with its commit sha. No `docker pull` ever happens here: the image
@@ -327,6 +380,7 @@ just install and verify:
   sudo systemctl daemon-reload
   sudo systemctl enable robot-mission.service
   ```
+
   This is genuinely new — nothing in CI/HIL exercises a power cycle, so there's no
   automated proof this works, only the manual run above. Treat the manual invocation
   as the real test; the systemd unit is convenience wired on top of something already
@@ -420,8 +474,7 @@ explicitly R2 scope, not R1):
   `~/autonomous-fleet-testbed/reports/nav2_container_<timestamp>.log` on the
   Jetson — inside the SAME bind-mounted `reports/` directory `robot_boot.sh` already
   uses, so it lands on the Jetson's host filesystem automatically, no pull needed for
-  that first hop. To get it to the workstation: `scp mike@jetson.local:
-  ~/autonomous-fleet-testbed/reports/nav2_container_*.log .` (or just SSH in and
+  that first hop. To get it to the workstation: `scp mike@jetson.local: ~/autonomous-fleet-testbed/reports/nav2_container_*.log .` (or just SSH in and
   read it directly on the Jetson). `pull_ros_logs.py` itself isn't broken as code —
   it still works correctly for bare-metal contexts (stage-2 sim, SLAM Toolbox in A3)
   — it's specifically wrong for this container-mode real-robot path.
@@ -431,6 +484,7 @@ explicitly R2 scope, not R1):
 ### B3. Code changed — getting back into HIL mode
 
 One Jetson, no separate CI runner — this is a physical swap, every time:
+
 - [ ] Physically remove the Jetson from the robot chassis.
 - [ ] Reconnect it to the workstation bench (Ethernet, same as the original HIL
   setup).
@@ -463,14 +517,14 @@ run it — worth understanding why, not just following steps blindly:
   If the robot has just been power-cycled (or is about to be), the mission is either
   already running or about to start the instant boot completes — there's no way to
   SSH in fast enough to beat that, so don't try to race it.
+
 - [ ] **If you know ahead of time** you'll want to smoke-test after the next boot:
   `sudo systemctl disable robot-mission.service` **before** power-cycling, not after —
   disabling in advance means the mission never attempts to start on that boot at all,
   no race involved.
 - [ ] **If the mission is already running** (you forgot to disable it first, or it
   auto-started before you got to a terminal): stop it directly, don't reboot again to
-  try to catch a gap — `docker rm -f robot_mission` (or `sudo systemctl stop
-  robot-mission.service`) frees the hardware immediately, no timing involved. **Watch
+  try to catch a gap — `docker rm -f robot_mission` (or `sudo systemctl stop robot-mission.service`) frees the hardware immediately, no timing involved. **Watch
   the robot physically when you do this** — you're removing whatever is supervising
   `cmd_vel` while the robot may still be mid-motion; don't assume it stops cleanly on
   its own without checking.
