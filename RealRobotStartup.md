@@ -96,6 +96,32 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
 - [X] SSH in over WiFi: `ssh mike@jetson.local` (should resolve reliably — see the
   WiFi note above; fall back to the router admin page's DHCP lease list if not).
 - [X] Check Jetson health: `nvidia-smi`, temp, `df -h` free space.
+- [ ] **Build the native workspace — found missing 2026-08-09, first time this
+  checkout has ever needed a bare-metal build.** Every prior HIL/CI run on this
+  Jetson used the pre-built CONTAINER image (`stage-3-arm64`'s output) — this exact
+  native checkout (`~/autonomous-fleet-testbed`) has never actually been
+  `colcon build`'d. **A1's `sync` step does NOT build anything** — it only
+  fast-forwards the git checkout — so don't assume this is already done just
+  because A1 is checked off. Confirmed live: `install/` on a fresh Jetson only
+  contains a `COLCON_IGNORE` placeholder, no real build output, and `.bashrc`
+  does NOT auto-source the workspace overlay (unlike the workstation's `.bashrc`,
+  which does — this Jetson's is different, don't assume parity between the two
+  machines' shell setups).
+  ```bash
+  # Two system packages this project needs that aren't in a base ROS2 install —
+  # check first, only install if actually missing:
+  dpkg -l | grep -E "ros-jazzy-robot-localization|ros-jazzy-vision-msgs"
+  sudo apt install -y ros-jazzy-robot-localization ros-jazzy-vision-msgs
+  # (ekf_node needs the first, ball_detector needs the second)
+
+  source /opt/ros/jazzy/setup.bash
+  cd ~/autonomous-fleet-testbed
+  colcon build --symlink-install
+  source install/setup.bash
+  ```
+  If the build itself errors, that's a real problem to resolve here, not push
+  past — don't proceed to the driver-layer step below until `colcon build`
+  finishes clean.
 - [ ] **Driver layer — resolved 2026-08-06, do NOT install `ugv_ws`. Concrete
   check/install commands added 2026-08-09 (this section was found too vague on a
   live first pass — links only, no actual commands).**
@@ -114,7 +140,9 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     `imu.hz_min` was found to not be achievable at 921600 either way and was lowered
     to 50 to match the driver's real default (see `CLAUDE.md`/the driver's own commit
     history if the discrepancy matters later). Nothing to separately install — it's
-    this repo's own code, already built by A1's sync + colcon build. Check:
+    this repo's own code, covered by the native workspace build above (NOT by A1's
+    sync, which only fast-forwards git — see that new step if this comes back empty).
+    Check:
     ```bash
     ros2 pkg executables nav_fleet | grep esp32
     ```
