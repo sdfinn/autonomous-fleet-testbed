@@ -516,6 +516,39 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     problem. Physically reset the robot's position between runs if you want to run it
     more than once in a session.
 
+  **Redesigned 2026-08-10** (see
+  docs/superpowers/plans/2026-08-10-drivers-bare-metal-boot-fix.md): `scripts/
+  hil_stage.sh smoke <sha>` now runs the real driver layer bare-metal AND
+  EKF+ball_detector inside the container (`nav2_only_launch.py
+  skip_nav2:=true`) — exercising the actual production container boundary, not
+  a bare-metal stand-in. The old `ROBOT_MODE=smoke_test`-launches-
+  `sensors_only_launch.py`-in-container approach never actually worked for real
+  hardware — the container never had the vendor lidar/camera packages
+  installed. Run this from a real interactive terminal (the operator
+  ball-placement prompt needs one).
+
+  **Final whole-branch review, same day, found + fixed 2 Critical bugs before
+  this was considered done** (full detail in A6 below, since both bugs also
+  touch the boot-sequence files): `smoke_ci()` — CI's own `stage-4-hil`
+  regression step, never itself edited by this rework — would have hung in the
+  foreground until CI's 20-minute timeout on the next push; and the bare-metal
+  driver layer wasn't exporting the DDS env vars (`RMW_IMPLEMENTATION`/
+  `CYCLONEDDS_URI`) needed to actually reach the container. Both fixed and
+  independently re-reviewed clean — the CI-hang fix confirmed byte-identical
+  to the pre-rework original via `diff`, the DDS-env-var fix confirmed live on
+  the Jetson via real `printenv` output (unset before, correctly set after).
+
+  **Not yet run for real, as of 2026-08-10.** Every verification of this
+  rework so far is either code-level (syntax checks, byte-diffs, independent
+  review) or a narrower live probe that stopped short of the actual end-to-end
+  invocation (a SIGINT signal-handling probe using a harmless `sleep 300`
+  instead of the real driver launch; the DDS env-var check run as a standalone
+  `bash -c` snippet, not through the real script). The attended run itself — a
+  real terminal, a human physically placing the yellow ball, `scripts/
+  hil_stage.sh smoke <sha>` actually invoked start to finish — has never
+  happened. That's the next real step before trusting this section, or A6/A7
+  below, in production.
+
 ### A3. Build the real-room SLAM map
 
 - [ ] Joystick setup — pick one and note which for next time:
@@ -612,6 +645,75 @@ passed in by `scripts/container_entrypoint.sh` (see A6). Nothing to write here.
 `scripts/robot_boot.sh`, `scripts/robot-mission.service`, and
 `scripts/container_entrypoint.sh` already exist in the repo — nothing to write here,
 just install and verify:
+
+**Driver layer fix, 2026-08-10** (see
+docs/superpowers/plans/2026-08-10-drivers-bare-metal-boot-fix.md): `robot_boot.sh`
+now starts the real driver layer (`drivers_only_launch.py` — esp32_driver/lidar/
+camera/scan_masker/camera_relay) bare-metal BEFORE the container, using the same
+real hardware constants confirmed throughout A2 (`/dev/ttyTHS1`@115200, the real
+`ld19.launch.py`/`camera.launch.py` paths). Previously nothing started the driver
+layer for a real mission run at all — found and fixed the same day as the camera
+remapping fix, tracing the boot path to answer a different question.
+
+A final whole-branch review, run after all 5 implementation tasks were individually
+Approved, found 2 real Critical bugs only visible at whole-branch scope — both fixed
+in one follow-up commit, both re-reviewed independently clean ("Ready to push: Yes"):
+- **CI would have hung.** `container_entrypoint.sh`'s shared `ROBOT_MODE=smoke_test`
+  branch (rewritten as part of this fix) made it idle forever
+  (`wait "$NAV2_PID"`, waiting on external teardown) — but `smoke_ci()`, CI's own
+  `stage-4-hil` regression step and never itself touched by this fix's diff, runs
+  that SAME shared branch in the foreground with no external teardown. Would have
+  hung `stage-4-hil` until CI's 20-minute timeout on the very next push. Root cause
+  worth remembering: "is smoke_ci untouched" was verified textually (diffing
+  smoke_ci's own body) rather than behaviorally (what the branch it dispatches into
+  now actually does). Fixed by branching that shared branch on the existing
+  `USE_SIM_TIME` value (both callers already set it, no new env var): `true`
+  (smoke_ci, CI-only) restores the original pre-fix in-container
+  `sensors_only_launch.py` + `tools.smoke_test` logic verbatim; `false` (the real
+  bench's `hil_stage.sh smoke`) keeps this fix's new idle-until-torn-down
+  behavior.
+- **The bare-metal driver layer would have talked to the wrong DDS implementation.**
+  `robot_boot.sh` and `hil_stage.sh smoke()` never exported `RMW_IMPLEMENTATION`/
+  `CYCLONEDDS_URI` for the driver layer under non-interactive SSH/systemd (no
+  `.bashrc` there to supply them) — it would have silently defaulted to FastDDS
+  while the container hardcodes CycloneDDS, meaning zero DDS traffic would ever
+  cross the bare-metal-to-container boundary on a real power-on. This reproduces
+  this whole plan's original bug in a new, invisible form — masked during every
+  earlier task's own live verification because those all ran interactively, where
+  `.bashrc` supplies the export. **Live-verified on the real Jetson, both states:**
+  `printenv RMW_IMPLEMENTATION`/`printenv CYCLONEDDS_URI` over a plain
+  non-interactive SSH session confirmed genuinely unset (exit code 1, no output)
+  before the fix; the same check after the fix (running the exact lines the patched
+  `robot_boot.sh` now runs) showed `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` and
+  `CYCLONEDDS_URI=file:///home/mike/cyclonedds-hil.xml`, matching the container's
+  own hardcoded CycloneDDS config, with the referenced XML file confirmed to
+  actually exist at that path.
+
+**Still not proven, as of 2026-08-10 — read before trusting this section:**
+1. **The attended end-to-end bench smoke test (A2 above) has not been run yet** —
+   it needs a real terminal and a human physically placing the yellow ball. This is
+   the very next step, before A6/A7 are attempted for real.
+2. **The DDS env-var fix above is proven "the right variables are exported," NOT
+   yet proven "DDS traffic actually crosses the bare-metal-to-container boundary"**
+   on a real invocation — that specific proof only comes from the attended smoke
+   test or a real `robot_boot.sh` run, neither of which has happened yet.
+3. **The driver-readiness timeout in `robot_boot.sh` has only ever been timed warm.**
+   The same review that found the 2 bugs above also strengthened the readiness
+   check to require ALL of esp32_driver/lidar/camera/scan_masker/camera_relay
+   confirmation lines (previously only `camera_relay up` was checked, which doesn't
+   prove the other 4 drivers actually came up) before the 60s timeout expires — but
+   that timeout has only ever been measured on a WARM interactive SSH session
+   (~25s observed), never on a real COLD boot under `robot-mission.service`, where
+   USB/udev enumeration for the OAK-D camera and the lidar is expected to be
+   slower. Worth timing for real before trusting the systemd unit as-is, or
+   consider bumping the 60s timeout.
+4. **`HSV_CONFIG_FILE=hsv_realcam.yaml` (A4) still doesn't exist** — a full
+   `robot_boot.sh` run through the container step will still fail there.
+   `hil_stage.sh smoke()`'s own HSV default silently falls back to
+   `hsv_gazebo.yaml` (sim thresholds) when this isn't set, which could false-FAIL
+   the bench's ball-correlation check against a real camera — `smoke()` now prints
+   a loud warning about this itself, but it's worth knowing before you're staring
+   at an unexpected FAIL and assuming the driver layer is broken.
 
 - [ ] Get the exact HIL-tested commit onto this checkout (from the workstation):
 

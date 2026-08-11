@@ -10,7 +10,131 @@ alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean 
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
 
-## NEXT SESSION — START HERE (2026-08-10 EOD — ESP32 odom/imu resolved, A2 essentially
+## NEXT SESSION — START HERE (2026-08-11 — drivers-bare-metal-boot-fix DONE, code
+complete and reviewed clean including a final whole-branch pass that caught 2 real
+Criticals, all local (not pushed) — the attended end-to-end bench smoke test is
+STILL NOT RUN, that's the very next real step)
+
+**Closes the boot-sequence gap flagged at 2026-08-10 EOD** ("nothing in the boot
+chain ever starts `sensors_only_launch.py`"). Implemented via subagent-driven-
+development, 5 tasks + a follow-up whole-branch-review fix pass, all local commits
+(`bfed3f3..0b85350`, 7 commits ahead of `origin/main`, confirmed via `git log
+origin/main..HEAD` — nothing pushed yet). Plan:
+`docs/superpowers/plans/2026-08-10-drivers-bare-metal-boot-fix.md`; full ledger:
+`.superpowers/sdd/progress.md`.
+
+**The gap, restated precisely:** `robot_boot.sh` -> `container_entrypoint.sh`'s
+`mission` branch -> `nav2_only_launch.py` only ever started Nav2/EKF/`ball_detector`
+— nothing in that chain ever started `sensors_only_launch.py` (esp32_driver/lidar/
+camera/scan_masker/camera_relay). Separately, the bench smoke test's ORIGINAL design
+(`ROBOT_MODE=smoke_test` launching `sensors_only_launch.py` INSIDE the container)
+could never have worked on real hardware either — the container image never had the
+vendor lidar/camera packages installed, only bare-metal can reach that hardware. A
+mid-planning design correction — **Mike's own catch, not something a reviewer
+found**: the smoke test needed to exercise the REAL container boundary (EKF+
+ball_detector running INSIDE the container, driver layer running bare-metal OUTSIDE
+it), not a bare-metal stand-in for the whole thing.
+
+**Why this wasn't caught sooner:** HIL always runs `use_sim_time=true` — `ci.yml`'s
+`stage-4-hil` job, "Run smoke-test machinery regression (HIL container)" step, own
+comment: `USE_SIM_TIME=true so sensors_only_launch.py skips esp32_driver/
+ldlidar_ros2/depthai-ros and relies on the workstation's Gazebo bridge`. HIL is
+therefore structurally incapable of exercising the real-hardware driver-layer code
+path this fix touches — every HIL run since this project's inception was blind to
+this gap by design, not by oversight.
+
+**The 5-task fix** (full detail in the plan doc, one line each here):
+1. Extracted `drivers_only_launch.py` out of `sensors_only_launch.py` — the 5 driver
+   nodes now live in their own launch file; `sensors_only_launch.py` composes it via
+   `IncludeLaunchDescription`, keeps its own always-on EKF/ball_detector.
+2. Added `skip_nav2` to `nav2_only_launch.py` (true = EKF+ball_detector only, no
+   Nav2/AMCL/map_server — the smoke test's new production-boundary mechanism).
+3. `robot_boot.sh` now starts the driver layer bare-metal before the container.
+4. `container_entrypoint.sh`'s `smoke_test` branch reworked to launch
+   `nav2_only_launch.py skip_nav2:=true` instead of the old in-container
+   `sensors_only_launch.py` approach.
+5. `hil_stage.sh smoke()` reworked to match: driver layer bare-metal via SSH,
+   EKF+ball_detector in a container, both polled for readiness, explicit teardown.
+
+**Two real bugs found DURING implementation, not from the plan's own text — the
+same bug, found twice, independently, in two different scripts:** bash silently
+sets `SIGINT`/`SIGQUIT` to `SIG_IGN` on any `&`-backgrounded job inside a
+non-interactive script (POSIX: async jobs without job control auto-ignore both
+signals). Found in Task 3 (`robot_boot.sh`'s own local backgrounding — `kill -INT`
+on the driver-launch PID was a silent no-op until fixed), then found to recur
+identically in Task 5 (`hil_stage.sh smoke()`'s remote `ssh host "cmd &"`
+backgrounding — same mechanism, local vs. remote doesn't change it). Both
+live-verified via real `/proc/<pid>/status` `SigIgn` bitmasks on the Jetson (`0x6` =
+SIGINT+SIGQUIT ignored before the fix, `0x1` = only SIGHUP after), both fixed with a
+tightly-scoped `set -m`/`set +m` bracket around just the one backgrounding line.
+
+**Final whole-branch review (after all 5 tasks individually Approved) found 2
+Critical bugs invisible at single-task scope, both fixed in one follow-up commit
+(`4366ecb..0b85350`), both re-reviewed independently clean — "Ready to push: Yes":**
+- **C1 — CI would have hung.** Task 4's rewrite of `container_entrypoint.sh`'s
+  shared `ROBOT_MODE=smoke_test` branch made it idle forever (`wait "$NAV2_PID"`,
+  waiting on external teardown) — but `smoke_ci()` (CI's own `stage-4-hil`
+  regression step, genuinely untouched by any of the 5 tasks' own diffs) runs that
+  SAME shared branch in the foreground with no external teardown. Would have hung
+  `stage-4-hil` until CI's 20-minute timeout on the very next push. **The real
+  lesson, not just the bug:** "is smoke_ci untouched" was verified TEXTUALLY
+  (diffing smoke_ci's own body, which really was unchanged) rather than
+  BEHAVIORALLY (what the shared branch it dispatches into now actually does) — a
+  textually-clean diff isn't the same question as a behaviorally-clean one. Fixed by
+  branching the shared `smoke_test` case on the already-existing `USE_SIM_TIME`
+  value (both callers already set it, zero new env vars): `true` (smoke_ci, CI-only)
+  restores the pre-Task-4 original in-container logic byte-for-byte (verified via
+  `diff`, confirmed identical); `false` (the real bench) keeps Task 4's new
+  idle-until-torn-down behavior.
+- **C2 — the bare-metal driver layer would have talked to the wrong DDS
+  implementation.** `robot_boot.sh` and `hil_stage.sh smoke()` never exported
+  `RMW_IMPLEMENTATION`/`CYCLONEDDS_URI` for the driver layer under non-interactive
+  SSH/systemd (no `.bashrc` there) — defaults to FastDDS while the container
+  hardcodes CycloneDDS, meaning zero DDS traffic would cross the boundary on a real
+  power-on. This reproduces this whole plan's original bug in a new, invisible
+  form — masked during every earlier task's own live check since those all ran
+  interactively (where `.bashrc` supplies the export). **Live-verified both states
+  on the real Jetson via `printenv`:** confirmed genuinely unset before the fix
+  (plain non-interactive SSH, exit code 1, no output), confirmed correctly set after
+  (`RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`,
+  `CYCLONEDDS_URI=file:///home/mike/cyclonedds-hil.xml`, matching the container's
+  own hardcoded config; the referenced XML file confirmed to actually exist at that
+  path).
+- Plus 5 Important + 3 Minor fixed in the same pass: readiness gate strengthened to
+  require ALL 5 driver "up" lines, not just `camera_relay up`; a teardown trap added
+  to `smoke()` (previously no coverage for Ctrl+C at the ball-placement prompt);
+  `ros2_drivers_ws` overlay sourcing added to `smoke()` to match `robot_boot.sh`'s
+  own already-fixed gotcha; a `fleet-ci-data` ownership pre-flight warning; a loud
+  HSV-fallback-to-sim-thresholds warning; stale docstring pointers; the pkill
+  bracket-trick convention applied consistently. Full list:
+  `.superpowers/sdd/final-review-fix-report.md`.
+
+**What's still open, as fact, not assumption:**
+1. **The attended end-to-end bench smoke test has not been run.** Needs a real
+   terminal and Mike physically placing the yellow ball
+   (`scripts/hil_stage.sh smoke <sha>`). This is the very next real step.
+2. **C2 is proven "exported," not yet proven "crosses the boundary."** The env-var
+   fix is confirmed correct in isolation on the Jetson; whether real DDS traffic
+   actually reaches the container from the bare-metal driver layer is unverified
+   until the attended smoke test (or a real `robot_boot.sh` run) actually happens.
+3. **The driver-readiness timeout has only been timed warm** (~25s on an
+   interactive SSH session) — never on a real cold boot under
+   `robot-mission.service`, where USB/udev enumeration for the camera/lidar is
+   expected to be slower than the warm number, against the same 60s budget. Worth
+   timing for real, or bumping the timeout, before trusting the systemd unit as-is.
+4. **`hsv_realcam.yaml` (A4) still doesn't exist** — a full `robot_boot.sh` run
+   through the container step will still fail there; `smoke()`'s HSV default falls
+   back to sim thresholds with a loud warning now, but that's a mitigation, not a
+   fix.
+
+**Next session, in order:** (1) the attended bench smoke test, with Mike physically
+present; (2) A4 (HSV calibration — `hsv_realcam.yaml` still doesn't exist); (3) the
+production `robot_boot.sh` mission test (A6/A7) — blocked on both (1) and (2) above.
+Push is a separate, explicit decision, per this repo's own standing convention —
+these 7 commits are pure bugfix/doc work on real findings, low-risk to push
+whenever that's decided, but not done as part of this session.
+
+## (superseded 2026-08-11) PREVIOUS (2026-08-10 EOD — ESP32 odom/imu resolved, A2 essentially
 complete (gimbal + scan FOV mask + footprint fixed, all live-verified), pushed, and
 CONFIRMED FULLY GREEN end to end including a real HIL mission day — one real
 previously-undiscovered boot-sequence gap found, still open)
