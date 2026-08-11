@@ -57,6 +57,18 @@ DEFAULT_PROFILE = str(REPO_DIR / 'robot_profiles' / 'jetson_ugv_pt.yaml')
 KNOWN_DISTANCE_M = 0.75
 DISTANCE_TOLERANCE_M = 0.102   # ~4 inches placement-imprecision tolerance — design spec §3
 FORWARD_ARC_HALF_WIDTH_RAD = math.radians(15)
+# True forward bearing, in the RAW lidar's own bearing convention (angle_min=0 at
+# the lidar's physical zero, NOT the robot's forward) -- found empirically 2026-08-10
+# (RealRobotStartup.md A2): placed a known object at true forward (the same
+# direction the pinned-forward gimbal looks) and read back the lidar's own reported
+# bearing for it. The URDF's lidar_joint has zero rotation (no rpy set) -- nothing
+# else in the stack corrects for this, so any code reading the RAW scan message
+# directly (not via TF) must apply this offset itself. Real bug found + fixed
+# 2026-08-11: this smoke test's own _forward_arc_min_range checked around raw
+# bearing 0 (never applying this offset), so it was reading whatever's nearest to
+# the WRONG direction entirely -- root cause of a live ball_correlation FAIL where
+# the reported "lidar distance" (0.511m) didn't match the true placement (0.75m).
+TRUE_FORWARD_BEARING_RAD = math.radians(285)
 
 # check_topic()'s hz_min values (robot_profiles/*.yaml) are each sensor's own nominal
 # publish rate with zero slack -- found live in CI, 2026-08-09 (run 31332673543): a
@@ -207,14 +219,22 @@ def check_photo(node, camera_topic='/robot_001/camera/image_raw', out_path=None,
             'degenerate': degenerate}
 
 
-def _forward_arc_min_range(msg, half_width_rad=FORWARD_ARC_HALF_WIDTH_RAD):
-    """Minimum finite, positive range within +/- half_width_rad of the scan's zero
-    bearing (straight ahead) — restricting to the forward arc so an object beside or
-    behind the robot isn't mistaken for the ball placed in front of it."""
+def _forward_arc_min_range(msg, half_width_rad=FORWARD_ARC_HALF_WIDTH_RAD,
+                           forward_bearing_rad=TRUE_FORWARD_BEARING_RAD):
+    """Minimum finite, positive range within +/- half_width_rad of TRUE forward
+    (forward_bearing_rad, in the scan's own RAW bearing convention — NOT the scan's
+    bearing 0, which is the lidar's physical zero, not the robot's forward; see
+    TRUE_FORWARD_BEARING_RAD's own comment) — restricting to the forward arc so an
+    object beside or behind the robot isn't mistaken for the ball placed in front of
+    it. Uses atan2-based angle normalization (not a plain subtraction) so the
+    +/-half_width_rad window is correctly evaluated even when it straddles the
+    scan's own 0/2pi wraparound seam."""
     best = None
     angle = msg.angle_min
     for r in msg.ranges:
-        if -half_width_rad <= angle <= half_width_rad and math.isfinite(r) and r > 0.0:
+        delta = math.atan2(math.sin(angle - forward_bearing_rad),
+                           math.cos(angle - forward_bearing_rad))
+        if -half_width_rad <= delta <= half_width_rad and math.isfinite(r) and r > 0.0:
             if best is None or r < best:
                 best = r
         angle += msg.angle_increment

@@ -22,11 +22,12 @@ from unittest.mock import MagicMock, patch
 from tools.mission2_day import GzBallOps
 from tools.mission2_harness import LIDAR_BALL_SDF
 from tools.smoke_test import (KNOWN_DISTANCE_M, LIDAR_HEIGHT_M, LidarVisibleGzBallOps,
-                              check_ball_correlation, check_motion, check_photo,
-                              check_topic, compute_ball_placement_xy, is_degenerate_scan,
-                              load_robot_profile, OperatorPlaceBallOps, is_degenerate_image,
-                              _is_degenerate_imu, _is_degenerate_image_msg,
-                              _is_degenerate_odom, _print_summary, run_smoke_test)
+                              TRUE_FORWARD_BEARING_RAD, check_ball_correlation, check_motion,
+                              check_photo, check_topic, compute_ball_placement_xy,
+                              is_degenerate_scan, load_robot_profile, OperatorPlaceBallOps,
+                              is_degenerate_image, _forward_arc_min_range, _is_degenerate_imu,
+                              _is_degenerate_image_msg, _is_degenerate_odom, _print_summary,
+                              run_smoke_test)
 
 
 def _make_test_image_msg(width=4, height=4, color=None):
@@ -188,6 +189,53 @@ def test_operator_place_ball_ops_prompts_with_inches(monkeypatch):
     assert len(prompts) == 1
     assert 'yellow' in prompts[0]
     assert '12' in prompts[0]  # 0.305 m -> ~12 inches
+
+
+def _make_scan_360(range_by_bearing_deg, default_range=10.0):
+    """Build a full 360deg LaserScan (1deg resolution, angle_min=0) with specific
+    ranges at specific RAW bearings (degrees, the lidar's own bearing convention --
+    see TRUE_FORWARD_BEARING_RAD's own comment for why this differs from the
+    robot's real forward). Every other bearing gets `default_range` (finite, far
+    away -- never mistaken for the object under test)."""
+    msg = LaserScan()
+    msg.angle_min = 0.0
+    msg.angle_increment = math.radians(1.0)
+    ranges = [default_range] * 360
+    for bearing_deg, r in range_by_bearing_deg.items():
+        ranges[int(round(bearing_deg)) % 360] = r
+    msg.ranges = ranges
+    return msg
+
+
+def test_forward_arc_min_range_finds_object_at_true_forward_bearing():
+    # True forward is raw bearing ~285deg (RealRobotStartup.md A2 finding), NOT 0 --
+    # an object placed there must be found.
+    scan = _make_scan_360({285: 0.75})
+    assert _forward_arc_min_range(scan) == pytest.approx(0.75)
+
+
+def test_forward_arc_min_range_ignores_object_at_raw_bearing_zero():
+    # Regression test for the real bug this fixes (found live, 2026-08-11 bench
+    # smoke test): the OLD implementation checked around raw bearing 0 (the lidar's
+    # own physical zero, per its own URDF joint with no rotation applied), which is
+    # NOT the robot's true forward -- an object there must NOT be picked up as "the
+    # ball in front of the robot" now. default_range (10.0, far) at true forward
+    # (285deg) proves this isn't just "no object anywhere in range" passing
+    # vacuously.
+    scan = _make_scan_360({0: 0.51})
+    assert _forward_arc_min_range(scan) == pytest.approx(10.0)
+
+
+def test_forward_arc_min_range_handles_wraparound_at_true_forward():
+    # true forward (285deg) is close to the 360/0 wraparound seam once the +/-15deg
+    # arc is applied (285+15=300, well clear -- but confirms the atan2-based
+    # normalization handles a bearing near the seam correctly, not just the
+    # easy middle-of-the-arc case above).
+    scan = _make_scan_360({296: 0.60})  # 285 + 11, inside the +/-15deg arc
+    assert _forward_arc_min_range(scan) == pytest.approx(0.60)
+
+    scan2 = _make_scan_360({301: 0.60})  # 285 + 16, JUST outside the +/-15deg arc
+    assert _forward_arc_min_range(scan2) == pytest.approx(10.0)
 
 
 def test_check_ball_correlation_gzballops_places_at_known_distance_from_ground_truth(monkeypatch):
