@@ -138,7 +138,31 @@ power_mode() {
 sync() {
   require_ip
   local sha="${1:?usage: hil_stage.sh sync <git-sha>}"
-  jssh "cd ${JETSON_REPO} && git fetch origin ${sha} && git checkout --detach FETCH_HEAD"
+  # git reset --hard + git clean -fd (2026-08-11, found live): a plain `git checkout
+  # --detach FETCH_HEAD` correctly REFUSES to overwrite any local change on the
+  # Jetson's native checkout -- which sounds safe, but this checkout is the ONE
+  # shared target for CI's own sync AND every live-hardware-verification workflow
+  # that touches this exact directory (this project's whole terminal-in-hand-with-
+  # Claude-over-SSH bring-up pattern edits/rsyncs files here directly). A single
+  # leftover local edit -- from live debugging, a half-finished manual test, an
+  # rsync'd file never committed/cleaned up -- silently blocks EVERY future CI run
+  # on this stage until someone notices the log and cleans it by hand (recurred
+  # twice now: 2026-08-10 and again 2026-08-11, same failure signature both times).
+  # This function's own job is "make the Jetson match commit X" -- nothing about
+  # that job requires preserving local state, so make it self-healing instead of
+  # failing hard: `git reset --hard` discards tracked-file edits, `git clean -fd`
+  # (no `-x`) removes untracked files WITHOUT touching anything gitignored.
+  # IMPORTANT, found live testing THIS fix (2026-08-11): reports/ is only safe from
+  # `git clean` to the extent .gitignore actually covers every filename pattern
+  # written there -- the first version of this fix was tested against a real dirty
+  # Jetson tree and genuinely deleted 6 real reports/sensors_container_*.log files
+  # that .gitignore had never covered (only reports/nav2_container_*.log was listed,
+  # not sensors_container_*.log -- a real, separate gap, now fixed in .gitignore
+  # alongside this). If a NEW container_entrypoint.sh branch ever writes a report
+  # file under a name not already covered there, this function WILL delete it on
+  # the next sync -- keep .gitignore's reports/ coverage current, don't assume this
+  # comment's claim as a substitute for checking.
+  jssh "cd ${JETSON_REPO} && git fetch origin ${sha} && git reset --hard FETCH_HEAD && git clean -fd"
   # No bare colcon build any more (docker-brain unification, 2026-08) — the checkout
   # persists here for two reasons: (a) it's the bind-mount target for reports/
   # (HIL's photo/log evidence lands here), and (b) robot_boot.sh reads `git rev-parse

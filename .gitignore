@@ -36,8 +36,17 @@ reports/mission_plan.json
 # telemetry DB) since the Piece 4 absolute-path fix; never repo-relative again
 reports/photos/
 
-# Nav2 crash-autopsy logs (container_entrypoint.sh) — root-owned, accumulate forever
-reports/nav2_container_*.log
+# Container-entrypoint autopsy logs (container_entrypoint.sh) — root-owned, accumulate
+# forever. Was reports/nav2_container_*.log only until 2026-08-11, when a real gap was
+# found live: reports/sensors_container_*.log (the smoke_test branch's own log, same
+# file since 2026-08-05) was NEVER covered — a git clean -fd run against the Jetson's
+# checkout (scripts/hil_stage.sh sync's self-healing fix) deleted 6 real, uncommitted
+# sensors_container_*.log files as an unintended side effect of testing that fix, since
+# they weren't gitignored and therefore weren't "untracked-but-safe" the way this
+# pattern's own comment assumed. Broadened to a wildcard so any FUTURE container-log
+# name sharing this `<name>_container_TIMESTAMP.log` convention is covered automatically,
+# not just today's two known names.
+reports/*_container_*.log
 
 # Failure-bag evidence (rosbag2 dirs) — BAG_DIR is deliberately checkout-relative
 # (failure_bag.py), unlike photos/DB, but still shouldn't be committed

@@ -12,16 +12,42 @@ Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reaso
 
 ## NEXT SESSION — START HERE (2026-08-11 — drivers-bare-metal-boot-fix DONE, code
 complete and reviewed clean including a final whole-branch pass that caught 2 real
-Criticals, all local (not pushed) — the attended end-to-end bench smoke test is
-STILL NOT RUN, that's the very next real step)
+Criticals, PUSHED — first CI run hit a real operational failure (stage-4-hil,
+Jetson git-tree conflict, same failure class as a prior session but now fixed at
+the root cause, see below) — the attended end-to-end bench smoke test is STILL NOT
+RUN, that's the very next real step once this push's CI run is confirmed green)
 
 **Closes the boot-sequence gap flagged at 2026-08-10 EOD** ("nothing in the boot
 chain ever starts `sensors_only_launch.py`"). Implemented via subagent-driven-
-development, 5 tasks + a follow-up whole-branch-review fix pass, all local commits
-(`bfed3f3..0b85350`, 7 commits ahead of `origin/main`, confirmed via `git log
-origin/main..HEAD` — nothing pushed yet). Plan:
+development, 5 tasks + a follow-up whole-branch-review fix pass. Plan:
 `docs/superpowers/plans/2026-08-10-drivers-bare-metal-boot-fix.md`; full ledger:
 `.superpowers/sdd/progress.md`.
+
+**Push + CI arc, this session:** first push (`bfed3f3..f5c56c4`, 9 commits)
+triggered CI run `31513008012` — `stage-4-hil` failed at its very first step
+(`Sync the commit under test on the Jetson`), everything after it skipped. Root
+cause: the Jetson's NATIVE checkout (`~/autonomous-fleet-testbed`, the same
+directory `hil_stage.sh sync` operates on) had local, uncommitted files left by
+this session's own live-hardware verification (subagents `rsync`'d individual
+files there for Tasks 1/3/5's real-Jetson checks, never cleaned up afterward) —
+`git checkout --detach FETCH_HEAD` correctly refused to overwrite them. This is
+the IDENTICAL failure signature CLAUDE.md already documented from 2026-08-10 ("HIL
+hardening session" Gotchas entry) — it recurred because that session's fix was
+manual cleanup, not a structural one. **Fixed at the root cause this time, not
+just cleaned again:** `hil_stage.sh sync()` now self-heals (`git reset --hard
+FETCH_HEAD && git clean -fd` instead of a plain `checkout` that fails hard on any
+local state) — see the new dated Gotchas entry below for the full story,
+including a second, real bug found WHILE testing this exact fix (a `.gitignore`
+gap that let `git clean -fd` delete 6 real, uncommitted `reports/
+sensors_container_*.log` files — also fixed, also documented). Confirmed the
+Jetson's stray files were genuinely stale (superseded by later commits, not
+diverged real work) via direct `diff` before touching anything, and confirmed
+`smoke()` itself calls `sync()` as its own first action — so this fix isn't just
+an operational unblock, it's a real precondition for the attended smoke test to
+ever work at all. Re-pushed (`f5c56c4..<new tip>`) rather than re-running the
+failed job in place — Mike's explicit call this time (opposite of the
+2026-08-10 precedent's "no unnecessary extra CI runs," since this push includes a
+real code fix, not just a clean Jetson tree).
 
 **The gap, restated precisely:** `robot_boot.sh` -> `container_entrypoint.sh`'s
 `mission` branch -> `nav2_only_launch.py` only ever started Nav2/EKF/`ball_detector`
@@ -129,12 +155,11 @@ Critical bugs invisible at single-task scope, both fixed in one follow-up commit
    back to sim thresholds with a loud warning now, but that's a mitigation, not a
    fix.
 
-**Next session, in order:** (1) the attended bench smoke test, with Mike physically
-present; (2) A4 (HSV calibration — `hsv_realcam.yaml` still doesn't exist); (3) the
-production `robot_boot.sh` mission test (A6/A7) — blocked on both (1) and (2) above.
-Push is a separate, explicit decision, per this repo's own standing convention —
-these 7 commits are pure bugfix/doc work on real findings, low-risk to push
-whenever that's decided, but not done as part of this session.
+**Next session, in order:** (1) confirm the re-pushed CI run (`stage-4-hil`
+specifically) actually goes green — check `gh run list` first before assuming;
+(2) the attended bench smoke test, with Mike physically present; (3) A4 (HSV
+calibration — `hsv_realcam.yaml` still doesn't exist); (4) the production
+`robot_boot.sh` mission test (A6/A7) — blocked on (2) and (3) above.
 
 ## (superseded 2026-08-11) PREVIOUS (2026-08-10 EOD — ESP32 odom/imu resolved, A2 essentially
 complete (gimbal + scan FOV mask + footprint fixed, all live-verified), pushed, and
@@ -1553,6 +1578,51 @@ docker buildx build --platform linux/arm64 \
      `pgrep -fa "gz sim|robot_state_publisher"` and check the launching PROJECT PATH in
      the command line specifically — process names alone look identical across
      projects that share the same `nav_fleet` package name.
+- **`hil_stage.sh sync`'s Jetson git-tree-conflict failure (first documented
+  2026-07-31, HIL hardening session) RECURRED 2026-08-11 — same signature, and this
+  time it was self-inflicted by Claude's own live-hardware-verification workflow,
+  not an incidental leftover.** During this session's driver-boot-fix implementation
+  (Tasks 1/3/5), subagents `rsync`'d individual changed/new files directly onto the
+  Jetson's NATIVE checkout (`~/autonomous-fleet-testbed` — the SAME directory
+  `hil_stage.sh sync` operates on) to live-verify against real hardware, then never
+  cleaned up afterward — each task's own verification was independently correct, but
+  nothing in the workflow ever restored that checkout to a git-clean state before the
+  eventual push. First post-push CI run (`31513008012`) failed immediately at
+  `stage-4-hil`'s `Sync the commit under test on the Jetson` step: `git checkout
+  --detach FETCH_HEAD` correctly refused to overwrite 2 modified tracked files
+  (`scripts/robot_boot.sh`, `src/nav_fleet/launch/sensors_only_launch.py`) and 1
+  untracked one (`src/nav_fleet/launch/drivers_only_launch.py`) — everything after
+  that step skipped. Confirmed via direct `diff` before touching anything that all 3
+  were genuinely STALE (superseded by later commits already reviewed/pushed), not
+  diverged real work, so safe to discard.
+  **Fixed at the root cause this time, not just cleaned by hand again:**
+  `scripts/hil_stage.sh`'s `sync()` now runs `git fetch origin <sha> && git reset
+  --hard FETCH_HEAD && git clean -fd` instead of the old fail-hard `git checkout
+  --detach FETCH_HEAD` — this function's whole job is "make the Jetson match commit
+  X," which never actually required preserving local state, so a self-healing sync
+  is the correct fix, not a defensive one. This also means `scripts/hil_stage.sh
+  smoke` (the attended bench smoke test, `smoke()` calls `sync()` as its OWN first
+  action) is now immune to this same failure class, not just CI.
+  **A second, real bug was found WHILE testing this exact fix, before it was
+  trusted:** a deliberate dirty-tree test (a stray tracked-file edit + an untracked
+  probe file) proved the reset/clean logic itself worked, but a follow-up test using
+  a REAL report filename pattern revealed `.gitignore` had a genuine gap —
+  `reports/nav2_container_*.log` was covered, `reports/sensors_container_*.log` (the
+  bench smoke test's own log, same age, same directory, same naming convention) was
+  never added. Running the new `sync()` against the Jetson's actual dirty tree
+  **deleted 6 real, uncommitted `sensors_container_*.log` files** (historical debug
+  logs from earlier live-verification runs, not anything a currently-green run
+  needs) as a genuine, unintended side effect of `git clean -fd` doing exactly what
+  it was asked — not a bug in `git clean`, a real gap in what `.gitignore` told it
+  was safe to remove. Fixed by broadening the pattern to `reports/*_container_*.log`
+  (covers both current names and any future one sharing this convention) rather than
+  just adding the one missing literal name. **Lesson: before trusting "X is
+  gitignored, so this is safe," verify EVERY actual filename pattern the codebase
+  writes into that directory — grep the scripts that create the files, don't infer
+  coverage from a partial read of `.gitignore` itself.** This is exactly how the
+  first version of this fix's own code comment ended up asserting a false "confirmed
+  fully covered by .gitignore" claim — caught by testing the fix against a real dirty
+  tree before pushing it, not by reading the diff more carefully.
 
 ## See also (moved out of this file by /doctor, 2026-07-27, context-lazy-loading pass)
 - Nav2 launch gotchas (Session 10+) — `src/nav_fleet/CLAUDE.md`
