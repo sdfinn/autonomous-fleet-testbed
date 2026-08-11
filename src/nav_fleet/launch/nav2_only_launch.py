@@ -29,8 +29,9 @@ import pathlib
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
-                            TimerAction)
+from launch.actions import (DeclareLaunchArgument, GroupAction,
+                            IncludeLaunchDescription, TimerAction)
+from launch.conditions import UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -65,6 +66,15 @@ def generate_launch_description():
         'map', default_value=str(PKG / 'maps' / 'living_room.yaml'),
         description='Nav2 map yaml — living_room.yaml for sim/HIL, bedroom_real.yaml '
                     'for the real robot',
+    )
+    skip_nav2_arg = DeclareLaunchArgument(
+        'skip_nav2', default_value='false',
+        description='true skips Nav2/AMCL/map_server bringup entirely — EKF '
+                    'and ball_detector still start. Used by the bench smoke '
+                    'test to exercise the real container boundary without '
+                    'needing a real map to exist yet (RealRobotStartup.md '
+                    'A2 runs before A3/A4). Real missions and HIL always use '
+                    'the default false.',
     )
 
     # robot_localization EKF — fuses IMU yaw-rate + wheel-odom translation and owns the
@@ -105,29 +115,32 @@ def generate_launch_description():
     )
 
     nav2_bringup_dir = get_package_share_directory('nav2_bringup')
-    nav2 = TimerAction(
-        period=LaunchConfiguration('start_delay'),
-        actions=[IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(nav2_bringup_dir, 'launch', 'bringup_launch.py')
-            ),
-            launch_arguments={
-                'namespace': 'robot_001',
-                'use_namespace': 'true',
-                'use_sim_time': LaunchConfiguration('use_sim_time'),
-                'params_file': str(PKG / 'config' / 'nav2_params.yaml'),
-                'map': LaunchConfiguration('map'),
-                'use_composition': 'True',
-                'autostart': 'true',
-                # Forwarded, not previously wired (found in second-round review,
-                # 2026-07-26): bringup_launch.py DOES declare its own 'log_level' arg
-                # and applies it via --ros-args --log-level to the composed container
-                # (see nav2_bringup's own bringup_launch.py) — this repo's log_level
-                # arg just never reached it, so `log_level:=debug` was silently a
-                # no-op even though Piece 9's stall investigation depended on real
-                # DEBUG-level Nav2 logging to do its diagnosis.
-                'log_level': LaunchConfiguration('log_level'),
-            }.items(),
+    nav2 = GroupAction(
+        condition=UnlessCondition(LaunchConfiguration('skip_nav2')),
+        actions=[TimerAction(
+            period=LaunchConfiguration('start_delay'),
+            actions=[IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(nav2_bringup_dir, 'launch', 'bringup_launch.py')
+                ),
+                launch_arguments={
+                    'namespace': 'robot_001',
+                    'use_namespace': 'true',
+                    'use_sim_time': LaunchConfiguration('use_sim_time'),
+                    'params_file': str(PKG / 'config' / 'nav2_params.yaml'),
+                    'map': LaunchConfiguration('map'),
+                    'use_composition': 'True',
+                    'autostart': 'true',
+                    # Forwarded, not previously wired (found in second-round review,
+                    # 2026-07-26): bringup_launch.py DOES declare its own 'log_level' arg
+                    # and applies it via --ros-args --log-level to the composed container
+                    # (see nav2_bringup's own bringup_launch.py) — this repo's log_level
+                    # arg just never reached it, so `log_level:=debug` was silently a
+                    # no-op even though Piece 9's stall investigation depended on real
+                    # DEBUG-level Nav2 logging to do its diagnosis.
+                    'log_level': LaunchConfiguration('log_level'),
+                }.items(),
+            )],
         )],
     )
 
@@ -137,6 +150,7 @@ def generate_launch_description():
         use_sim_time_arg,
         hsv_config_arg,
         map_arg,
+        skip_nav2_arg,
         ekf_node,
         ball_detector,
         nav2,
