@@ -19,9 +19,11 @@ Usage (defaults match the ESP32's real hardware wiring, see RealRobotStartup.md 
     python -m tools.pin_gimbal --pan 10 --tilt -5 --port /dev/ttyTHS1 --baud 115200
 
 Field names/ranges for T:133 are sourced from Waveshare's wiki via web search (direct
-fetches 403'd — see esp32_protocol.encode_gimbal_cmd's docstring) — NOT yet confirmed
-against real hardware. Run this once, watch the physical mast, and confirm it actually
-moves to forward/level before trusting the command shape.
+fetches 403'd — see esp32_protocol.encode_gimbal_cmd's docstring), but the command
+shape AND sign convention were confirmed live against the real robot 2026-08-10
+(RealRobotStartup.md A2): --pan negative = left, positive = right; --tilt negative =
+down (directly observed moving), 0 = level, positive = up (inferred, not separately
+observed on this hardware).
 """
 import argparse
 import json
@@ -49,9 +51,11 @@ def send_gimbal_cmd(port, baud, pan_deg, tilt_deg):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--pan', type=float, default=0.0,
-                        help='pan angle in degrees (0 = forward, default: 0)')
+                        help='pan angle in degrees: negative=left, positive=right, '
+                             '0=forward (default: 0)')
     parser.add_argument('--tilt', type=float, default=0.0,
-                        help='tilt angle in degrees (0 = level, default: 0)')
+                        help='tilt angle in degrees: negative=down, positive=up, '
+                             '0=level (default: 0)')
     parser.add_argument('--port', default=DEFAULT_PORT,
                         help=f'serial device (default: {DEFAULT_PORT})')
     parser.add_argument('--baud', type=int, default=DEFAULT_BAUD,
@@ -67,10 +71,10 @@ def main(argv=None):
         return 1
 
     print(f'Sent: {json.dumps(cmd)}')
-    print('Check the physical mast — pan should be 0=forward, tilt 0=level '
-          '(or whatever you passed). If it did NOT move as expected, the T:133 '
-          "field names/ranges need re-checking against real hardware before this "
-          'is trusted — see this file\'s module docstring.')
+    print('Check the physical mast matches: pan negative=left/positive=right, '
+          'tilt negative=down/positive=up, 0/0=forward-level (confirmed 2026-08-10 '
+          "— see this file's module docstring). If it didn't, something about this "
+          'unit differs from the confirmed hardware — treat as a fresh problem.')
     return 0
 
 

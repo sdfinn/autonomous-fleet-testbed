@@ -73,9 +73,14 @@ def encode_gimbal_cmd(pan_deg, tilt_deg):
     pose in degrees. SPD/ACC are both 0 (firmware "as fast as possible" default) —
     this only needs to be sent ONCE at setup time to pin the gimbal forward/level,
     not driven continuously, so there's no need to expose speed/accel here.
-    Sourced from Waveshare's wiki via web search (direct fetches 403'd) — field
-    names/ranges are NOT yet verified against real hardware; see RealRobotStartup.md
-    A2's gimbal checklist item before trusting this on the real robot."""
+
+    **Confirmed live against real hardware, 2026-08-10** (RealRobotStartup.md A2):
+    pan_deg (X) negative = left, positive = right, 0 = forward; tilt_deg (Y)
+    negative = down (directly observed), 0 = level, positive = up (inferred by
+    symmetry with the confirmed negative direction, not separately observed —
+    this robot's own use case only ever needed forward/level + a downward test
+    move). Originally sourced from Waveshare's wiki via web search (direct fetches
+    403'd) with the sign convention unverified — that gap is now closed."""
     return {"T": 133, "X": pan_deg, "Y": tilt_deg, "SPD": 0, "ACC": 0}
 
 

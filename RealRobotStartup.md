@@ -431,19 +431,19 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   and confirm `teleop_twist_keyboard`/`teleop_twist_joy` physically drives the wheels.
   (`ball_detector` subscribes to the camera topic and stays silently uninitialized,
   not crashed, if it's missing — check explicitly rather than discovering it later.)
-- [ ] **Command the pan-tilt gimbal to a fixed forward/level pose — code built
-  2026-08-10 (TDD, `encode_gimbal_cmd` + `tools/pin_gimbal.py`), NOT yet run against
-  real hardware.** This doc previously said this "depends on what `ugv_ws` exposes" —
+- [X] **Command the pan-tilt gimbal to a fixed forward/level pose — code built AND
+  verified live against real hardware, 2026-08-10 (TDD, `encode_gimbal_cmd` +
+  `tools/pin_gimbal.py`).** This doc previously said this "depends on what `ugv_ws` exposes" —
   stale/contradictory leftover from before the 2026-08-06 "do NOT install `ugv_ws`"
   decision above; there is no `ugv_ws`-specific gimbal mechanism to depend on
   anymore. Per Waveshare's own documented sub-controller JSON command set, the
   gimbal is driven over the SAME serial link/protocol `esp32_protocol.py` already
   implements (its `T:13`/`T:126`/`T:131`/`T:136`/`T:142` commands) — a `T:133`
-  command: `{"T":133,"X":<pan_deg>,"Y":<tilt_deg>,"SPD":0,"ACC":0}`. **Caveat:
-  sourced from Waveshare's wiki via web search — direct fetches of the actual wiki
-  page 403'd twice, so this is search-engine-indexed content, not a primary-source
-  read** — the field names/ranges below are UNVERIFIED until the live run below
-  actually moves the mast as expected.
+  command: `{"T":133,"X":<pan_deg>,"Y":<tilt_deg>,"SPD":0,"ACC":0}`. Sourced from
+  Waveshare's wiki via web search — direct fetches of the actual wiki page 403'd
+  twice, so this was search-engine-indexed content, not a primary-source read — but
+  the field names AND sign convention are now confirmed against the real robot
+  (below), so this caveat no longer blocks trusting the command shape.
 
   `esp32_protocol.encode_gimbal_cmd(pan_deg, tilt_deg)` mirrors the file's existing
   encoders (unit-tested, `tests/test_esp32_protocol.py`); `tools/pin_gimbal.py` is
@@ -458,14 +458,15 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   # defaults (/dev/ttyTHS1 @ 115200, same as esp32_driver's real hardware config)
   ```
 
-  **Watch the physical mast when this runs — this is the real verification step,
-  not the code.** If it moves to forward/level as commanded, the T:133 shape is
-  confirmed; check this box and note that in a commit. If it does NOT move (or
-  moves the wrong way / wrong axis), the field names/ranges need re-deriving —
-  don't guess a fix blind, capture what the mast actually did and treat it as a
-  fresh debugging problem. Once confirmed: take a test photo —
-  `take_picture` assumes camera-heading == robot-yaw, which only holds once the
-  gimbal is pinned forward first.
+  **Confirmed live, 2026-08-10, Mike watching the physical mast for each move:**
+  `--tilt -20` moved the mast down ~20° (and `--tilt 0` returned it to level);
+  `--pan 20` swung it right, `--pan -20` swung it all the way left, `--pan 0
+  --tilt 0` returned to forward/level. Sign convention now documented in
+  `encode_gimbal_cmd`'s own docstring: X (pan) negative=left/positive=right,
+  Y (tilt) negative=down (observed)/positive=up (inferred by symmetry, not
+  separately tested — this robot's use case never needed to look up). Take a test
+  photo before moving on — `take_picture` assumes camera-heading == robot-yaw,
+  which only holds now that the gimbal is confirmed pinned forward.
 - [ ] Add a scan FOV mask for the pan-tilt mast's rear self-occlusion (a
   `LaserScanRangeFilter`/equivalent clearing the mast's known bearing range) —
   do this before the SLAM mapping step, not after; an unmasked scan corrupts the
