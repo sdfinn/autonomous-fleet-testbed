@@ -14,6 +14,13 @@ real Jetson hardware (see CLAUDE.md and RealRobotStartup.md for the full history
 this comment-only line exists solely to re-trigger the full CI pipeline (stage-3-arm64
 + stage-4-hil, which the docs-only commits right before it correctly skipped) for one
 more full end-to-end confirmation before the robot gets unpacked.
+
+2026-08-10: camera_relay (closes the camera half of the topic-remapping gap) and the
+real-measured bench ball-placement height (LIDAR_HEIGHT_REAL_M, corrected from a
+sim-URDF-derived guess) both landed and were verified green end to end, including a
+real HIL mission day on the Jetson (run 31453495866) — this comment-only line exists
+solely to re-trigger the full pipeline once more for a clean, uncomplicated
+confirmation, same reason as the 2026-08-09 line above.
 """
 import argparse
 import math
