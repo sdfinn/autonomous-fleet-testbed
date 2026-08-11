@@ -228,11 +228,15 @@ ws_source() {
 }
 
 smoke() {
-  # Bench smoke test (real-robot driver + smoke-test design spec, 2026-08-05/06):
-  # runs ROBOT_MODE=smoke_test on the Jetson, over SSH — the ONLY place this mode is
-  # ever triggered from. robot_boot.sh (power-on) hardcodes ROBOT_MODE=mission and
-  # never calls this — this is the deliberate, workstation-triggered counterpart.
-  # ATTENDED: this prompts you, via THIS terminal, to place the yellow ball.
+  # Bench smoke test (real-robot driver + smoke-test design spec, 2026-08-05/06,
+  # redesigned 2026-08-10 -- see docs/superpowers/plans/2026-08-10-drivers-bare-
+  # metal-boot-fix.md): exercises the REAL production interface -- EKF +
+  # ball_detector running INSIDE the container (nav2_only_launch.py,
+  # skip_nav2:=true), talking to the real driver layer bare-metal outside it --
+  # not a bare-metal stand-in for EKF/ball_detector. Only the driver layer
+  # (vendor lidar/camera packages, never installed in the image, and per this
+  # project's architecture never should be) runs bare-metal. ATTENDED: this
+  # prompts you, via THIS terminal, to place the yellow ball.
   require_ip
   local sha="${1:?usage: hil_stage.sh smoke <git-sha>}"
   sync "$sha"
@@ -240,32 +244,99 @@ smoke() {
   local image="ghcr.io/sdfinn/autonomous-fleet-testbed:${sha}"
   echo "=== [smoke] checking ${image} is present locally on the Jetson ==="
   if ! jssh "docker image inspect ${image} >/dev/null 2>&1"; then
-    echo "FATAL: ${image} is not present locally on the Jetson — sync to a sha a" >&2
+    echo "FATAL: ${image} is not present locally on the Jetson -- sync to a sha a" >&2
     echo "green stage-3-arm64 run already pushed, or docker pull it by hand first." >&2
     exit 1
   fi
 
-  echo "=== [smoke] running ROBOT_MODE=smoke_test — you will be prompted to place"
-  echo "the yellow ball when the correlation check starts =="
-  # -t (this ssh) + -it (the remote docker run), unlike jssh() (every OTHER
-  # subcommand here is unattended) — so tools/smoke_test.py's operator prompt
-  # (design spec: 'interactive prompting is deliberate here') actually reaches you.
-  # SERIAL_DEVICE is passed BOTH as --device (the host->container device passthrough)
-  # AND as -e (container_entrypoint.sh's own smoke_test branch reads it from its
-  # environment to build the serial_device:= launch arg) — without the -e, an
-  # operator override of the default /dev/ttyUSB0 would map the right device into
-  # the container but the launch would still look for the wrong (default) path.
+  local hsv="${HSV_CONFIG_FILE:-hsv_gazebo.yaml}"
+
+  echo "=== [smoke] starting the real driver layer bare-metal ==="
+  # set -m (job control) bracketed tightly around ONLY the backgrounding line --
+  # confirmed live 2026-08-11 (Task 5 investigation) that a plain (non -t) `ssh
+  # host "cmd &"` invocation hits the EXACT SAME bug Task 3 found for
+  # robot_boot.sh's local backgrounding: bash auto-sets SIGINT/SIGQUIT to
+  # SIG_IGN for a job backgrounded from a non-interactive shell with job
+  # control off -- which describes this remote subshell too (no -t means no
+  # pty, so the remote bash is non-interactive regardless of BatchMode).
+  # Verified directly via /proc/<pid>/status: without set -m, a backgrounded
+  # `sleep 300 &` here showed SigIgn=0000000000000006 (bits 1+2 = SIGINT +
+  # SIGQUIT) and a follow-up `kill -INT` on it was a confirmed silent no-op;
+  # with set -m bracketing the launch line (matching robot_boot.sh's own
+  # pattern exactly), SigIgn dropped to 0000000000000001 (SIGHUP only, from
+  # nohup) and `kill -INT` killed it cleanly. Without this, the teardown
+  # below's `pkill -INT` would silently never stop the driver layer.
+  jssh "cd ${JETSON_REPO} && \
+    (source /opt/ros/jazzy/setup.bash; source install/setup.bash; \
+     bash scripts/regen_cyclonedds_config.sh; \
+     rm -f /tmp/smoke_drivers.log; \
+     set -m; \
+     nohup ros2 launch nav_fleet drivers_only_launch.py \
+       serial_device:=${SERIAL_DEVICE:-/dev/ttyTHS1} \
+       serial_baud:=${SERIAL_BAUD:-115200} \
+       lidar_launch_file:=\$HOME/ros2_drivers_ws/install/ldlidar_ros2/share/ldlidar_ros2/launch/ld19.launch.py \
+       camera_launch_file:=/opt/ros/jazzy/share/depthai_ros_driver/launch/camera.launch.py \
+       > /tmp/smoke_drivers.log 2>&1 < /dev/null & \
+     set +m)"
+
+  echo "=== [smoke] waiting up to 60s for the driver layer to report up ==="
+  local deadline=$((SECONDS + 60))
+  local count=0
+  until [ "$count" -ge 1 ]; do
+    if (( SECONDS >= deadline )); then
+      echo "FATAL: drivers_only_launch.py not up within 60s on the Jetson -- see" >&2
+      echo "/tmp/smoke_drivers.log there:" >&2
+      jssh "tail -n 40 /tmp/smoke_drivers.log" >&2 || true
+      jssh "pkill -INT -f 'ros2 launch nav_fleet drivers_only_launch.py'" || true
+      exit 1
+    fi
+    sleep 2
+    count=$(jssh "grep -c 'camera_relay up' /tmp/smoke_drivers.log 2>/dev/null || true")
+    count="${count:-0}"
+  done
+  echo "=== [smoke] driver layer up ==="
+
+  echo "=== [smoke] starting EKF+ball_detector in the container (ROBOT_MODE=smoke_test) ==="
+  jssh "docker rm -f hil_smoke_test 2>/dev/null || true; \
+    docker run -d --name hil_smoke_test --network host --ipc host \
+      -v \$HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
+      -v \$HOME/fleet-ci-data:/root/fleet-ci-data \
+      -e USE_SIM_TIME=false -e HSV_CONFIG_FILE=${hsv} \
+      -e ROBOT_MODE=smoke_test -e RUNNER_TYPE=real_robot \
+      ${image} bash /ros2_ws/scripts/container_entrypoint.sh"
+
+  echo "=== [smoke] waiting up to 60s for EKF+ball_detector to report up in the container ==="
+  deadline=$((SECONDS + 60))
+  count=0
+  until [ "$count" -ge 1 ]; do
+    if (( SECONDS >= deadline )); then
+      echo "FATAL: EKF+ball_detector not up within 60s in the container -- see" >&2
+      jssh "docker logs hil_smoke_test 2>&1 | tail -n 40" >&2 || true
+      jssh "docker rm -f hil_smoke_test" || true
+      jssh "pkill -INT -f 'ros2 launch nav_fleet drivers_only_launch.py'" || true
+      exit 1
+    fi
+    sleep 2
+    count=$(jssh "docker logs hil_smoke_test 2>&1 | grep -c 'ball_detector up' || true")
+    count="${count:-0}"
+  done
+  echo "=== [smoke] EKF+ball_detector up in the container -- running the smoke test"
+  echo "(you will be prompted to place the yellow ball when the correlation check"
+  echo "starts) =="
+  # Plain SSH (no docker -it involved this time -- that's exactly what broke the
+  # OLD container-based invocation in a non-interactive tool environment on
+  # 2026-08-10). -t is still used here purely to match every other attended step
+  # in this file; a bare python3 input() prompt doesn't actually need a pty.
+  local rc=0
   ssh -t -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
     "${JETSON_USER}@${JETSON_IP}" \
-    "docker rm -f hil_smoke_test 2>/dev/null || true; \
-     docker run --rm --name hil_smoke_test --network host --ipc host -it \
-       --device=${SERIAL_DEVICE:-/dev/ttyUSB0} \
-       -v \$HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
-       -v \$HOME/fleet-ci-data:/root/fleet-ci-data \
-       -e USE_SIM_TIME=false -e HSV_CONFIG_FILE=hsv_realcam.yaml \
-       -e SERIAL_DEVICE=${SERIAL_DEVICE:-/dev/ttyUSB0} -e SERIAL_BAUD=${SERIAL_BAUD:-115200} \
-       -e ROBOT_MODE=smoke_test -e RUNNER_TYPE=real_robot \
-       ${image} bash /ros2_ws/scripts/container_entrypoint.sh"
+    "cd ${JETSON_REPO} && source /opt/ros/jazzy/setup.bash && source install/setup.bash && \
+     python3 -m tools.smoke_test --runner-type real_robot" || rc=$?
+
+  echo "=== [smoke] tearing down the container and the bare-metal driver layer ==="
+  jssh "docker rm -f hil_smoke_test" || true
+  jssh "pkill -INT -f 'ros2 launch nav_fleet drivers_only_launch.py'" || true
+  return "$rc"
 }
 
 smoke_ci() {
