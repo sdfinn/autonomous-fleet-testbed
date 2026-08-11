@@ -23,3 +23,9 @@ pytest==8.3.2
 pytest-cov>=5.0
 python-dotenv>=1.0
 pytest-timeout>=2.3
+# pyserial: tools/pin_gimbal.py imports `serial` at module level with no rclpy
+# dependency at all — its test (tests/test_pin_gimbal.py) is meant to run on bare
+# stage-1-quality (ubuntu-latest, no ROS2), unlike esp32_driver.py's own serial
+# usage (excluded from stage-1 for an unrelated reason: it needs rclpy). Missing
+# here caused a real stage-1 collection failure (ModuleNotFoundError), 2026-08-11.
+pyserial>=3.5
