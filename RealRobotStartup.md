@@ -467,10 +467,44 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   separately tested — this robot's use case never needed to look up). Take a test
   photo before moving on — `take_picture` assumes camera-heading == robot-yaw,
   which only holds now that the gimbal is confirmed pinned forward.
-- [ ] Add a scan FOV mask for the pan-tilt mast's rear self-occlusion (a
-  `LaserScanRangeFilter`/equivalent clearing the mast's known bearing range) —
-  do this before the SLAM mapping step, not after; an unmasked scan corrupts the
-  map, not just the costmap.
+- [X] **Scan FOV mask — built, tested (TDD), and verified live against real
+  hardware, 2026-08-10.** ldlidar_ros2's own built-in `angle_crop_min`/
+  `angle_crop_max` (confirmed against its source, `src/demo.cpp`) only masks ONE
+  contiguous arc — this robot needs two non-contiguous ones, so a small custom
+  node was built instead: `nav_fleet/scan_filter.py` (pure masking logic,
+  `tests/test_scan_filter.py`) + `nav_fleet/scan_masker.py` (thin rclpy wrapper,
+  `tests/test_scan_masker.py`) — subscribes to ldlidar_ros2's raw `scan` topic,
+  republishes `/robot_001/scan` with both bad sectors NaN'd out. Wired into
+  `sensors_only_launch.py`'s real-hardware group (also closes the lidar half of
+  this file's own topic-remapping gap below, as a side effect — Nav2/EKF read
+  `/robot_001/scan` either way).
+
+  **Both sectors found and confirmed via real measurement, not guesswork** (full
+  story: place a known object at a known bearing — see the box+ball calibration
+  below — then correlate against a raw scan dump):
+  - **Pan-tilt mast: 46°–123°**, range ~0.03m (touching-close) — the mast pole
+    sitting immediately behind the lidar.
+  - **WiFi antenna: 268°–277°**, range ~0.25–0.30m — a thin rod off the camera
+    head dipping into the lidar's fixed scan plane.
+
+  Verified live: `/scan` (raw) vs `/robot_001/scan` (masked) sampled at the same
+  bearings — 85°/105°/272° (inside the masked sectors) read a real short range on
+  `/scan` and `nan` on `/robot_001/scan`; 0°/180°/300° (clear) matched on both.
+
+  Defaults live in `scan_masker.py`'s `DEFAULT_MASK_SECTORS_DEG`
+  (`[46, 123, 268, 277]`) — override via the `mask_sectors_deg` ROS2 param
+  (flat `[lo1, hi1, lo2, hi2, ...]`) if this ever needs retuning on a different
+  unit.
+
+  **How the calibration was actually done, in case this needs redoing:** the
+  lidar's own `angle_min=0`/CCW convention does NOT align with the chassis's true
+  forward direction the way the static transform's zero-rotation assumption
+  implies — confirmed by placing a box+ball directly in front of the robot (same
+  direction the camera looks, itself confirmed via the pinned-forward gimbal
+  test above) and finding it at lidar bearing ~285°, not 0°. From there: mast
+  (physically opposite of forward, per direct visual inspection) predicted at
+  285°−180°=105°, which landed inside the measured 46°–123° block — internally
+  consistent, not just a lucky guess.
 - [ ] Confirm the URDF footprint against the vendor drawing
   (`docs/img/waveshare_ugv_pt_dimensions.png`): 253×231 mm footprint, 289 mm height
   w/ mast, 126 mm wheelbase, 25 mm ground clearance. **This doc previously claimed the

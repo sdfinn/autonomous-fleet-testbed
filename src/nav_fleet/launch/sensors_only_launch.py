@@ -68,6 +68,21 @@ def generate_launch_description():
                      'baud': LaunchConfiguration('serial_baud')}],
     )
 
+    # scan_masker: subscribes to ldlidar_ros2's raw 'scan' topic, republishes
+    # /robot_001/scan with the pan-tilt mast (46-123deg) and WiFi antenna
+    # (268-277deg) self-occlusion sectors NaN'd out — confirmed live against the
+    # real hardware 2026-08-10 (see scan_filter.py's module docstring). Also closes
+    # the lidar half of this file's own topic-remapping gap (lidar_include above has
+    # no remappings at all) as a side effect: Nav2/EKF read /robot_001/scan either
+    # way, masked or not. Always included alongside lidar_include (not separately
+    # gated on lidar_launch_file) — harmless with no publisher on 'scan' yet.
+    scan_masker = Node(
+        package='nav_fleet',
+        executable='scan_masker',
+        name='scan_masker',
+        output='screen',
+    )
+
     # Real launch files exist today (verified 2026-08-06) at ldrobotSensorTeam/
     # ldlidar_ros2's launch/{ld06,ld14,ld14p,ld19}.launch.py and luxonis/depthai-ros's
     # jazzy-branch depthai_ros_driver/launch/camera.launch.py — neither is wired to a
@@ -87,7 +102,7 @@ def generate_launch_description():
 
     real_hardware_drivers = GroupAction(
         condition=UnlessCondition(LaunchConfiguration('use_sim_time')),
-        actions=[esp32_driver, lidar_include, camera_include],
+        actions=[esp32_driver, lidar_include, camera_include, scan_masker],
     )
 
     # Always on, both modes — matches nav2_only_launch.py's own always-on pattern
