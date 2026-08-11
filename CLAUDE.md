@@ -11,9 +11,9 @@ R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expans
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
 
 ## NEXT SESSION — START HERE (2026-08-10 EOD — ESP32 odom/imu resolved, A2 essentially
-complete (gimbal + scan FOV mask + footprint fixed, all live-verified), one real
-previously-undiscovered boot-sequence gap found, 20 local commits staged for a
-single push+full-CI-run once Ethernet is reconnected — NOT pushed yet)
+complete (gimbal + scan FOV mask + footprint fixed, all live-verified), pushed, and
+CONFIRMED FULLY GREEN end to end including a real HIL mission day — one real
+previously-undiscovered boot-sequence gap found, still open)
 
 **Picks up exactly where 2026-08-09 EOD left off: the ESP32 odom/imu blocker from
 that session is resolved** (`435cedd`/`e5ac621`, root cause: `esp32_protocol.py`'s
@@ -21,11 +21,10 @@ T:1001/T:1002 feedback field-mapping had the two messages' shapes backwards —
 confirmed by probing the real hardware directly with raw pyserial, not guessed).
 Today continued A2 live, same terminal-in-hand-with-Claude-over-SSH mode as
 yesterday, through 3 more checklist items plus a real, useful detour prompted by a
-disaster-recovery question. **Nothing pushed today either — same as yesterday's
-10 local commits, today's ~10 more sit on top, 20 total ahead of `origin/main`.**
-Mike is about to power down the robot and connect the Jetson to Ethernet for the
-push + full CI run (needed to get a fresh arm64 container image — today's fixes
-predate the last pushed image, `f09c949`).
+disaster-recovery question, then pushed everything (23 commits total,
+`f09c949..d6f4198`) and drove the resulting CI run through 4 real, distinct
+failures to a genuine fully-green finish — see the dedicated section below for
+that whole arc; don't assume "pushed" alone means "proven" without reading it.
 
 **A2 checklist — gimbal, scan mask, and footprint all done, TDD + live-verified:**
 - **Pan-tilt gimbal (`encode_gimbal_cmd` + `tools/pin_gimbal.py`):** T:133 command
@@ -86,16 +85,58 @@ runner checks out into `~/actions-runner/_work/...`, a directory completely
 separate from `~/autonomous-fleet-testbed` — pushing and running CI will NOT
 touch or overwrite the native dev checkout this whole bring-up has been using.
 
-**Next session, in order:** (1) power down, connect Ethernet, push all 20 commits,
-confirm a full green CI run (this also gets a fresh arm64 image with everything
-through today baked in); (2) fix the boot-sequence gap above (`robot_boot.sh`
+**The push + CI debugging arc — 4 real, distinct failures, all found via actual
+logs (never guessed), all fixed, ending genuinely fully green (run
+`31450359510`, all 8 jobs, including a real `stage-4-hil` mission day on the
+Jetson):**
+1. **`esp32_protocol.py` E128 flake8 error.** A real regression from yesterday's
+   ESP32 fix (`435cedd`) that had simply never been through CI before (it sat
+   unpushed) — I'd checked this exact line earlier the same session, correctly
+   concluded "pre-existing relative to my own edits," and wrongly stopped there
+   instead of checking it against the last GREEN CI baseline. One-space
+   continuation-line fix (`fix: esp32_protocol.py E128...`).
+2. **`pyserial` missing from `requirements-ci.txt`.** `tools/pin_gimbal.py`
+   imports `serial` at module level with no rclpy dependency at all — its test
+   was never flagged for stage-1's usual rclpy-based `--ignore` treatment, it
+   just needed this one PyPI package stage-1's minimal install never pulled in.
+   Verified the fix against a genuinely scrubbed environment (`env -i`, no
+   inherited `PYTHONPATH`) matching stage-1's real bare-`ubuntu-latest`
+   conditions — a first, non-scrubbed repro attempt gave a misleading, unrelated
+   `lark` import error from leftover ROS2 env leakage.
+3. **Jetson git-tree conflict.** `hil_stage.sh sync`'s plain `git checkout`
+   correctly refused to overwrite today's whole day of `scp`-synced local state
+   on `~/autonomous-fleet-testbed` (the exact directory this whole session's
+   bring-up used) — every file byte-diffed identical to what the new commit
+   already contained, so cleaned it directly (`git checkout --` the tracked
+   ones, `rm` the untracked ones) rather than push a code change for an
+   operational, not-a-bug issue.
+4. **Workstation missing the CycloneDDS `net.core.rmem_max` bump.**
+   `regen_cyclonedds_config.sh` runs on BOTH machines, and today's
+   `SocketReceiveBufferSize min="10MB"` addition needed a matching OS-level
+   sysctl on both too — I'd only ever verified/known about it on the Jetson
+   (yesterday's bench work). Every ROS2 node in the HIL sim crashed instantly
+   (`rmw_create_node: failed to create domain`) until Mike ran the matching
+   `sudo sysctl -w net.core.rmem_max=2147483647` + persistent sysctl.d file on
+   the workstation (I don't have sudo in this environment — handed him the
+   exact command rather than trying to work around it).
+Each fix was verified against the real failure (log excerpt or a genuine local
+repro), never guessed-and-pushed. Issues #1-#2 were real code bugs, each needing
+its own fix commit + new push (3 CI runs total: the original push, then one more
+per fix). Issues #3-#4 were operational, not code bugs — fixed directly (cleaned
+the Jetson's tree; had Mike run the sysctl command) and re-run IN PLACE via `gh
+run rerun --failed` on that same third run, no new push either time (Mike's
+explicit ask: no unnecessary extra CI runs) — that third run is `31450359510`,
+the one that ultimately finished fully green.
+
+**Next session, in order:** (1) fix the boot-sequence gap above (`robot_boot.sh`
 needs to actually start `sensors_only_launch.py` somewhere) before trusting A6;
-(3) fix the camera half of the remapping gap (lidar half already closed by
-`scan_masker`); (4) run the bench smoke test for real — blocked today only by the
-stale container image, should be unblocked once (1) lands; (5) A3 (SLAM map) and
-A4 (HSV calibration, `hsv_realcam.yaml` still doesn't exist) still untouched —
-note the smoke test's ball-detection check will still be running against
-`hsv_gazebo.yaml` until A4 happens.
+(2) fix the camera half of the remapping gap (lidar half already closed by
+`scan_masker`); (3) run the bench smoke test for real — fully unblocked now, a
+fresh arm64 image with everything through today is confirmed present and
+working on the Jetson; (4) A3 (SLAM map) and A4 (HSV calibration,
+`hsv_realcam.yaml` still doesn't exist) still untouched — note the smoke test's
+ball-detection check will still be running against `hsv_gazebo.yaml` until A4
+happens.
 
 ## (superseded 2026-08-10) PREVIOUS (2026-08-09 EOD — real physical robot arrived and bring-up
 started LIVE; CI-side smoke-test fixes shipped + proven; hardware bring-up genuinely
