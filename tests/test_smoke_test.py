@@ -326,12 +326,16 @@ def test_operator_place_ball_ops_prompts_with_riser_height(monkeypatch):
     # A real physical bench test needs the operator to know to use a riser/box --
     # otherwise a correctly-distance-placed but floor-level real ball hits the exact
     # same 2D-lidar-scan-height problem the sim ball did.
+    # Height uses LIDAR_HEIGHT_REAL_M (real hardware, measured 2026-08-10 -- ~6in),
+    # NOT LIDAR_HEIGHT_M (that one's sim-URDF-geometry-derived, ~10in, and only
+    # correct for LidarVisibleGzBallOps's own sim spawn height -- see that constant's
+    # own comment for why the two must NOT be the same value).
     prompts = []
     monkeypatch.setattr('builtins.input', lambda p: prompts.append(p) or '')
     OperatorPlaceBallOps().place('yellow', 0.75)
     assert len(prompts) == 1
     assert 'riser' in prompts[0].lower() or 'box' in prompts[0].lower()
-    assert '10' in prompts[0]  # 0.25 m -> ~10 inches
+    assert '6' in prompts[0]  # 0.1524 m -> ~6 inches
 
 
 def test_known_distance_m_clears_the_camera_field_of_view():

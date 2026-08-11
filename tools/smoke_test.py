@@ -65,12 +65,24 @@ HZ_TOLERANCE_FACTOR = 0.9
 # one fixed horizontal scan plane, no vertical resolution at all (confirmed live,
 # 2026-08-09: a ball resting on the floor was undetectable at any distance, even after
 # adding real <collision> geometry — the beam was simply passing entirely over it).
-# The plane sits ~0.25 m off the ground: spawn z 0.15 m + the lidar joint's own 0.1 m
-# local mount offset (ugv_pt.urdf.xacro). Placing the ball's CENTER at that same height
-# means the scan plane passes straight through it, with the ball's own radius as
-# margin either side. On the real bench, this means an actual physical riser/box under
-# the ball — OperatorPlaceBallOps's prompt below says so explicitly.
+# Placing the ball's CENTER at the scan plane's own height means the plane passes
+# straight through it, with the ball's own radius as margin either side.
+#
+# SIM ball spawn height (LidarVisibleGzBallOps, below) — the plane sits ~0.25 m off
+# the ground per the SIMULATED URDF's own geometry: spawn z 0.15 m + the lidar
+# joint's own 0.1 m local mount offset (ugv_pt.urdf.xacro). This is the sim
+# geometry's number, already validated by the sim-side ball correlation check —
+# don't change it to "fix" the real-bench number below, they're deliberately
+# different constants for deliberately different physical setups.
 LIDAR_HEIGHT_M = 0.25
+
+# REAL bench ball-placement height (OperatorPlaceBallOps, below) — measured directly
+# against the real hardware, 2026-08-10 (Mike's own visual inspection: "about 6
+# inches", corrected from an earlier, wrong assumption that the sim URDF's 0.25 m/
+# 10in figure would also hold on the real chassis — it doesn't; the two mounts
+# aren't at the same height). On the real bench, this means an actual physical
+# riser/box under the ball — OperatorPlaceBallOps's prompt below says so explicitly.
+LIDAR_HEIGHT_REAL_M = 0.1524
 
 
 def load_robot_profile(path):
@@ -128,10 +140,10 @@ class OperatorPlaceBallOps:
 
     def place(self, color, distance_m):
         inches = distance_m * 39.37
-        height_inches = LIDAR_HEIGHT_M * 39.37
+        height_inches = LIDAR_HEIGHT_REAL_M * 39.37
         input(f"Place the {color} ball {inches:.0f} inches ({distance_m:.3f} m) "
               f"directly in front of the robot, ON A RISER/BOX so its CENTER sits "
-              f"~{height_inches:.0f} inches ({LIDAR_HEIGHT_M:.2f} m) off the bench "
+              f"~{height_inches:.0f} inches ({LIDAR_HEIGHT_REAL_M:.2f} m) off the bench "
               f"surface (the lidar's own scan height — a floor-level ball is below "
               f"its single scan plane and won't be seen), then press Enter: ")
 
@@ -179,7 +191,8 @@ def check_photo(node, camera_topic='/robot_001/camera/image_raw', out_path=None,
         return {'pass': False, 'path': None, 'reason': 'no image received'}
 
     if out_path is None:
-        out_path = str(pathlib.Path(PHOTO_DIR) / f"smoke_test_{time.strftime('%Y%m%dT%H%M%S')}.png")
+        ts = time.strftime('%Y%m%dT%H%M%S')
+        out_path = str(pathlib.Path(PHOTO_DIR) / f"smoke_test_{ts}.png")
     image_msg_to_png(state['msg'], out_path)
     degenerate = is_degenerate_image(image_msg_to_rgb(state['msg']))
     exists = pathlib.Path(out_path).exists()
