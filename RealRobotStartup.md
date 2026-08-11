@@ -505,18 +505,28 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   (physically opposite of forward, per direct visual inspection) predicted at
   285°−180°=105°, which landed inside the measured 46°–123° block — internally
   consistent, not just a lucky guess.
-- [ ] Confirm the URDF footprint against the vendor drawing
-  (`docs/img/waveshare_ugv_pt_dimensions.png`): 253×231 mm footprint, 289 mm height
-  w/ mast, 126 mm wheelbase, 25 mm ground clearance. **This doc previously claimed the
-  URDF was "230×252 mm, already close" — checked against the actual code 2026-08-05
-  and that's wrong: `ugv_pt.urdf.xacro`'s `base_length`/`base_width` are 0.35/0.30 m
-  (350×300 mm), unchanged since Session 9, and Nav2's real costmap footprint is a
-  circular `robot_radius: 0.24` (480 mm diameter) — not a rectangle at all. Whether
-  350×300 mm (or the 480 mm circular footprint) is "close enough" to the real
-  253×231 mm chassis hasn't actually been re-verified — do that here, don't assume
-  the old "geometry is not the gap" conclusion still holds.** (6-wheel skid-steer vs.
-  the URDF's 4-wheel diff-drive model IS a separate, already-known real gap — the EKF
-  node in A5 below is the mitigation, not a new task here.)
+- [X] **Footprint re-verified 2026-08-10 against the real vendor drawing (read
+  directly, not from memory/transcription) — one real fix made, one param
+  confirmed already adequate.** `docs/img/waveshare_ugv_pt_dimensions.png`
+  confirms 253×231 mm footprint, 289 mm height w/ mast, 126 mm wheelbase, 25.13 mm
+  ground clearance — the numbers previously recorded here were accurate.
+  - **Nav2's real safety-relevant param, `robot_radius: 0.24` (480 mm circle) —
+    CONFIRMED adequate, no change needed.** Real chassis half-diagonal =
+    √(253²+231²)/2 ≈ 171 mm, comfortably inside the 240 mm radius (~69 mm margin
+    on the tightest axis). Not too small (no clipped-corner risk); not so
+    oversized it should be refusing genuinely passable doorways in this test
+    environment either.
+  - **`ugv_pt.urdf.xacro`'s `base_length`/`base_width` — WAS a real, confirmed
+    mismatch (0.35/0.30 m = 350×300 mm, ~38%/~30% oversized vs. the real
+    253×231 mm chassis), FIXED**, now `0.253`/`0.231`. Scoped deliberately to
+    just these two properties — `wheel_separation`/`wheel_x_offset` were NOT
+    touched (the 6-wheel-skid-steer-vs-4-wheel-diff-drive kinematic mismatch is
+    a separate, already-known/accepted gap, EKF is its mitigation, out of scope
+    here). This box only ever affected Gazebo's sim collision physics — Nav2's
+    real costmap footprint comes from `robot_radius` above, not this URDF box —
+    so this was a sim-fidelity gap, not a real-hardware safety issue. Verified
+    `xacro` still processes the file cleanly and emits the corrected box size;
+    full local suite (534 tests) still green.
 - [ ] **Run the bench smoke test — do this before anything past this point relies on
   the driver layer.** `tools/smoke_test.py` (built 2026-08-06) is a bench sanity check
   for exactly this moment: it proves odom/scan/camera/imu are all publishing at real

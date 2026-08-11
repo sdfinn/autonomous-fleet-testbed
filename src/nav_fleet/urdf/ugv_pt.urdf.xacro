@@ -2,8 +2,19 @@
 <robot name="ugv_pt" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
   <xacro:property name="base_mass" value="5.0"/>
-  <xacro:property name="base_length" value="0.35"/>
-  <xacro:property name="base_width" value="0.30"/>
+  <!-- 0.253/0.231 (253x231mm) — corrected 2026-08-10 against the real vendor drawing
+       (docs/img/waveshare_ugv_pt_dimensions.png, read directly, not from memory) —
+       was 0.35/0.30 (350x300mm), a real ~38%/~30% oversize with no basis found
+       anywhere. Sim-collision-geometry-only: Nav2's own real-robot safety footprint
+       (nav2_params.yaml robot_radius=0.24) is separate and was independently
+       confirmed still adequate (real chassis half-diagonal ~0.171m < 0.24m) —
+       this fix is about sim/real visual + collision-physics parity, not navigation
+       safety. wheel_separation/wheel_x_offset below are NOT touched here — the
+       6-wheel-skid-steer-vs-4-wheel-diff-drive kinematic mismatch is a separate,
+       already-known/accepted gap (EKF is its mitigation), out of scope for this
+       footprint-only fix. -->
+  <xacro:property name="base_length" value="0.253"/>
+  <xacro:property name="base_width" value="0.231"/>
   <xacro:property name="base_height" value="0.15"/>
   <xacro:property name="wheel_radius" value="0.05"/>
   <xacro:property name="wheel_width" value="0.04"/>
