@@ -16,9 +16,13 @@ input_topic default is the RECTIFIED image (/oak/rgb/image_rect), not the raw on
 (confirmed live, 2026-08-10), and a rectified image is the more sensible input for
 HSV-based ball detection/range estimation anyway.
 
-Only ever launched by sensors_only_launch.py's real-hardware group (same treatment
-as esp32_driver.py/scan_masker.py) — sim/CI never constructs this node; Gazebo's
-own camera plugin already publishes directly to /robot_001/camera/image_raw.
+Launched by drivers_only_launch.py (real-hardware group, same treatment as
+esp32_driver.py/scan_masker.py) — primarily via robot_boot.sh (real mission boot)
+and hil_stage.sh smoke() (the bench smoke test), both bare-metal; also reachable
+via sensors_only_launch.py's own real-hardware group, which includes
+drivers_only_launch.py (2026-08-10 refactor). sim/CI never constructs this node;
+Gazebo's own camera plugin already publishes directly to
+/robot_001/camera/image_raw.
 """
 import rclpy
 from rclpy.node import Node

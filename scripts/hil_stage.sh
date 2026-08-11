@@ -250,6 +250,45 @@ smoke() {
   fi
 
   local hsv="${HSV_CONFIG_FILE:-hsv_gazebo.yaml}"
+  # I5 (2026-08-11): a silent hsv_gazebo.yaml (SIM color thresholds) default here
+  # can make the ball-correlation check false-FAIL against the real camera, and
+  # the operator (present for exactly this check) would have no idea why.
+  if [ -z "${HSV_CONFIG_FILE:-}" ]; then
+    echo "WARNING: HSV_CONFIG_FILE is unset -- defaulting to hsv_gazebo.yaml (SIM color" >&2
+    echo "thresholds). The ball-correlation check below runs against a REAL camera and" >&2
+    echo "may false-FAIL until hsv_realcam.yaml exists (RealRobotStartup.md A4). Set" >&2
+    echo "HSV_CONFIG_FILE=hsv_realcam.yaml once it does." >&2
+  fi
+
+  # I4 (2026-08-11): a prior container-mode run can leave ~/fleet-ci-data
+  # root-owned on the Jetson (CLAUDE.md Gotchas, 2026-07-22), which breaks THIS
+  # bare-metal tools.smoke_test write with a PermissionError that looks like a
+  # driver problem, not a permissions one. Cheap, non-blocking check -- warn,
+  # don't FATAL.
+  local fleet_ci_owner
+  fleet_ci_owner=$(jssh "stat -c '%U' \$HOME/fleet-ci-data 2>/dev/null || true")
+  if [ -n "$fleet_ci_owner" ] && [ "$fleet_ci_owner" != "${JETSON_USER}" ]; then
+    echo "WARNING: ~/fleet-ci-data on the Jetson is owned by '${fleet_ci_owner}', not" >&2
+    echo "'${JETSON_USER}' -- tools.smoke_test's bare-metal write below may hit a" >&2
+    echo "PermissionError. Likely a prior container-mode run left it root-owned. Fix:" >&2
+    echo "  ssh ${JETSON_USER}@${JETSON_IP} 'sudo chown -R ${JETSON_USER}:${JETSON_USER} \$HOME/fleet-ci-data'" >&2
+  fi
+
+  # I3 (2026-08-11): a teardown trap, not just an explicit block at the end -- an
+  # operator Ctrl+C at the ball-placement prompt below (likely, in an attended
+  # test) previously killed this script and left the bare-metal driver layer AND
+  # the detached container running, orphaned. Fires on EVERY exit path (normal
+  # completion, a FATAL exit 1 above/below, or a signal) -- this is now the SOLE
+  # teardown mechanism (no separate explicit block later, so nothing races or
+  # double-runs it); every command inside is already `|| true`-guarded, safe to
+  # call even before anything was ever started (e.g. the image-not-present FATAL
+  # above).
+  cleanup_smoke() {
+    echo "=== [smoke] tearing down the container and the bare-metal driver layer ==="
+    jssh "docker rm -f hil_smoke_test" >/dev/null 2>&1 || true
+    jssh "pkill -INT -f '[r]os2 launch nav_fleet drivers_only_launch.py'" || true
+  }
+  trap cleanup_smoke EXIT
 
   echo "=== [smoke] starting the real driver layer bare-metal ==="
   # set -m (job control) bracketed tightly around ONLY the backgrounding line --
@@ -264,11 +303,25 @@ smoke() {
   # SIGQUIT) and a follow-up `kill -INT` on it was a confirmed silent no-op;
   # with set -m bracketing the launch line (matching robot_boot.sh's own
   # pattern exactly), SigIgn dropped to 0000000000000001 (SIGHUP only, from
-  # nohup) and `kill -INT` killed it cleanly. Without this, the teardown
-  # below's `pkill -INT` would silently never stop the driver layer.
+  # nohup) and `kill -INT` killed it cleanly. Without this, cleanup_smoke's
+  # `pkill -INT` above would silently never stop the driver layer.
+  # I1 (2026-08-11): ldlidar_ros2 lives in its own separate overlay
+  # (~/ros2_drivers_ws), normally sourced by .bashrc -- which this non-
+  # interactive SSH subshell never runs. robot_boot.sh already hit and fixed
+  # "package 'ldlidar_ros2' not found" this exact way (Task 3); this subshell
+  # never picked that fix up until now.
+  # C2 (2026-08-11): this bare-metal driver layer previously got NO
+  # RMW_IMPLEMENTATION/CYCLONEDDS_URI export at all under this non-interactive
+  # SSH path -- it silently defaulted to ROS2's own default RMW (FastDDS),
+  # while the container ALWAYS hardcodes rmw_cyclonedds_cpp
+  # (container_entrypoint.sh) -- zero DDS traffic would ever cross the driver-
+  # layer/container boundary, reproducing this whole plan's original bug in a
+  # new form, invisibly.
   jssh "cd ${JETSON_REPO} && \
     (source /opt/ros/jazzy/setup.bash; source install/setup.bash; \
+     [ -f \$HOME/ros2_drivers_ws/install/setup.bash ] && source \$HOME/ros2_drivers_ws/install/setup.bash; \
      bash scripts/regen_cyclonedds_config.sh; \
+     export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 CYCLONEDDS_URI=file://\$HOME/cyclonedds-hil.xml; \
      rm -f /tmp/smoke_drivers.log; \
      set -m; \
      nohup ros2 launch nav_fleet drivers_only_launch.py \
@@ -280,19 +333,30 @@ smoke() {
      set +m)"
 
   echo "=== [smoke] waiting up to 60s for the driver layer to report up ==="
+  # I2 (2026-08-11): the old single 'camera_relay up' check could report the
+  # whole driver layer "up" even with NO lidar and NO odometry actually running
+  # -- camera_relay/scan_masker start regardless of whether esp32_driver/
+  # ldlidar_ros2/depthai-ros themselves came up. Require all 4 real confirmation
+  # lines (task-1-report.md's own live-verified log excerpt) before proceeding.
   local deadline=$((SECONDS + 60))
-  local count=0
-  until [ "$count" -ge 1 ]; do
+  local esp32_up=0 lidar_up=0 camera_up=0 relay_up=0
+  until [ "$esp32_up" -ge 1 ] && [ "$lidar_up" -ge 1 ] \
+        && [ "$camera_up" -ge 1 ] && [ "$relay_up" -ge 1 ]; do
     if (( SECONDS >= deadline )); then
-      echo "FATAL: drivers_only_launch.py not up within 60s on the Jetson -- see" >&2
+      echo "FATAL: driver layer not fully up within 60s on the Jetson (esp32_driver=${esp32_up} ldlidar=${lidar_up} camera=${camera_up} camera_relay=${relay_up}) -- see" >&2
       echo "/tmp/smoke_drivers.log there:" >&2
       jssh "tail -n 40 /tmp/smoke_drivers.log" >&2 || true
-      jssh "pkill -INT -f 'ros2 launch nav_fleet drivers_only_launch.py'" || true
       exit 1
     fi
     sleep 2
-    count=$(jssh "grep -c 'camera_relay up' /tmp/smoke_drivers.log 2>/dev/null || true")
-    count="${count:-0}"
+    esp32_up=$(jssh "grep -c 'esp32_driver up' /tmp/smoke_drivers.log 2>/dev/null || true")
+    esp32_up="${esp32_up:-0}"
+    lidar_up=$(jssh "grep -c 'ldlidar communication is normal' /tmp/smoke_drivers.log 2>/dev/null || true")
+    lidar_up="${lidar_up:-0}"
+    camera_up=$(jssh "grep -c 'Camera with MXID' /tmp/smoke_drivers.log 2>/dev/null || true")
+    camera_up="${camera_up:-0}"
+    relay_up=$(jssh "grep -c 'camera_relay up' /tmp/smoke_drivers.log 2>/dev/null || true")
+    relay_up="${relay_up:-0}"
   done
   echo "=== [smoke] driver layer up ==="
 
@@ -302,18 +366,16 @@ smoke() {
       -v \$HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
       -v \$HOME/fleet-ci-data:/root/fleet-ci-data \
       -e USE_SIM_TIME=false -e HSV_CONFIG_FILE=${hsv} \
-      -e ROBOT_MODE=smoke_test -e RUNNER_TYPE=real_robot \
+      -e ROBOT_MODE=smoke_test \
       ${image} bash /ros2_ws/scripts/container_entrypoint.sh"
 
   echo "=== [smoke] waiting up to 60s for EKF+ball_detector to report up in the container ==="
+  local count=0
   deadline=$((SECONDS + 60))
-  count=0
   until [ "$count" -ge 1 ]; do
     if (( SECONDS >= deadline )); then
       echo "FATAL: EKF+ball_detector not up within 60s in the container -- see" >&2
       jssh "docker logs hil_smoke_test 2>&1 | tail -n 40" >&2 || true
-      jssh "docker rm -f hil_smoke_test" || true
-      jssh "pkill -INT -f 'ros2 launch nav_fleet drivers_only_launch.py'" || true
       exit 1
     fi
     sleep 2
@@ -327,15 +389,21 @@ smoke() {
   # OLD container-based invocation in a non-interactive tool environment on
   # 2026-08-10). -t is still used here purely to match every other attended step
   # in this file; a bare python3 input() prompt doesn't actually need a pty.
+  #
+  # Deliberate `|| rc=$?` (not a bare `rc=$?` on the next line): under this
+  # file's own `set -euo pipefail`, capturing this command's exit code via a
+  # bare assignment on the line *after* it would trigger an immediate script
+  # exit if the smoke test FAILs -- but cleanup_smoke (above, via `trap ... EXIT`)
+  # always runs regardless of how this function exits, so this no longer needs
+  # to dodge `set -e` for teardown's sake the way it originally did; kept as-is
+  # since it's still the correct way to capture a non-zero exit code without
+  # `set -e` aborting this line itself.
   local rc=0
   ssh -t -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
     "${JETSON_USER}@${JETSON_IP}" \
     "cd ${JETSON_REPO} && source /opt/ros/jazzy/setup.bash && source install/setup.bash && \
      python3 -m tools.smoke_test --runner-type real_robot" || rc=$?
 
-  echo "=== [smoke] tearing down the container and the bare-metal driver layer ==="
-  jssh "docker rm -f hil_smoke_test" || true
-  jssh "pkill -INT -f 'ros2 launch nav_fleet drivers_only_launch.py'" || true
   return "$rc"
 }
 
@@ -382,7 +450,12 @@ teardown() {
     # publishers on /robot_001/detections raise the effective detection frame rate, which
     # shortens REACTION_FRAMES's time-to-trigger — a silent confound on Mission 2's
     # reaction-distance judging.
-    jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner|[e]kf_node|[b]all_detector' || true" || true
+    # drivers_only_launch/esp32_driver/ldlidar/depthai/scan_masker/camera_relay added
+    # 2026-08-11 (final-review I3): the driver-layer processes Task 5's smoke()
+    # starts bare-metal weren't part of this sweep at all -- a general `hil_stage.sh
+    # teardown` call couldn't clean up an orphaned driver layer (e.g. after a crash
+    # that skipped smoke()'s own cleanup_smoke trap).
+    jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner|[e]kf_node|[b]all_detector|[d]rivers_only_launch|[e]sp32_driver|[l]dlidar|[d]epthai|[s]can_masker|[c]amera_relay' || true" || true
     # The mission() process runs inside the container's own PID namespace — invisible to the
     # host-side pkill above. A fixed --name (hil_mission) lets teardown reach it directly.
     # Best-effort: no-op when docker is absent or nothing is running, and must never fail

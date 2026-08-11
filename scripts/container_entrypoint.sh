@@ -30,9 +30,25 @@
 #                            printed MISSION2_DAY_RESULT line instead.
 #   RUNNER_TYPE, POWER_MODE  passed through to telemetry (unchanged convention)
 # Optional (smoke_test mode only):
-#   (none -- this mode now only launches nav2_only_launch.py with
-#   skip_nav2:=true; hil_stage.sh smoke handles the driver layer and the
-#   smoke test script itself, both bare-metal, outside this container)
+#   Branches on USE_SIM_TIME (final-review C1, 2026-08-11):
+#   - USE_SIM_TIME=true  (smoke_ci() -- CI's sim-regression path): the ORIGINAL
+#     pre-Task-4 in-container tools.smoke_test invocation, restored verbatim,
+#     since smoke_ci() runs this container in the FOREGROUND (no -d) with no
+#     external teardown -- Task 4's idle-forever behavior would hang it.
+#       SERIAL_DEVICE       ESP32 sub-controller serial device (default /dev/ttyUSB0)
+#       SERIAL_BAUD          (default 115200)
+#       LIDAR_LAUNCH_FILE    absolute path to ldlidar_ros2's launch file (default '' —
+#                            skipped even in real-hardware mode until wired in)
+#       CAMERA_LAUNCH_FILE   absolute path to depthai-ros's launch file (default '' —
+#                            skipped even in real-hardware mode until wired in)
+#       SMOKE_BALL_OPS       'operator' (default, real bench) or 'gz' (sim/CI regression)
+#       RUNNER_TYPE          forwarded to tools.smoke_test --runner-type (default 'local')
+#       COMMIT_SHA, CI_RUN_NUMBER   forwarded to tools.smoke_test when set (CI only)
+#   - USE_SIM_TIME=false (smoke() -- the real bench, attended): launches
+#     nav2_only_launch.py skip_nav2:=true, idles until torn down externally by
+#     hil_stage.sh smoke(). Reads no optional env vars at all -- the driver
+#     layer and tools.smoke_test itself both run bare-metal, outside this
+#     container, orchestrated directly by hil_stage.sh smoke().
 #
 # Must be run with `docker run --network host --ipc host` — shares the host's
 # network namespace, which is what lets regen_cyclonedds_config.sh see the
@@ -105,6 +121,55 @@ case "$ROBOT_MODE" in
     ;;
 
   smoke_test)
+    # Branches on USE_SIM_TIME (final-review C1, 2026-08-11) -- see the
+    # top-of-file "Optional (smoke_test mode only)" comment block for the
+    # full story of why this split exists.
+    if [ "${USE_SIM_TIME}" = "true" ]; then
+    # Real-robot driver + bench smoke-test design spec (2026-08-05/06): the THIRD
+    # ROBOT_MODE, no Nav2/map — proves the driver layer works before Nav2 ever
+    # trusts it. Never reached from robot_boot.sh (power-on) — only from
+    # scripts/hil_stage.sh's smoke/smoke-ci subcommands, deliberately.
+    SENSORS_LOG="/ros2_ws/reports/sensors_container_$(date +%Y%m%dT%H%M%S).log"
+    rm -f "$SENSORS_LOG"
+    # ros2 launch's own CLI arg parser hard-rejects any argument ending in ':=' (an
+    # empty value) — "malformed launch argument '...', expected format
+    # '<name>:=<value>'" (confirmed against /opt/ros/jazzy/.../ros2launch/api/api.py's
+    # parse_launch_arguments: count == 1 and argument.endswith(':=') raises). Since
+    # LIDAR_LAUNCH_FILE/CAMERA_LAUNCH_FILE are unset by design as of 2026-08-06
+    # (neither driver is wired in yet), passing them unconditionally would crash
+    # every smoke_test run in the current default configuration. Omit the arg
+    # entirely when empty instead — sensors_only_launch.py's own
+    # DeclareLaunchArgument(default_value='') already gives the same effect.
+    SENSORS_LAUNCH_ARGS=(
+      use_sim_time:="${USE_SIM_TIME}"
+      hsv_config:="/ros2_ws/src/nav_fleet/config/${HSV_CONFIG_FILE}"
+      serial_device:="${SERIAL_DEVICE:-/dev/ttyUSB0}"
+      serial_baud:="${SERIAL_BAUD:-115200}"
+    )
+    [ -n "${LIDAR_LAUNCH_FILE:-}" ] && SENSORS_LAUNCH_ARGS+=( lidar_launch_file:="${LIDAR_LAUNCH_FILE}" )
+    [ -n "${CAMERA_LAUNCH_FILE:-}" ] && SENSORS_LAUNCH_ARGS+=( camera_launch_file:="${CAMERA_LAUNCH_FILE}" )
+    (nohup ros2 launch nav_fleet sensors_only_launch.py \
+       "${SENSORS_LAUNCH_ARGS[@]}" \
+       > "$SENSORS_LOG" 2>&1 < /dev/null &)
+
+    echo "=== [container-entrypoint] waiting up to 60s for the sensors stack to report up ==="
+    deadline=$((SECONDS + 60))
+    until [ "${count:-0}" -ge 1 ]; do
+      if (( SECONDS >= deadline )); then
+        echo "FATAL: sensors_only_launch.py not up within 60s — see $SENSORS_LOG" >&2
+        tail -n 40 "$SENSORS_LOG" >&2 || true
+        exit 1
+      fi
+      sleep 2
+      count=$(grep -c 'ball_detector up' "$SENSORS_LOG" 2>/dev/null || true)
+      count="${count:-0}"
+    done
+    echo "=== [container-entrypoint] sensors up — running smoke test ==="
+    python3 -m tools.smoke_test --runner-type "${RUNNER_TYPE:-local}" \
+      --ball-ops "${SMOKE_BALL_OPS:-operator}" \
+      ${COMMIT_SHA:+--commit-sha "$COMMIT_SHA"} \
+      ${CI_RUN_NUMBER:+--ci-run-number "$CI_RUN_NUMBER"}
+    else
     # EKF + ball_detector ONLY, no Nav2 (skip_nav2:=true) -- proves EKF/
     # ball_detector actually work THROUGH the real container boundary (the
     # same interface a real mission depends on), not a bare-metal stand-in.
@@ -139,6 +204,7 @@ case "$ROBOT_MODE" in
     done
     echo "=== [container-entrypoint] EKF+ball_detector up -- idling until torn down externally ==="
     wait "$NAV2_PID"
+    fi
     ;;
 
   *)

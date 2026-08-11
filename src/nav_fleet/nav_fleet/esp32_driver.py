@@ -10,9 +10,12 @@ drop-in replacement for Gazebo's sim bridge — same topics (/robot_001/odom,
 convention (unprefixed odom/base_footprint, matching ekf.yaml's odom0/imu0 topic
 names).
 
-Only ever launched by sensors_only_launch.py's real-hardware group (use_sim_time
-false) — sim/CI never constructs this node; Gazebo's bridge publishes the same
-topics directly instead.
+Launched by drivers_only_launch.py (real-hardware group, use_sim_time false) —
+primarily via robot_boot.sh (real mission boot) and hil_stage.sh smoke() (the bench
+smoke test), both bare-metal; also reachable via sensors_only_launch.py's own
+real-hardware group, which includes drivers_only_launch.py (2026-08-10 refactor).
+sim/CI never constructs this node; Gazebo's bridge publishes the same topics
+directly instead.
 """
 import json
 import math

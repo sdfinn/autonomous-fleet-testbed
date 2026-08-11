@@ -6,6 +6,12 @@
 AMCL/map_server. No map required, so this runs even before bedroom_real.yaml
 exists.
 
+STILL LOAD-BEARING, not dead/superseded code: ci.yml launches this file in EVERY
+stage-2-gazebo run (use_sim_time:=true, the default — the real-hardware group
+below is skipped entirely in that context). Don't delete this file thinking it's
+been fully replaced by drivers_only_launch.py/robot_boot.sh/hil_stage.sh smoke() —
+none of those touch stage-2's sim regression at all.
+
 Refactored 2026-08-10: the five driver nodes (esp32_driver/lidar/camera/
 scan_masker/camera_relay) moved out to drivers_only_launch.py. NOTE: the bench
 smoke test itself (hil_stage.sh smoke) does NOT use this file any more as of

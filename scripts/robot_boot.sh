@@ -63,6 +63,18 @@ source "$REPO/install/setup.bash"
 [ -f "$HOME/ros2_drivers_ws/install/setup.bash" ] && source "$HOME/ros2_drivers_ws/install/setup.bash"
 set -u
 bash "$REPO/scripts/regen_cyclonedds_config.sh"
+# Final-review C2 (2026-08-11): this bare-metal driver layer previously got NO
+# RMW_IMPLEMENTATION/CYCLONEDDS_URI export at all under this script's
+# non-interactive path (systemd boot, non-interactive SSH -- .bashrc never runs
+# here) -- it silently defaulted to ROS2's own default RMW (FastDDS), while the
+# container ALWAYS hardcodes rmw_cyclonedds_cpp (container_entrypoint.sh) --
+# zero DDS traffic would ever cross the driver-layer/container boundary,
+# reproducing this whole plan's original bug in a new form, invisibly.
+# regen_cyclonedds_config.sh (above) writes to $HOME/cyclonedds-hil.xml by
+# default here (CYCLONEDDS_CONFIG_PATH is unset in this script) -- confirmed
+# by reading that script directly, not assumed.
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 \
+  CYCLONEDDS_URI="file://$HOME/cyclonedds-hil.xml"
 
 DRIVERS_LOG="$LOG_DIR/drivers_${TS}.log"
 rm -f "$DRIVERS_LOG"
@@ -97,17 +109,33 @@ cleanup_drivers() {
 trap cleanup_drivers EXIT
 
 echo "=== [robot-boot] waiting up to 60s for the driver layer to report up ==="
+# I2 (2026-08-11): the old single 'camera_relay up' check could report the whole
+# driver layer "up" even with NO lidar and NO odometry actually running --
+# camera_relay/scan_masker start regardless of whether esp32_driver/ldlidar_ros2/
+# depthai-ros themselves came up (their own launch-file comments say "harmless
+# with no publisher yet"). Require all 4 real confirmation lines (task-1-report.md's
+# own live-verified log excerpt) before proceeding.
 deadline=$((SECONDS + 60))
-count=0
-until [ "$count" -ge 1 ]; do
+count_esp32=0
+count_lidar=0
+count_camera=0
+count_relay=0
+until [ "$count_esp32" -ge 1 ] && [ "$count_lidar" -ge 1 ] \
+      && [ "$count_camera" -ge 1 ] && [ "$count_relay" -ge 1 ]; do
   if (( SECONDS >= deadline )); then
-    echo "FATAL: drivers_only_launch.py not up within 60s — see $DRIVERS_LOG" >&2
+    echo "FATAL: driver layer not fully up within 60s (esp32_driver=${count_esp32} ldlidar=${count_lidar} camera=${count_camera} camera_relay=${count_relay}) — see $DRIVERS_LOG" >&2
     tail -n 40 "$DRIVERS_LOG" >&2 || true
     exit 1
   fi
   sleep 2
-  count=$(grep -c 'camera_relay up' "$DRIVERS_LOG" 2>/dev/null || true)
-  count="${count:-0}"
+  count_esp32=$(grep -c 'esp32_driver up' "$DRIVERS_LOG" 2>/dev/null || true)
+  count_esp32="${count_esp32:-0}"
+  count_lidar=$(grep -c 'ldlidar communication is normal' "$DRIVERS_LOG" 2>/dev/null || true)
+  count_lidar="${count_lidar:-0}"
+  count_camera=$(grep -c 'Camera with MXID' "$DRIVERS_LOG" 2>/dev/null || true)
+  count_camera="${count_camera:-0}"
+  count_relay=$(grep -c 'camera_relay up' "$DRIVERS_LOG" 2>/dev/null || true)
+  count_relay="${count_relay:-0}"
 done
 echo "=== [robot-boot] driver layer up ==="
 

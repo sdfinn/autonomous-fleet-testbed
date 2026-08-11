@@ -4,12 +4,15 @@
 lidar driver's raw scan topic, republishes a copy with the mast/antenna self-
 occlusion sectors NaN'd out on the topic Nav2/SLAM actually consume.
 
-Only ever launched by sensors_only_launch.py's real-hardware group (same treatment
-as esp32_driver.py) — sim/CI never constructs this node; Gazebo's own lidar plugin
-has no self-occlusion to mask. Default input_topic='scan' (ldlidar_ros2's own
-default output) and output_topic='/robot_001/scan' — this also closes the
-lidar-side half of RealRobotStartup.md's separately-tracked topic-remapping gap
-(sensors_only_launch.py includes the vendor launch file with no remappings at all)
+Launched by drivers_only_launch.py (real-hardware group, same treatment as
+esp32_driver.py) — primarily via robot_boot.sh (real mission boot) and
+hil_stage.sh smoke() (the bench smoke test), both bare-metal; also reachable via
+sensors_only_launch.py's own real-hardware group, which includes
+drivers_only_launch.py (2026-08-10 refactor). sim/CI never constructs this node;
+Gazebo's own lidar plugin has no self-occlusion to mask. Default input_topic='scan'
+(ldlidar_ros2's own default output) and output_topic='/robot_001/scan' — this also
+closes the lidar-side half of RealRobotStartup.md's separately-tracked
+topic-remapping gap (the vendor launch file is included with no remappings at all)
 as a side effect of masking, since the masked copy has to land somewhere Nav2/EKF
 already expect it. The camera side of that remapping gap is untouched here.
 """
