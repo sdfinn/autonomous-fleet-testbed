@@ -36,7 +36,7 @@ import math
 
 BaseInfo = collections.namedtuple(
     'BaseInfo', ['speed_l', 'speed_r', 'ax', 'ay', 'az', 'gx', 'gy', 'gz',
-                'mx', 'my', 'mz', 'odl', 'odr', 'voltage'])
+                 'mx', 'my', 'mz', 'odl', 'odr', 'voltage'])
 OrientationData = collections.namedtuple(
     'OrientationData', ['roll', 'pitch', 'yaw', 'q0', 'q1', 'q2', 'q3'])
 
