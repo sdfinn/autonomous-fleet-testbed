@@ -10,7 +10,94 @@ alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean 
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
 
-## NEXT SESSION — START HERE (2026-08-09 EOD — real physical robot arrived and bring-up
+## NEXT SESSION — START HERE (2026-08-10 EOD — ESP32 odom/imu resolved, A2 essentially
+complete (gimbal + scan FOV mask + footprint fixed, all live-verified), one real
+previously-undiscovered boot-sequence gap found, 20 local commits staged for a
+single push+full-CI-run once Ethernet is reconnected — NOT pushed yet)
+
+**Picks up exactly where 2026-08-09 EOD left off: the ESP32 odom/imu blocker from
+that session is resolved** (`435cedd`/`e5ac621`, root cause: `esp32_protocol.py`'s
+T:1001/T:1002 feedback field-mapping had the two messages' shapes backwards —
+confirmed by probing the real hardware directly with raw pyserial, not guessed).
+Today continued A2 live, same terminal-in-hand-with-Claude-over-SSH mode as
+yesterday, through 3 more checklist items plus a real, useful detour prompted by a
+disaster-recovery question. **Nothing pushed today either — same as yesterday's
+10 local commits, today's ~10 more sit on top, 20 total ahead of `origin/main`.**
+Mike is about to power down the robot and connect the Jetson to Ethernet for the
+push + full CI run (needed to get a fresh arm64 container image — today's fixes
+predate the last pushed image, `f09c949`).
+
+**A2 checklist — gimbal, scan mask, and footprint all done, TDD + live-verified:**
+- **Pan-tilt gimbal (`encode_gimbal_cmd` + `tools/pin_gimbal.py`):** T:133 command
+  confirmed live, Mike watching the physical mast for each move. Sign convention
+  nailed down empirically (not from the web-search-sourced doc alone): X (pan)
+  negative=left/positive=right, Y (tilt) negative=down (observed)/positive=up
+  (inferred by symmetry).
+- **Lidar FOV self-occlusion mask (`scan_filter.py` + `scan_masker.py`):**
+  ldlidar_ros2's own `angle_crop` only masks one contiguous arc (confirmed against
+  its real source) — this robot needs two, so a small custom node masks both
+  (mast 46-123deg, WiFi antenna 268-277deg) and republishes `/robot_001/scan`
+  directly, closing the LIDAR half of the topic-remapping gap as a side effect
+  (camera half still open). **Both sectors found by real measurement, not
+  guesswork:** placed a box+ball at a known bearing (directly in front, the same
+  direction the pinned-forward gimbal looks) and read back the lidar's own bearing
+  for it — found true forward is lidar bearing ~285deg, NOT 0deg as the static
+  transform's zero-rotation assumption implied. The mast (physically confirmed
+  opposite of forward) then predicted at 285-180=105deg landed right inside the
+  independently-measured 46-123deg block — internally consistent, not a lucky
+  guess.
+- **URDF footprint (`ugv_pt.urdf.xacro`):** read the real vendor drawing directly
+  (not from memory/transcription) — confirmed 253x231mm/289mm/126mm/25.13mm are
+  all accurate. `base_length`/`base_width` were 0.35/0.30 (a real ~38%/~30%
+  oversize, no basis found anywhere) — fixed to 0.253/0.231. Nav2's real safety
+  param (`robot_radius: 0.24`) was independently confirmed still adequate by the
+  math (171mm half-diagonal vs 240mm radius) — sim-collision-geometry fix only,
+  not a navigation-safety change.
+- **Quick rotation sanity check (Mike's ask, not a checklist item):** confirmed
+  negative `angular.z` = turn right on the real hardware (matches REP-103),
+  via direct-serial T:13 bursts with live T:1001 telemetry captured concurrently
+  (not just visual observation). Found a real, uninvestigated ~1.2s delay between
+  a velocity command and the wheels actually reporting motion in a short burst —
+  not chased further (continuous Nav2 control sends cmd_vel repeatedly, unlikely
+  to hit the same one-shot-burst artifact), but worth remembering if it resurfaces.
+
+**Real, previously-undiscovered gap found tracing the boot path (NOT fixed —
+flag this before trusting A6):** `robot_boot.sh` -> `container_entrypoint.sh`'s
+`mission` branch -> `nav2_only_launch.py` only ever starts Nav2/EKF/`ball_detector`
+— **nothing in that chain, or in `robot-mission.service`, ever starts
+`sensors_only_launch.py`** (esp32_driver/lidar/camera/scan_masker). A real power-on
+mission run today would bring up Nav2 expecting real sensor data with nothing
+actually producing it. Every bring-up step so far has worked only because drivers
+were started by hand over SSH each time. Needs a real fix before A6 is trusted.
+
+**Disaster-recovery conversation (Mike's own framing: "robot gets hit by a bus,
+new Jetson, fresh clone, run CI") led to a real, useful piece of work: 3 fragile
+one-off shell recipes converted into versioned, idempotent repo artifacts** —
+`scripts/install_lidar_driver.sh`, `scripts/udev/80-movidius.rules` +
+`scripts/install_movidius_udev_rule.sh`, and the CycloneDDS large-message fix
+folded permanently into `scripts/regen_cyclonedds_config.sh` (was bench-workaround
+-only since 2026-08-09). All 3 verified live against the real, already-provisioned
+Jetson (idempotent re-run correctly no-op'd already-applied patches). Caught a
+real XML gotcha building the CycloneDDS fix: a `<!-- ... -->` comment body can
+never contain a literal double hyphen — broke well-formedness on the first
+attempt, fixed, see the Gotchas section below.
+Also confirmed precisely (not assumed) that this Jetson's own GitHub Actions
+runner checks out into `~/actions-runner/_work/...`, a directory completely
+separate from `~/autonomous-fleet-testbed` — pushing and running CI will NOT
+touch or overwrite the native dev checkout this whole bring-up has been using.
+
+**Next session, in order:** (1) power down, connect Ethernet, push all 20 commits,
+confirm a full green CI run (this also gets a fresh arm64 image with everything
+through today baked in); (2) fix the boot-sequence gap above (`robot_boot.sh`
+needs to actually start `sensors_only_launch.py` somewhere) before trusting A6;
+(3) fix the camera half of the remapping gap (lidar half already closed by
+`scan_masker`); (4) run the bench smoke test for real — blocked today only by the
+stale container image, should be unblocked once (1) lands; (5) A3 (SLAM map) and
+A4 (HSV calibration, `hsv_realcam.yaml` still doesn't exist) still untouched —
+note the smoke test's ball-detection check will still be running against
+`hsv_gazebo.yaml` until A4 happens.
+
+## (superseded 2026-08-10) PREVIOUS (2026-08-09 EOD — real physical robot arrived and bring-up
 started LIVE; CI-side smoke-test fixes shipped + proven; hardware bring-up genuinely
 in progress, one real blocker open)
 
@@ -860,6 +947,22 @@ docker buildx build --platform linux/arm64 \
   CRLF line terminators". Rule: never touch `ci.yml` with a raw Python/shell
   read-modify-write script; always use Edit (or `sed -i` with GNU sed, which also
   preserves line endings) for this specific file.
+- **An XML `<!-- ... -->` comment body can never contain a literal double hyphen
+  anywhere inside it — not even in prose — a real parse failure, not a style
+  nitpick.** Found 2026-08-10 folding the CycloneDDS large-message fix into
+  `scripts/regen_cyclonedds_config.sh`'s generated XML: a comment describing the
+  fix used `--` as a prose separator (`"...above -- doesn't touch..."`), which
+  broke the file's well-formedness (`xml.dom.minidom.parse` raised
+  `ExpatError: not well-formed`, confirmed directly, not assumed). The `<!--`/`-->`
+  delimiters themselves are fine — the restriction is on `--` appearing inside the
+  body. Rule: any prose written into a shell-heredoc-generated XML comment in this
+  project must use a colon, semicolon, or an em dash character (`—`), never `--`.
+  Same session, separate gotcha worth remembering alongside this one: an
+  UNQUOTED heredoc (`<<EOF`, not `<<'EOF'`) also runs full shell expansion on its
+  body — a markdown-style `` `backtick code` `` inside the same comment text got
+  executed as a real command (harmlessly failed here, but could easily not).
+  Quote the delimiter or scrub backticks/`$()`/`$VAR` from any prose destined for
+  an unquoted heredoc body.
 - **A Claude Code `SessionStart` hook's plain stdout reaches ONLY Claude's own context,
   never the human user's terminal — confirmed against the official docs 2026-07-29,
   after Mike reported the dashboard-reminder hook (added 2026-07-28, `.claude/
