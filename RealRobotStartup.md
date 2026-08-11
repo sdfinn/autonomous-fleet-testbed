@@ -351,20 +351,22 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     sudo sysctl -w net.core.rmem_max=2147483647
     echo 'net.core.rmem_max=2147483647' | sudo tee /etc/sysctl.d/10-cyclone-max.conf
     ```
-  - **Remapping gap — confirmed 2026-08-09, not yet fixed.** `sensors_only_launch.py`
-    includes both vendor launch files raw (`lidar_include`/`camera_include`), with
-    **no topic remapping at all** — its own code comment already flagged this as
-    deferred ("NOT pinned by this project yet... until Mike wires this in"). Once
-    both drivers are installed and running, they'll publish to their own default
-    topic names (bare `/scan`, and whatever depthai-ros's own default is) — NOT
-    `/robot_001/scan` / `/robot_001/camera/image_raw`, which is what the rest of this
-    project's ROS graph (EKF, `ball_detector`, the smoke test's own checks) actually
-    expects. `ros2 topic hz /robot_001/scan` in the NEXT checklist item will hang
-    even with a fully working lidar until this is fixed. This needs a real code
-    change to `sensors_only_launch.py` (adding `remappings=[...]` to each
-    `IncludeLaunchDescription`, or equivalent) — verified against the real running
-    driver's actual topic names, not guessed in advance. Flag this to Claude once
-    both drivers are confirmed running with their own default topics visible.
+  - **Remapping gap — confirmed 2026-08-09, LIDAR half closed 2026-08-10, camera
+    half still open.** `sensors_only_launch.py` includes both vendor launch files
+    raw (`lidar_include`/`camera_include`), with no topic remapping on either —
+    its own code comment already flagged this as deferred ("NOT pinned by this
+    project yet... until Mike wires this in"). The lidar side is now fixed as a
+    side effect of the scan FOV mask above: `scan_masker` subscribes to
+    ldlidar_ros2's raw `scan` topic and republishes `/robot_001/scan` directly, so
+    Nav2/EKF get the right topic name whether or not the mast/antenna sectors ever
+    mattered to them. **The camera side is NOT fixed** — depthai-ros still
+    publishes to its own default topic names (e.g. `/oak/rgb/image_rect`), not
+    `/robot_001/camera/image_raw`, which `ball_detector.py` actually subscribes
+    to. `ros2 topic hz /robot_001/camera/image_raw` in the next checklist item
+    will still hang even with a fully working camera until this is fixed —
+    needs a real code change to `sensors_only_launch.py`'s `camera_include`
+    (`remappings=[...]`, or a small relay node mirroring `scan_masker`'s own
+    pattern), verified against the real running driver's actual topic names.
 - [X] **Verify all four real topics report, before anything else:**
 
   ```bash
