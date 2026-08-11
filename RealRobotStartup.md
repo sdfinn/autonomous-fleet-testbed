@@ -351,22 +351,20 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     sudo sysctl -w net.core.rmem_max=2147483647
     echo 'net.core.rmem_max=2147483647' | sudo tee /etc/sysctl.d/10-cyclone-max.conf
     ```
-  - **Remapping gap — confirmed 2026-08-09, LIDAR half closed 2026-08-10, camera
-    half still open.** `sensors_only_launch.py` includes both vendor launch files
-    raw (`lidar_include`/`camera_include`), with no topic remapping on either —
-    its own code comment already flagged this as deferred ("NOT pinned by this
-    project yet... until Mike wires this in"). The lidar side is now fixed as a
-    side effect of the scan FOV mask above: `scan_masker` subscribes to
-    ldlidar_ros2's raw `scan` topic and republishes `/robot_001/scan` directly, so
-    Nav2/EKF get the right topic name whether or not the mast/antenna sectors ever
-    mattered to them. **The camera side is NOT fixed** — depthai-ros still
-    publishes to its own default topic names (e.g. `/oak/rgb/image_rect`), not
-    `/robot_001/camera/image_raw`, which `ball_detector.py` actually subscribes
-    to. `ros2 topic hz /robot_001/camera/image_raw` in the next checklist item
-    will still hang even with a fully working camera until this is fixed —
-    needs a real code change to `sensors_only_launch.py`'s `camera_include`
-    (`remappings=[...]`, or a small relay node mirroring `scan_masker`'s own
-    pattern), verified against the real running driver's actual topic names.
+  - **Remapping gap — confirmed 2026-08-09, BOTH halves closed 2026-08-10.**
+    `sensors_only_launch.py` includes both vendor launch files raw
+    (`lidar_include`/`camera_include`), with no topic remapping on either — its
+    own code comment already flagged this as deferred ("NOT pinned by this
+    project yet... until Mike wires this in"). The lidar side was fixed as a
+    side effect of the scan FOV mask above (`scan_masker`). The camera side is
+    fixed the same way, minus any masking logic: `nav_fleet/camera_relay.py`
+    (TDD, `tests/test_camera_relay.py`) subscribes to depthai-ros's real
+    `/oak/rgb/image_rect` topic and republishes it unchanged on
+    `/robot_001/camera/image_raw`, which `ball_detector.py` and the bench smoke
+    test's own `check_photo()` actually expect. **Verified live against the real
+    camera**: `/robot_001/camera/image_raw` measured ~10-12Hz (matches the
+    profile's `hz_min: 10`), and `check_photo()` — the exact primitive the smoke
+    test calls — succeeded against that exact topic.
 - [X] **Verify all four real topics report, before anything else:**
 
   ```bash

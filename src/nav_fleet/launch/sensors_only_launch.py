@@ -83,6 +83,20 @@ def generate_launch_description():
         output='screen',
     )
 
+    # camera_relay: closes the CAMERA half of this file's own topic-remapping gap
+    # (2026-08-10) — depthai-ros's camera.launch.py has no remapping support of its
+    # own (confirmed, same class of gap as the lidar's launch file), so a small
+    # relay node republishes its real image_rect topic as /robot_001/camera/
+    # image_raw, which ball_detector.py and the bench smoke test both expect.
+    # Always included alongside camera_include (not separately gated on
+    # camera_launch_file) — harmless with no publisher on image_rect yet.
+    camera_relay = Node(
+        package='nav_fleet',
+        executable='camera_relay',
+        name='camera_relay',
+        output='screen',
+    )
+
     # Real launch files exist today (verified 2026-08-06) at ldrobotSensorTeam/
     # ldlidar_ros2's launch/{ld06,ld14,ld14p,ld19}.launch.py and luxonis/depthai-ros's
     # jazzy-branch depthai_ros_driver/launch/camera.launch.py — neither is wired to a
@@ -102,7 +116,7 @@ def generate_launch_description():
 
     real_hardware_drivers = GroupAction(
         condition=UnlessCondition(LaunchConfiguration('use_sim_time')),
-        actions=[esp32_driver, lidar_include, camera_include, scan_masker],
+        actions=[esp32_driver, lidar_include, camera_include, scan_masker, camera_relay],
     )
 
     # Always on, both modes — matches nav2_only_launch.py's own always-on pattern
