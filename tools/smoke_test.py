@@ -319,12 +319,23 @@ def check_ball_correlation(node, ball_ops, known_distance_m=KNOWN_DISTANCE_M,
     }
 
 
-MOTION_FORWARD_MPS = 0.15
 MOTION_FORWARD_S = 1.0
-MOTION_TURN_RADPS = 0.5
 MOTION_TURN_S = 1.0
-MOTION_MIN_DELTA_M = 0.03        # generous — sanity check, not calibration (design spec §4)
-MOTION_MIN_DELTA_RAD = math.radians(5)
+# Retuned 2026-08-11 (Mike's ask, same bench smoke test session as the direction-bug
+# fix): target ~1 inch forward / ~20deg turn, at PASS-time human-observable scale
+# rather than the old ~5.9in/~28.6deg defaults — holding the SAME 1.0s pulse
+# duration validated across this whole session rather than shortening it, since a
+# shorter one-shot burst risks losing most of its motion to the documented ~1.2s
+# command-to-motion startup delay (RealRobotStartup.md A2 finding).
+MOTION_FORWARD_MPS = 0.0254 / MOTION_FORWARD_S    # ~1 inch over MOTION_FORWARD_S
+MOTION_TURN_RADPS = math.radians(20) / MOTION_TURN_S    # ~20deg over MOTION_TURN_S
+# Thresholds lowered proportionally (~40% of the new, smaller targets) so the check
+# stays meaningful at this scale — the OLD 0.03m/5deg thresholds were themselves
+# larger than the NEW 1in/20deg targets, which would have made this check
+# structurally unpassable. Still generous — a sanity check, not a calibration
+# (design spec §4).
+MOTION_MIN_DELTA_M = 0.0254 * 0.4      # ~0.4 inches
+MOTION_MIN_DELTA_RAD = math.radians(20) * 0.4    # ~8 degrees
 
 
 def _latest_odom(node, timeout_s=2.0):
@@ -355,13 +366,19 @@ def _publish_for(node, cmd_pub, twist, duration_s, rate_hz=10.0):
 
 def check_motion(node, cmd_pub):
     """Design spec §4: two short open-loop cmd_vel pulses (forward, then a turn),
-    /robot_001/odom read before and after each. PASS requires a non-trivial delta in
-    the commanded direction — a generous sanity check, not a calibration. Operator
-    visual confirmation is recommended (catches e.g. wheels spinning but the chassis
-    stuck) but isn't required for this automated verdict."""
+    /robot_001/odom read before and after each. PASS requires: (a) the forward pulse
+    produces a genuinely FORWARD (not just nonzero) displacement, resolved along the
+    robot's own heading BEFORE the pulse — plain math.hypot() can't distinguish
+    forward from backward, and this exact gap let a real backward-motion sign-
+    inversion bug through undetected on 2026-08-11 (caught only by an operator
+    watching the robot, not by this check); (b) the turn pulse produces a
+    non-trivial turn delta. A generous sanity check, not a calibration. Operator
+    visual confirmation is still recommended (catches e.g. wheels spinning but the
+    chassis stuck)."""
     before = _latest_odom(node)
     if before is None:
         return {'pass': False, 'reason': 'no odom before motion check'}
+    yaw_before_forward = _yaw_from_quat(before.pose.pose.orientation)
 
     forward = Twist()
     forward.linear.x = MOTION_FORWARD_MPS
@@ -382,7 +399,13 @@ def check_motion(node, cmd_pub):
 
     dx = after_forward.pose.pose.position.x - before.pose.pose.position.x
     dy = after_forward.pose.pose.position.y - before.pose.pose.position.y
-    forward_delta_m = math.hypot(dx, dy)
+    # Resolved along the robot's OWN heading at the start of the forward pulse --
+    # positive means genuinely forward, negative means backward. Unlike a plain
+    # math.hypot() (magnitude only, always >= 0), this can actually FAIL a real
+    # backward-motion regression instead of silently passing it (see this
+    # function's own docstring).
+    forward_delta_m = (dx * math.cos(yaw_before_forward) +
+                       dy * math.sin(yaw_before_forward))
 
     yaw_before_turn = _yaw_from_quat(after_forward.pose.pose.orientation)
     yaw_after_turn = _yaw_from_quat(after_turn.pose.pose.orientation)

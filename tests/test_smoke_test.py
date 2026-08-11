@@ -207,10 +207,13 @@ def _make_scan_360(range_by_bearing_deg, default_range=10.0):
     return msg
 
 
+_TRUE_FORWARD_DEG = math.degrees(TRUE_FORWARD_BEARING_RAD)  # 285.0
+
+
 def test_forward_arc_min_range_finds_object_at_true_forward_bearing():
     # True forward is raw bearing ~285deg (RealRobotStartup.md A2 finding), NOT 0 --
     # an object placed there must be found.
-    scan = _make_scan_360({285: 0.75})
+    scan = _make_scan_360({_TRUE_FORWARD_DEG: 0.75})
     assert _forward_arc_min_range(scan) == pytest.approx(0.75)
 
 
@@ -231,10 +234,10 @@ def test_forward_arc_min_range_handles_wraparound_at_true_forward():
     # arc is applied (285+15=300, well clear -- but confirms the atan2-based
     # normalization handles a bearing near the seam correctly, not just the
     # easy middle-of-the-arc case above).
-    scan = _make_scan_360({296: 0.60})  # 285 + 11, inside the +/-15deg arc
+    scan = _make_scan_360({_TRUE_FORWARD_DEG + 11: 0.60})  # inside the +/-15deg arc
     assert _forward_arc_min_range(scan) == pytest.approx(0.60)
 
-    scan2 = _make_scan_360({301: 0.60})  # 285 + 16, JUST outside the +/-15deg arc
+    scan2 = _make_scan_360({_TRUE_FORWARD_DEG + 16: 0.60})  # JUST outside the arc
     assert _forward_arc_min_range(scan2) == pytest.approx(10.0)
 
 
@@ -489,6 +492,42 @@ def test_check_motion_detects_forward_and_turn_deltas():
         assert result['pass'] is True
         assert result['forward_delta_m'] > 0.0
         assert result['turn_delta_rad'] > 0.0
+    finally:
+        node.destroy_node()
+
+
+def test_check_motion_fails_on_backward_motion_despite_forward_command():
+    """Regression test for a real bug found live, 2026-08-11 bench smoke test: this
+    check's own PASS math (math.hypot(dx, dy)) previously reported only the
+    MAGNITUDE of displacement — a robot that actually drove BACKWARD on a commanded
+    +linear.x still passed, since magnitude alone can't tell direction. That gap let
+    a real esp32_driver sign-inversion bug through undetected (caught only by an
+    operator watching the robot, not by this check). check_motion() now resolves the
+    displacement along the robot's OWN heading before the forward pulse (SIGNED, not
+    just magnitude) — a genuinely backward move must now FAIL."""
+    node = rclpy.create_node('test_check_motion_backward')
+    odom_pub = node.create_publisher(Odometry, '/robot_001/odom', 10)
+    cmd_pub = node.create_publisher(Twist, '/robot_001/cmd_vel', 10)
+    try:
+        # Same shape as the forward-passing test above, but x DECREASES (simulating
+        # exactly the real bug: a +linear.x command that actually drives backward).
+        state = {'x': 0.0, 'yaw': 0.0, 'tick': 0}
+
+        def _tick():
+            state['tick'] += 1
+            if state['tick'] > 3:
+                state['x'] -= 0.02  # backward, despite a forward command being sent
+            msg = Odometry()
+            msg.pose.pose.position.x = state['x']
+            msg.pose.pose.orientation.z = math.sin(state['yaw'] / 2.0)
+            msg.pose.pose.orientation.w = math.cos(state['yaw'] / 2.0)
+            odom_pub.publish(msg)
+
+        timer = node.create_timer(0.05, _tick)
+        result = check_motion(node, cmd_pub)
+        node.destroy_timer(timer)
+        assert result['pass'] is False
+        assert result['forward_delta_m'] < 0.0  # signed, not math.hypot's magnitude-only
     finally:
         node.destroy_node()
 
