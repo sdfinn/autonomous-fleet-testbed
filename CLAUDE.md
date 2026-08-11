@@ -10,12 +10,75 @@ alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean 
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
 
-## NEXT SESSION — START HERE (2026-08-11 — drivers-bare-metal-boot-fix DONE, code
-complete and reviewed clean including a final whole-branch pass that caught 2 real
-Criticals, PUSHED — first CI run hit a real operational failure (stage-4-hil,
-Jetson git-tree conflict, same failure class as a prior session but now fixed at
-the root cause, see below) — the attended end-to-end bench smoke test is STILL NOT
-RUN, that's the very next real step once this push's CI run is confirmed green)
+## NEXT SESSION — START HERE (2026-08-11 — drivers-bare-metal-boot-fix DONE and
+PUSHED, first CI run's stage-4-hil failure fixed at the root cause and re-pushed
+GREEN — the attended bench smoke test was then genuinely ATTEMPTED live (real
+terminal, real ball, Mike watching) and found 3 MORE real hardware bugs, all
+fixed and live-verified on real hardware, awaiting a second push + fresh CI
+confirmation before the full official smoke test can be re-run end to end)
+
+**Attended smoke-test attempt, same day, found 3 real hardware bugs — full
+story:** once CI went green (run `31514981563`, all 9 jobs), Mike ran the real
+`scripts/hil_stage.sh smoke <sha>` from his own terminal. Everything through the
+attended ball-placement prompt worked (proving the whole boot-fix arc above is
+sound), but the results revealed 3 real, previously-unknown/mis-recorded hardware
+behaviors, each found+fixed+live-verified this session (ad-hoc verification
+scripts, not yet re-proven through the OFFICIAL `hil_stage.sh smoke` path — that
+re-run is the very next step once this second push's CI goes green):
+1. **`linear.x` was inverted on this specific unit** — a ROS `+linear.x` command
+   physically drove the robot BACKWARD (Mike watched it happen during the
+   `motion` check, which PASSED anyway — see #3). Confirmed via a small,
+   ad-hoc, non-attended direction-check burst (bare driver layer only, no
+   container): odom simultaneously reported FORWARD while the robot moved
+   backward, since the firmware's own T:1001 wheel-speed feedback shares the
+   same reversed convention as its setpoint math. Fixed: `esp32_driver.py`'s
+   `_cmd_vel_cb` now negates `linear.x` before encoding; `_publish_odom`
+   uniformly negates the T:1001 `L`/`R` feedback so odometry tracks reality
+   too. Commit `9d2c283`.
+2. **`angular.z` was ALSO inverted — and this directly CONTRADICTS an earlier
+   "confirmed" CLAUDE.md record from the 2026-08-10 A2 rotation check**
+   (which claimed negative `angular.z` = right, matching REP-103 = already
+   correct, no fix needed). Live testing today found the opposite: raw,
+   uncorrected positive `angular.z` physically turns the robot RIGHT, not
+   left — repeated, direct, unambiguous visual confirmation with Mike
+   watching a real ~25-30deg turn (a first, too-short 1s pulse gave an
+   inconclusive-but-correctly-signed ~3deg result that wasn't trusted at the
+   time — worth remembering that a small ambiguous result's SIGN can still be
+   informative). **The earlier record is now believed mistaken, not this
+   session's finding** — see the corrected/annotated Gotchas entry below,
+   left in place rather than silently deleted. Fixed in the same commit
+   (`9d2c283`) alongside `linear.x` — required an intermediate wrong turn:
+   uniformly negating both wheels' feedback (fixing linear) initially broke
+   the ALREADY-correct-feeling turn math, which led to a "swap-and-negate"
+   transform that was ALSO wrong once the real angular.z convention was
+   understood — full back-and-forth documented in `esp32_driver.py`'s own
+   comments, left as real history, not cleaned up after the fact.
+3. **`check_ball_correlation`'s lidar check read the WRONG bearing.**
+   `_forward_arc_min_range` checked around the scan's raw bearing 0 (the
+   lidar's own physical zero — the URDF's `lidar_joint` has no rotation
+   applied) instead of true forward (~285deg raw, the A2 finding) — so the
+   reported "lidar distance to the ball" (0.511m) was actually the distance
+   to whatever's nearest in a completely unrelated direction, not the ball at
+   all (confirmed: the real captured photo showed the ball correctly placed
+   and visible; the camera's own independent range estimate, 0.68m, was
+   reasonably close to the true 0.75m placement). Fixed: new
+   `TRUE_FORWARD_BEARING_RAD` constant, `_forward_arc_min_range` now centers
+   its arc there with proper atan2-based wraparound handling. Commit
+   `d7da3d9`.
+Also, separately (Mike's own ask, not a bug): the `motion` check's pulses felt
+too large (~5.9in forward / ~28.6deg turn) — retuned to ~1in/~20deg (same 1.0s
+pulse duration throughout, not shortened, to avoid the documented ~1.2s
+startup-delay artifact eating a shorter pulse). While touching this, fixed a
+REAL gap the linear.x bug itself exposed: `check_motion`'s own PASS math
+(`math.hypot`) only measured MAGNITUDE, not direction — the exact reason the
+backward-motion bug above passed the `motion` check instead of failing it, only
+caught by Mike watching. Now resolves displacement along the robot's own
+heading (signed) so a future direction-inversion bug would FAIL automatically.
+Commit `5489ed4`. TDD throughout all 3 fixes; full local suite (542 tests)
+re-run clean after each.
+**Not yet done:** docs weren't updated to reflect ANY of this until this very
+entry (in progress); the second push (`5489ed4..?`) hasn't happened yet as this
+was being written.
 
 **Closes the boot-sequence gap flagged at 2026-08-10 EOD** ("nothing in the boot
 chain ever starts `sensors_only_launch.py`"). Implemented via subagent-driven-
@@ -155,11 +218,21 @@ Critical bugs invisible at single-task scope, both fixed in one follow-up commit
    back to sim thresholds with a loud warning now, but that's a mitigation, not a
    fix.
 
-**Next session, in order:** (1) confirm the re-pushed CI run (`stage-4-hil`
-specifically) actually goes green — check `gh run list` first before assuming;
-(2) the attended bench smoke test, with Mike physically present; (3) A4 (HSV
-calibration — `hsv_realcam.yaml` still doesn't exist); (4) the production
-`robot_boot.sh` mission test (A6/A7) — blocked on (2) and (3) above.
+**Next session, in order:** (1) confirm THIS session's second push
+(`5489ed4..?`, the 3 hardware-bug fixes above) goes green, `stage-4-hil`
+specifically — check `gh run list` first before assuming; (2) re-run the
+OFFICIAL `scripts/hil_stage.sh smoke <sha>` end to end for real, with Mike
+physically present, now that all 3 known hardware bugs are fixed (the ad-hoc
+scripts used to find/verify them today were deliberately narrower than a real
+attended run — this is the first real proof the FULL path works with the
+fixes in place); (3) Mike's own follow-up experiment, once (2) passes: rerun
+the smoke test with the yellow ball placed WITHOUT the riser (floor/table
+level) and confirm the PREDICTED failure mode — `camera`/`photo` still PASS,
+`ball_correlation` FAILs specifically because the 2D lidar's fixed scan plane
+(~6in up) physically cannot see a floor-level ball at any distance, regardless
+of width — a real physics constraint, not a bug, worth directly demonstrating;
+(4) A4 (HSV calibration — `hsv_realcam.yaml` still doesn't exist); (5) the
+production `robot_boot.sh` mission test (A6/A7) — blocked on (2) and (4) above.
 
 ## (superseded 2026-08-11) PREVIOUS (2026-08-10 EOD — ESP32 odom/imu resolved, A2 essentially
 complete (gimbal + scan FOV mask + footprint fixed, all live-verified), pushed, and
