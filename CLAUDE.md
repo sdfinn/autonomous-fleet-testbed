@@ -101,7 +101,9 @@ Critical bugs invisible at single-task scope, both fixed in one follow-up commit
   own hardcoded config; the referenced XML file confirmed to actually exist at that
   path).
 - Plus 5 Important + 3 Minor fixed in the same pass: readiness gate strengthened to
-  require ALL 5 driver "up" lines, not just `camera_relay up`; a teardown trap added
+  require ALL 4 driver "up" lines (esp32_driver/lidar/camera/camera_relay —
+  `scan_masker` isn't gated, it starts regardless of upstream driver status), not
+  just `camera_relay up`; a teardown trap added
   to `smoke()` (previously no coverage for Ctrl+C at the ball-placement prompt);
   `ros2_drivers_ws` overlay sourcing added to `smoke()` to match `robot_boot.sh`'s
   own already-fixed gotcha; a `fleet-ci-data` ownership pre-flight warning; a loud

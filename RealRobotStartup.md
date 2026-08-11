@@ -516,7 +516,8 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     problem. Physically reset the robot's position between runs if you want to run it
     more than once in a session.
 
-  **Redesigned 2026-08-10** (see
+  **Redesigned 2026-08-11** (plan written 2026-08-10, implemented and verified
+  2026-08-11 — see
   docs/superpowers/plans/2026-08-10-drivers-bare-metal-boot-fix.md): `scripts/
   hil_stage.sh smoke <sha>` now runs the real driver layer bare-metal AND
   EKF+ball_detector inside the container (`nav2_only_launch.py
@@ -538,7 +539,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   to the pre-rework original via `diff`, the DDS-env-var fix confirmed live on
   the Jetson via real `printenv` output (unset before, correctly set after).
 
-  **Not yet run for real, as of 2026-08-10.** Every verification of this
+  **Not yet run for real, as of 2026-08-11.** Every verification of this
   rework so far is either code-level (syntax checks, byte-diffs, independent
   review) or a narrower live probe that stopped short of the actual end-to-end
   invocation (a SIGINT signal-handling probe using a harmless `sleep 300`
@@ -646,14 +647,15 @@ passed in by `scripts/container_entrypoint.sh` (see A6). Nothing to write here.
 `scripts/container_entrypoint.sh` already exist in the repo — nothing to write here,
 just install and verify:
 
-**Driver layer fix, 2026-08-10** (see
+**Driver layer fix, 2026-08-11** (plan written 2026-08-10, implemented and
+verified 2026-08-11 — see
 docs/superpowers/plans/2026-08-10-drivers-bare-metal-boot-fix.md): `robot_boot.sh`
 now starts the real driver layer (`drivers_only_launch.py` — esp32_driver/lidar/
 camera/scan_masker/camera_relay) bare-metal BEFORE the container, using the same
 real hardware constants confirmed throughout A2 (`/dev/ttyTHS1`@115200, the real
 `ld19.launch.py`/`camera.launch.py` paths). Previously nothing started the driver
-layer for a real mission run at all — found and fixed the same day as the camera
-remapping fix, tracing the boot path to answer a different question.
+layer for a real mission run at all — found tracing the boot path the day after
+the camera remapping fix, to answer a different question.
 
 A final whole-branch review, run after all 5 implementation tasks were individually
 Approved, found 2 real Critical bugs only visible at whole-branch scope — both fixed
@@ -689,7 +691,7 @@ in one follow-up commit, both re-reviewed independently clean ("Ready to push: Y
   own hardcoded CycloneDDS config, with the referenced XML file confirmed to
   actually exist at that path.
 
-**Still not proven, as of 2026-08-10 — read before trusting this section:**
+**Still not proven, as of 2026-08-11 — read before trusting this section:**
 1. **The attended end-to-end bench smoke test (A2 above) has not been run yet** —
    it needs a real terminal and a human physically placing the yellow ball. This is
    the very next step, before A6/A7 are attempted for real.
@@ -699,9 +701,10 @@ in one follow-up commit, both re-reviewed independently clean ("Ready to push: Y
    test or a real `robot_boot.sh` run, neither of which has happened yet.
 3. **The driver-readiness timeout in `robot_boot.sh` has only ever been timed warm.**
    The same review that found the 2 bugs above also strengthened the readiness
-   check to require ALL of esp32_driver/lidar/camera/scan_masker/camera_relay
-   confirmation lines (previously only `camera_relay up` was checked, which doesn't
-   prove the other 4 drivers actually came up) before the 60s timeout expires — but
+   check to require ALL 4 of esp32_driver/lidar/camera/camera_relay confirmation
+   lines (`scan_masker` isn't gated — it starts regardless of upstream driver
+   status) (previously only `camera_relay up` was checked, which doesn't
+   prove the other drivers actually came up) before the 60s timeout expires — but
    that timeout has only ever been measured on a WARM interactive SSH session
    (~25s observed), never on a real COLD boot under `robot-mission.service`, where
    USB/udev enumeration for the OAK-D camera and the lidar is expected to be
