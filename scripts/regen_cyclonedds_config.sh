@@ -80,6 +80,23 @@ cat > "$CONFIG_PATH" <<EOF
       <Interfaces>
 ${interfaces}      </Interfaces>
     </General>
+    <Internal>
+      <!-- Large-message fix (found 2026-08-09, bench-verified, folded in here
+           2026-08-10): CycloneDDS's default receive buffer is too small to
+           deliver uncompressed sensor_msgs/Image at all: 'ros2 topic hz' on
+           /oak/rgb/image_raw hung indefinitely with no error, while the same
+           topic's compressed sibling worked immediately. A known, documented
+           ROS2/CycloneDDS limitation with large messages, not a depthai-ros or
+           project-specific bug. Additive to the Interfaces block above;
+           doesn't touch interface-priority selection at all. The matching
+           sysctl net.core.rmem_max=2147483647 half of this fix is a one-time,
+           OS-level setting (see RealRobotStartup.md); not something this
+           per-launch-regenerated file can express. NOTE: per the XML spec, a
+           comment body may never contain two consecutive hyphen characters;
+           a real parse failure while writing this exact comment confirmed
+           that the hard way, so keep any future edit here free of them. -->
+      <SocketReceiveBufferSize min="10MB"/>
+    </Internal>
   </Domain>
 </CycloneDDS>
 EOF

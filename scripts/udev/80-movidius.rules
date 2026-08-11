@@ -1,0 +1,9 @@
+# Copyright 2026 Mike
+# SPDX-License-Identifier: Apache-2.0
+#
+# OAK-D Lite's Movidius USB device (idVendor 03e7, confirmed via lsusb 2026-08-09)
+# needs this rule or depthai-ros fails with "Insufficient permissions...
+# X_LINK_UNBOOTED... Make sure udev rules are set." Install via
+# scripts/install_movidius_udev_rule.sh, not by hand -- see that script's own
+# comment for why this is now a stored file instead of a one-off shell command.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"
