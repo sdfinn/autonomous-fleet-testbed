@@ -86,8 +86,58 @@ def test_cmd_vel_callback_sends_velocity_command():
         driver._cmd_vel_cb(msg)
         (sent_bytes,) = mock_ser.write.call_args.args
         assert b'"T": 13' in sent_bytes or b'"T":13' in sent_bytes
-        assert b'0.2' in sent_bytes
-        assert b'0.5' in sent_bytes
+        # Both fields are NEGATED before they reach the firmware -- see
+        # test_cmd_vel_negates_linear_and_angular_for_reversed_hardware below for why.
+        assert b'-0.2' in sent_bytes
+        assert b'-0.5' in sent_bytes
+    finally:
+        driver.destroy_node()
+
+
+def test_cmd_vel_negates_linear_and_angular_for_reversed_hardware():
+    """Real-hardware findings, 2026-08-11 (RealRobotStartup.md A2/A6 bench smoke
+    test), both confirmed live with Mike watching the physical robot:
+
+    linear.x: this specific unit physically drives BACKWARD when sent a positive
+    T:13 X value (ROS +linear.x commanded, robot visibly moved backward while
+    /robot_001/odom simultaneously reported FORWARD -- the firmware's own T:1001
+    wheel-speed feedback shares the same reversed sign convention as its setpoint
+    math -- see esp32_protocol.py's integrate_odometry docstring / _publish_odom's
+    own comment).
+
+    angular.z: a positive T:13 Z value physically turns the robot RIGHT, not LEFT
+    as REP-103 requires -- directly, repeatedly observed live. This CONTRADICTS an
+    earlier A2-session CLAUDE.md note claiming "negative angular.z = turn right"
+    was already confirmed correct on this hardware -- that earlier record is now
+    believed mistaken (an artifact of a since-not-reproducible telemetry-based
+    check, not this session's direct, repeated visual observation), not this one.
+
+    The vendor's own protocol convention (Waveshare UGV wiki, ugv_base_general
+    firmware) is unambiguous that +X=forward and +Z=CCW(left) -- this is a
+    wiring/assembly property of THIS specific unit (arrived 90% pre-assembled, no
+    wiring changed since), not a protocol misunderstanding. Fixed here (not in
+    esp32_protocol.py, which stays a hardware-quirk-free pure encode/decode module,
+    matching its own stated purity contract) by negating both fields before
+    encoding."""
+    driver, mock_ser = _make_driver()
+    try:
+        mock_ser.write.reset_mock()
+        msg = Twist()
+        msg.linear.x = 0.15
+        msg.angular.z = 0.3
+        driver._cmd_vel_cb(msg)
+        (sent_bytes,) = mock_ser.write.call_args.args
+        assert b'-0.15' in sent_bytes  # a ROS +forward command sends firmware -X
+        assert b'-0.3' in sent_bytes   # a ROS +left-turn command sends firmware -Z
+
+        mock_ser.write.reset_mock()
+        msg2 = Twist()
+        msg2.linear.x = -0.15
+        msg2.angular.z = -0.3
+        driver._cmd_vel_cb(msg2)
+        (sent_bytes2,) = mock_ser.write.call_args.args
+        assert b'": 0.15' in sent_bytes2 or b'":0.15' in sent_bytes2  # and vice versa
+        assert b'": 0.3' in sent_bytes2 or b'":0.3' in sent_bytes2
     finally:
         driver.destroy_node()
 
@@ -131,6 +181,16 @@ def test_publish_odom_integrates_and_publishes(qos_capture=None):
         # Non-speed fields are irrelevant to _publish_odom's own math (it only reads
         # speed_l/speed_r) — zeroed rather than omitted since BaseInfo's real shape
         # (corrected 2026-08-10) requires them.
+        # Real-hardware finding, 2026-08-11 (same session as the cmd_vel negation
+        # fix): this unit's wheel-speed FEEDBACK (T:1001 L/R) is ALSO sign-inverted
+        # relative to real physical motion -- confirmed live across several rounds
+        # of testing (full story in _publish_odom's own comment and _cmd_vel_cb's).
+        # Final, live-verified transform: uniform negation of both wheels, which
+        # only works out correctly once angular.z's OWN command-side sign is also
+        # fixed (an earlier CLAUDE.md record claiming this hardware's angular.z was
+        # already correct turned out to be mistaken). This test's expected values
+        # use the same uniform-negation transform _publish_odom applies, not the raw
+        # BaseInfo fields.
         info = BaseInfo(speed_l=0.1, speed_r=0.3, ax=0, ay=0, az=0, gx=0, gy=0, gz=0,
                         mx=0, my=0, mz=0, odl=0, odr=0, voltage=11.8)
 
@@ -163,14 +223,19 @@ def test_publish_odom_integrates_and_publishes(qos_capture=None):
         # computed independently from known inputs (x=y=yaw=0, dt=0.5s) — not
         # read back from driver internals, so a wiring bug (e.g. wrong dt sign,
         # dt never applied) would produce a real mismatch, not a vacuous pass.
-        # Hand-verified independently (v=0.2, omega=(0.3-0.1)/0.172=1.16279...,
-        # mid_yaw=omega*dt/2=0.290698..., x=v*cos(mid_yaw)*dt=0.0958044...,
-        # y=v*sin(mid_yaw)*dt=0.0286621..., yaw=omega*dt=0.5813953...).
+        # Inputs are uniformly NEGATED to match _publish_odom's own real-hardware
+        # correction (see BaseInfo construction above) — hand-verified independently
+        # (corrected_l=-info.speed_l=-0.1, corrected_r=-info.speed_r=-0.3,
+        # v=(corrected_l+corrected_r)/2=-0.2, omega=(corrected_r-corrected_l)/0.172=
+        # (-0.3-(-0.1))/0.172=-1.16279..., mid_yaw=omega*dt/2=-0.290698...,
+        # x=v*cos(mid_yaw)*dt=-0.0958044..., y=v*sin(mid_yaw)*dt=+0.0286621...
+        # (v AND sin(mid_yaw) are BOTH negative, so y comes out positive — verified
+        # by direct computation, not sign-flipped by eye), yaw=omega*dt=-0.5813953...).
         expected_x, expected_y, expected_yaw = integrate_odometry(
-            0.0, 0.0, 0.0, info.speed_l, info.speed_r, driver._track_width, dt)
-        assert expected_x == pytest.approx(0.09580441407640837)
+            0.0, 0.0, 0.0, -info.speed_l, -info.speed_r, driver._track_width, dt)
+        assert expected_x == pytest.approx(-0.09580441407640837)
         assert expected_y == pytest.approx(0.028662069769576793)
-        assert expected_yaw == pytest.approx(0.5813953488372093)
+        assert expected_yaw == pytest.approx(-0.5813953488372093)
 
         assert driver._x == pytest.approx(expected_x)
         assert driver._y == pytest.approx(expected_y)

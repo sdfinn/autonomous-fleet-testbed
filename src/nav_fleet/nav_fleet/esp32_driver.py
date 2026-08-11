@@ -104,7 +104,24 @@ class Esp32Driver(Node):
     def _cmd_vel_cb(self, msg):
         self._last_cmd_time = time.time()
         self._stopped = False
-        self._send(encode_velocity_cmd(msg.linear.x, msg.angular.z))
+        # BOTH linear.x AND angular.z are NEGATED before reaching the firmware --
+        # real-hardware findings, 2026-08-11 (RealRobotStartup.md A2/A6 bench smoke
+        # test), confirmed live in two separate rounds:
+        #   linear.x: THIS unit physically drives BACKWARD on a positive T:13 X value
+        #   (ROS +linear.x commanded, robot visibly moved backward while
+        #   /robot_001/odom simultaneously reported FORWARD -- the firmware's own
+        #   T:1001 feedback shares the same reversed convention as its setpoint math).
+        #   angular.z: a positive T:13 Z value physically turns the robot RIGHT, not
+        #   LEFT as REP-103 requires (directly, repeatedly observed live -- CONTRADICTS
+        #   an earlier A2-session CLAUDE.md note claiming "negative angular.z = turn
+        #   right" was already confirmed correct; that earlier record is now believed
+        #   mistaken, not this one -- trusting the fresher, repeated, direct physical
+        #   observation over an older written claim).
+        # The vendor's own protocol (Waveshare UGV wiki, ugv_base_general firmware) is
+        # unambiguous that +X=forward/+Z=CCW(left) -- this is a wiring/assembly
+        # property of THIS specific unit (arrived 90% pre-assembled, no wiring changed
+        # since), not a protocol misunderstanding.
+        self._send(encode_velocity_cmd(-msg.linear.x, -msg.angular.z))
 
     def _imu_poll_cb(self):
         self._send(encode_get_imu_data())
@@ -162,13 +179,30 @@ class Esp32Driver(Node):
             self._last_orientation = orientation
 
     def _publish_odom(self, info):
+        # speed_l/speed_r are NEGATED (uniformly) here — real-hardware finding,
+        # 2026-08-11, same session as _cmd_vel_cb's matching command-side fix: this
+        # unit's T:1001 wheel-speed FEEDBACK is ALSO sign-inverted relative to real
+        # physical motion, independently of the outgoing-command issue. Found live,
+        # across several rounds of live testing (see _cmd_vel_cb's own comment for
+        # the matching command-side story): an EARLIER hypothesis (swap-and-negate,
+        # preserving the raw/uncorrected angular sign) was tried and REVERTED after
+        # live rotation testing revealed the premise it relied on -- an older
+        # CLAUDE.md record claiming this hardware's angular.z convention was already
+        # confirmed correct -- was itself wrong. Once angular.z's OWN command-side
+        # sign was also corrected (see _cmd_vel_cb), the simplest transform -- negate
+        # both wheels uniformly -- is what actually matches live-observed reality on
+        # BOTH axes simultaneously: a real forward move matches odom, AND a real left
+        # turn (now correctly commanded via the fixed angular.z) matches odom too.
+        speed_l = -info.speed_l
+        speed_r = -info.speed_r
+
         now = self.get_clock().now()
         now_s = now.nanoseconds / 1e9
         if self._last_base_info_time is not None:
             dt = now_s - self._last_base_info_time
             if dt > 0.0:
                 self._x, self._y, self._yaw = integrate_odometry(
-                    self._x, self._y, self._yaw, info.speed_l, info.speed_r,
+                    self._x, self._y, self._yaw, speed_l, speed_r,
                     self._track_width, dt)
         self._last_base_info_time = now_s
 
@@ -180,8 +214,8 @@ class Esp32Driver(Node):
         msg.pose.pose.position.y = self._y
         msg.pose.pose.orientation.z = math.sin(self._yaw / 2.0)
         msg.pose.pose.orientation.w = math.cos(self._yaw / 2.0)
-        msg.twist.twist.linear.x = (info.speed_l + info.speed_r) / 2.0
-        msg.twist.twist.angular.z = (info.speed_r - info.speed_l) / self._track_width
+        msg.twist.twist.linear.x = (speed_l + speed_r) / 2.0
+        msg.twist.twist.angular.z = (speed_r - speed_l) / self._track_width
         self.odom_pub.publish(msg)
 
     def _publish_imu(self, info):

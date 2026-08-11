@@ -210,6 +210,27 @@ that whole arc; don't assume "pushed" alone means "proven" without reading it.
   a velocity command and the wheels actually reporting motion in a short burst —
   not chased further (continuous Nav2 control sends cmd_vel repeatedly, unlikely
   to hit the same one-shot-burst artifact), but worth remembering if it resurfaces.
+  **CORRECTED 2026-08-11 — this finding was WRONG, not a hardware change.** Live
+  bench-smoke-test testing found the OPPOSITE: raw (uncorrected) positive
+  `angular.z` physically turns the robot RIGHT, not left — repeated, direct visual
+  confirmation with Mike watching, twice, at a large enough turn angle (~25-30deg)
+  to be unambiguous (an earlier too-short 1s pulse gave an inconclusive-but-
+  correctly-signed ~3deg result that wasn't trusted at the time). Root cause of the
+  ORIGINAL wrong finding not established — it relied on "live T:1001 telemetry"
+  interpretation rather than a large, unambiguous direct visual turn, and that
+  telemetry-reading step is the most likely place an equivalent sign-confusion
+  could have crept in unnoticed, given a real, independently-confirmed
+  sign-inversion bug was ALSO found the same day in linear.x (see the boot-fix
+  final-review section above) — but this is a plausible explanation, not a
+  confirmed one. **Both `linear.x` AND `angular.z` are now negated in
+  `esp32_driver.py`'s `_cmd_vel_cb` before reaching the firmware** (T:1001
+  wheel-speed feedback is uniformly negated to match in `_publish_odom`) — live-
+  verified on both axes simultaneously: a real forward move and a real ~25-30deg
+  LEFT turn (now correctly commanded) both match what `/robot_001/odom` reports.
+  Lesson for next time a "confirmed" hardware-convention finding needs trusting:
+  prefer a large, unambiguous, DIRECT visual result over one that depends on
+  reading raw telemetry back — telemetry interpretation is exactly the kind of
+  step a sign-convention bug can hide inside undetected.
 
 **Real, previously-undiscovered gap found tracing the boot path (NOT fixed —
 flag this before trusting A6):** `robot_boot.sh` -> `container_entrypoint.sh`'s
