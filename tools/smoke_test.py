@@ -282,14 +282,25 @@ def check_ball_correlation(node, ball_ops, known_distance_m=KNOWN_DISTANCE_M,
         ryaw = math.pi / 2
         bx, by = compute_ball_placement_xy(rx, ry, ryaw, known_distance_m)
         ball_ops.place('yellow', bx, by)
+        # Sim/Gazebo's own lidar sensor has NO physical mounting error -- the
+        # ros_gz_bridge's bearing 0 genuinely IS the robot's forward, matching
+        # compute_ball_placement_xy's own placement math above. TRUE_FORWARD_
+        # BEARING_RAD (285deg) is a REAL-HARDWARE-ONLY correction for this exact
+        # robot's actual, uncorrected lidar_joint rotation (RealRobotStartup.md
+        # A2) -- applying it here would break sim, which was never broken. Found
+        # live in CI, 2026-08-11 (stage-2-gazebo run 31522807860): this exact
+        # regression, the FIRST real exercise of the bearing fix outside the real
+        # Jetson, caught immediately by the sim smoke-test regression step.
+        forward_bearing_rad = 0.0
     else:
         ball_ops.place('yellow', known_distance_m)
+        forward_bearing_rad = TRUE_FORWARD_BEARING_RAD
 
     scan_state = {'min_range': None}
     det_state = {'yellow_range_m': None}
 
     def _scan_cb(msg):
-        r = _forward_arc_min_range(msg)
+        r = _forward_arc_min_range(msg, forward_bearing_rad=forward_bearing_rad)
         if r is not None:
             scan_state['min_range'] = r
 

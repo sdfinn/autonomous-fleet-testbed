@@ -21,6 +21,8 @@ from unittest.mock import MagicMock, patch
 
 from tools.mission2_day import GzBallOps
 from tools.mission2_harness import LIDAR_BALL_SDF
+from vision_msgs.msg import Detection2DArray, Detection2D, ObjectHypothesisWithPose
+
 from tools.smoke_test import (KNOWN_DISTANCE_M, LIDAR_HEIGHT_M, LidarVisibleGzBallOps,
                               TRUE_FORWARD_BEARING_RAD, check_ball_correlation, check_motion,
                               check_photo, check_topic, compute_ball_placement_xy,
@@ -326,6 +328,56 @@ def test_check_ball_correlation_normal_failure_is_not_marked_skipped(monkeypatch
     # No scan/detection publishers in this test -> a real, judged FAIL.
     assert result['pass'] is False
     assert result.get('skipped', False) is False
+
+
+def test_check_ball_correlation_gzballops_uses_raw_bearing_zero_not_real_hardware_offset(
+        monkeypatch):
+    """Regression test for a real bug found live in CI, 2026-08-11
+    (stage-2-gazebo run 31522807860) — the FIRST real exercise of the
+    TRUE_FORWARD_BEARING_RAD fix outside the real Jetson, which broke sim
+    immediately. TRUE_FORWARD_BEARING_RAD (285deg) is a REAL-HARDWARE-ONLY
+    correction for THIS robot's actual, uncorrected lidar_joint rotation
+    (RealRobotStartup.md A2) — Gazebo's own simulated lidar has no such physical
+    mounting error, so the sim (GzBallOps) branch must keep using raw bearing 0,
+    matching compute_ball_placement_xy's own placement math. Publishes a real
+    LaserScan (object at bearing 0, NOT 285) and a real Detection2DArray, proving
+    check_ball_correlation's sim branch finds them and PASSES — not just that it
+    doesn't crash (the existing placement-only tests above never publish a real
+    scan, so they couldn't have caught this)."""
+    monkeypatch.setattr(LidarVisibleGzBallOps, 'place', lambda self, color, x, y: None)
+    monkeypatch.setattr('tools.smoke_test.get_ground_truth_xy', lambda: (1.0, 2.0))
+
+    node = rclpy.create_node('test_check_ball_correlation_sim_bearing')
+    scan_pub = node.create_publisher(LaserScan, '/robot_001/scan', 10)
+    det_pub = node.create_publisher(Detection2DArray, '/robot_001/detections', 10)
+    stop_publishing = threading.Event()
+
+    def _publish_loop():
+        while not stop_publishing.is_set():
+            scan_pub.publish(_make_scan_360({0: 0.305}))  # object at RAW bearing 0
+            det = Detection2D()
+            hyp = ObjectHypothesisWithPose()
+            hyp.hypothesis.class_id = 'yellow_ball'
+            hyp.pose.pose.position.x = 0.305
+            det.results = [hyp]
+            det_msg = Detection2DArray()
+            det_msg.detections = [det]
+            det_pub.publish(det_msg)
+            time.sleep(0.05)
+
+    publisher_thread = threading.Thread(target=_publish_loop, daemon=True)
+    publisher_thread.start()
+    try:
+        result = check_ball_correlation(node, LidarVisibleGzBallOps(), known_distance_m=0.305,
+                                        tolerance_m=0.1, window_s=0.5)
+    finally:
+        stop_publishing.set()
+        publisher_thread.join(timeout=2.0)
+        node.destroy_node()
+
+    assert result['pass'] is True
+    assert result['lidar_min_range_m'] == pytest.approx(0.305)
+    assert result['yellow_ball_detected'] is True
 
 
 def test_lidar_visible_gz_ball_ops_is_a_gzballops_subclass():
