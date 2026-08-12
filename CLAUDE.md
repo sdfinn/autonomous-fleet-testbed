@@ -72,6 +72,32 @@ class may be able to hit. Logs for comparison: failing run —
 workstation via `hil-mission-evidence` scp, not committed — regenerate via the
 CI artifact or re-run with `log_level:=debug` if needed again).
 
+**FOLLOW-UP 2026-08-12, same session — confound isolated, debug-timing ruled
+out.** Mike correctly flagged a real gap in the update above: DEBUG-level
+logging adds per-callback I/O overhead, which could itself have been enough to
+dodge a timing-sensitive race — the passing run above never actually isolated
+"clean reboot" from "slower, debug-logged timing," since both changed at once.
+Fix: pushed the already-reverted, byte-identical-to-`22f1d0b` `info`-level
+commit (`551a973`) immediately afterward, deliberately *while the Jetson was
+still confirmed clean* (checked directly first: `pgrep` for every known orphan
+pattern found nothing, `docker ps -a` showed zero containers running or
+stopped, `uptime -s` matched the reboot — `hil_stage.sh teardown`'s sweep, kept
+current across many prior sessions' fixes, had done its job after the debug
+run). Result (`31604966760`): **also genuinely green**, real PASS/PASS/PASS in
+telemetry, same as the debug run. Since this run had NO debug logging at
+all — identical `log_level` to the original failing run — and still passed,
+debug-timing is now ruled out as the deciding factor: clean process/DDS state
+alone was sufficient. This is real evidence from a controlled second data
+point, not just a second lucky green run. Standing at two-for-two clean-Jetson
+passes (one with DEBUG logs proving the specific symptom absent, one at
+`info` ruling out logging-timing as a confound) vs. one failure on a Jetson
+with hours of uncontrolled live-testing history — genuinely strong support for
+the environmental-contamination theory now, though still not a *deliberate*
+repro (nobody has reproduced the contaminated state on purpose and watched it
+fail again). Treat as functionally resolved for now; the concrete follow-up
+two paragraphs up (extend the pre-flight orphan sweep habit to the
+container-mode/CI HIL path) is the real preventive fix still worth doing.
+
 ## NEXT SESSION — START HERE (2026-08-11 — drivers-bare-metal-boot-fix DONE and
 PUSHED, first CI run's stage-4-hil failure fixed at the root cause and re-pushed
 GREEN — the attended bench smoke test was then genuinely ATTEMPTED live (real
