@@ -445,6 +445,18 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   (flat `[lo1, hi1, lo2, hi2, ...]`) if this ever needs retuning on a different
   unit.
 
+  **`scan_masker` also rewrites the scan's `frame_id`, found 2026-08-11 chasing a
+  real AMCL scan-processing deadlock to root cause.** `ldlidar_ros2`'s own
+  `ld19.launch.py` hardcodes `frame_id: 'base_laser'` on every scan, but
+  `ugv_pt.urdf.xacro`'s real lidar link is named `lidar_link` — two different
+  names for the same physical mount, so AMCL's TF-synchronized scan subscription
+  had no path to resolve the incoming scan at all. Since `scan_masker` already
+  republishes every scan for occlusion masking, it now also rewrites
+  `header.frame_id` to the `output_frame_id` param (default `'lidar_link'`,
+  matching the URDF) rather than touching the vendor launch file. See CLAUDE.md's
+  2026-08-11 entry for the full investigation, including two other real bugs
+  found alongside this one.
+
   **How the calibration was actually done, in case this needs redoing:** the
   lidar's own `angle_min=0`/CCW convention does NOT align with the chassis's true
   forward direction the way the static transform's zero-rotation assumption
@@ -638,8 +650,14 @@ Superseded 2026-08 by the docker-brain unification (docs/superpowers/specs/
 2026-08-03-docker-brain-real-robot-hil-unification-design.md): `robot_launch.py` is
 never created. `src/nav_fleet/launch/nav2_only_launch.py` — the same file HIL already
 uses — is reused directly, parameterized by three launch arguments
-(`use_sim_time:=false hsv_config:=.../hsv_realcam.yaml map:=.../bedroom_real.yaml`),
-passed in by `scripts/container_entrypoint.sh` (see A6). Nothing to write here.
+(`use_sim_time:=false hsv_config:=... map:=...`), passed in by
+`scripts/container_entrypoint.sh` (see A6). Nothing to write here.
+**`hsv_realcam.yaml`/`bedroom_real.yaml` still don't exist (A3/A4, still open)** —
+`robot_boot.sh` currently points these two args at real, existing stand-ins instead
+(`hsv_gazebo.yaml`/`living_room.yaml`, confirmed 2026-08-11 to be the same physical
+room) so a mission-mode run doesn't crash on a missing file; ball-detection accuracy
+against `hsv_gazebo.yaml`'s sim thresholds is still unproven against the real
+camera/lighting.
 
 ### A6. Build the power-on boot sequence
 
@@ -710,13 +728,26 @@ in one follow-up commit, both re-reviewed independently clean ("Ready to push: Y
    USB/udev enumeration for the OAK-D camera and the lidar is expected to be
    slower. Worth timing for real before trusting the systemd unit as-is, or
    consider bumping the 60s timeout.
-4. **`HSV_CONFIG_FILE=hsv_realcam.yaml` (A4) still doesn't exist** — a full
-   `robot_boot.sh` run through the container step will still fail there.
-   `hil_stage.sh smoke()`'s own HSV default silently falls back to
-   `hsv_gazebo.yaml` (sim thresholds) when this isn't set, which could false-FAIL
-   the bench's ball-correlation check against a real camera — `smoke()` now prints
-   a loud warning about this itself, but it's worth knowing before you're staring
-   at an unexpected FAIL and assuming the driver layer is broken.
+4. **`hsv_realcam.yaml` (A4) and `bedroom_real.yaml` (A3) still don't exist.**
+   `robot_boot.sh` no longer crashes on this (repointed at `hsv_gazebo.yaml`/
+   `living_room.yaml`, both real files, 2026-08-11 — see the A5 note above), but
+   ball-detection accuracy against sim HSV thresholds and navigation against a
+   borrowed (if same-room) map are both still unproven against the real robot.
+   `hil_stage.sh smoke()`'s own HSV default has the same fallback, with its own
+   loud warning.
+5. **A real AMCL scan-processing deadlock was found and fixed 2026-08-11, but only
+   proven on a bare-metal ad-hoc test — NOT yet through `robot_boot.sh`'s real
+   container path.** `robot_state_publisher` was never started anywhere in the real
+   boot chain (fixed: added to `drivers_only_launch.py`), and the real lidar's scan
+   frame_id (`base_laser`, vendor-hardcoded) didn't match the URDF's link name
+   (`lidar_link`) even after that fix — a second bug, fixed in `scan_masker.py` (see
+   its section above). Two more real, supporting fixes (`use_sim_time` propagation
+   into composed Nav2 nodes, `local_costmap.global_frame`) were needed too. All
+   confirmed live: every Nav2/AMCL node `active [3]`, `map`→`odom` publishing
+   continuously (440 updates / 45s). **The arm64 Docker image `robot_boot.sh` runs
+   predates this fix** — a container rebuild is required before a real
+   `robot_boot.sh` mission-mode run will reflect it. Full investigation:
+   CLAUDE.md's 2026-08-11 entry.
 
 - [ ] Get the exact HIL-tested commit onto this checkout (from the workstation):
 
