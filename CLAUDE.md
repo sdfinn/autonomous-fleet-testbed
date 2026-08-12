@@ -10,6 +10,28 @@ alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean 
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
 
+## ⚠️ REAL REGRESSION IN THE PUSHED COMMIT (22f1d0b), found same night, NOT fixed
+CI run `31558423291` (the push right after tonight's AMCL fix) — `stage-4-hil`
+FAILED, all 3 Mission 2 legs, real robot, container mode
+(`use_sim_time=true`). NOT a flake: both lifecycle managers go active fine
+(matching tonight's bare-metal success), but `bt_navigator` then logs
+`"Initial robot pose is not available"` repeatedly for the ~60s the mission ran,
+alongside TF errors showing a FROZEN requested timestamp (`20.100000`) falling
+further behind the TF buffer's advancing data on every retry — never recovers.
+All 3 legs FAIL: `"robot did not reach/photograph the marker"`,
+`"robot barely moved: 0.000 m from start"`. This is a genuinely different code
+path than anything proven bare-metal tonight (container mode, `use_sim_time=
+true`) — tonight's own text already flagged this as UNPROVEN; this confirms it's
+actually BROKEN, not just unverified. Prime suspect: the new
+`nav2_only_launch.py` `OpaqueFunction`/`resolved_nav2_params_file` mechanism
+(added tonight, runs unconditionally for both `use_sim_time` values) — it
+wasn't live-tested against the `true` branch at all before pushing, only
+`false` (bare-metal). Full raw log:
+`reports/nav2_container_20260812T030606.log` on the Jetson (also pulled into
+the CI run's own artifact). **Not investigated further tonight — Mike wants to
+log off; next session should start here, before anything else**, since this
+is a regression in already-pushed `main`, not just an open TODO.
+
 ## NEXT SESSION — START HERE (2026-08-11 — drivers-bare-metal-boot-fix DONE and
 PUSHED, first CI run's stage-4-hil failure fixed at the root cause and re-pushed
 GREEN — the attended bench smoke test was then genuinely ATTEMPTED live (real
