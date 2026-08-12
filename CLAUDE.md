@@ -294,6 +294,76 @@ found stacked on top of each other, both fixed, both confirmed live:**
    and `hsv_realcam.yaml`/A4 (real HSV calibration) both remain genuinely open, not
    fixed by tonight's work, just no longer silently crash-worthy placeholders.
 
+**Retrospective, written same night while it's fresh — what could have caught
+tonight's bugs earlier, and what to actually change:**
+
+*What was real-hardware-only, no test could have caught it:* the `linear.x`/
+`angular.z` sign inversions and the lidar's ~285° forward-bearing offset are
+physical facts about THIS unit's wiring/mounting — no sim or static check can
+know them in advance. These need a documented, once-and-done calibration record,
+not a smarter test.
+
+*What WAS structurally catchable, cheaply, and wasn't caught because nothing
+looked:*
+- **`robot_state_publisher` missing from the real boot chain** — a pure launch-
+  graph completeness question (does the composed real-hardware launch actually
+  include every node Nav2 config assumes exists), answerable by static analysis,
+  zero ROS2 runtime needed. No test like this exists yet.
+- **`base_laser` vs `lidar_link`** — a pure string-consistency question (does
+  every `frame_id` a real-hardware launch file declares/remaps actually match a
+  real URDF link name), also answerable by static analysis. No test like this
+  exists yet either.
+- **Three orphaned `ekf_node` processes contaminating a "clean" test** — this
+  project already has the identical lesson on file for Gazebo
+  (`src/nav_fleet/CLAUDE.md`, 2026-07-15) but it was never generalized to the
+  bare-metal driver/Nav2 stack, so the same failure class recurred in a new
+  location.
+- **HIL is structurally blind to this entire bug class by design** — it always
+  runs `use_sim_time=true`, so `sensors_only_launch.py`'s real-driver code path
+  (and therefore any frame/RSP/global_frame bug in it) is simply never exercised
+  by CI, ever. This isn't a gap in test QUALITY, it's a gap in what HIL is
+  even capable of detecting.
+
+**The bigger, generalizable miss: vendor specs and source were read reactively
+(after hours of live debugging), not proactively (as an upfront bring-up
+step).** `ld19.launch.py`'s own hardcoded `frame_id='base_laser'` — AND the fact
+that it ships its own `base_link`→`base_laser` static transform, a real design
+signal about how the vendor expects this wired — was only read tonight, under
+pressure, as a last resort after hours chasing the deadlock another way. The
+ESP32 firmware source has already produced multiple "reconstructed from source,
+turned out wrong" bugs across sessions (protocol field-mapping backwards,
+2026-08-10; the sign-convention entries here). The one clean counter-example:
+the Waveshare vendor dimension drawing (`docs/img/waveshare_ugv_pt_dimensions.png`)
+WAS read directly and correctly, upfront, during the A2 footprint task — proof
+this project already knows how to do this well when it remembers to.
+
+**Concrete changes worth making, roughly cheapest-and-highest-value first:**
+1. A stage-1 (no-ROS2-runtime-needed) test that statically parses every
+   real-hardware launch file composition and asserts each node Nav2's own
+   config expects is actually present in the returned `LaunchDescription` —
+   same bug class as the already-documented `DeclareLaunchArgument`-not-returned
+   lesson (2026-07-26), one level up.
+2. A stage-1 test that greps every real-hardware launch file's declared
+   `frame_id` params/remappings against the real link names in
+   `ugv_pt.urdf.xacro`, failing on any mismatch.
+3. A pre-flight orphan sweep as a STANDING habit for any bare-metal Jetson
+   testing (not just Gazebo) — mirror the existing `stage-2` sweep pattern for
+   the driver/Nav2/EKF process names.
+4. A single "physical calibration record" file (sign conventions, mount
+   offsets, frame names) with a `last verified: <date>, method: <...>` field per
+   fact — so a future session can't cite a stale, telemetry-inferred value as
+   settled ground truth the way the 2026-08-10 `angular.z` entry was
+   (see its own "CORRECTED 2026-08-11" annotation above).
+5. When bringing up ANY new vendor package for the first time, read its actual
+   launch/source files completely before writing the integration code that
+   depends on it — not just when something breaks. Extract frame_id
+   conventions, topics, any transforms IT publishes, and parameter defaults
+   into the bring-up doc as a first step, not a debugging step.
+6. A cheap, no-real-sensors-needed CI leg that launches the real-hardware
+   launch files with `use_sim_time:=false` (mocking/stubbing the hardware
+   inputs if needed) and asserts `map`→`odom` eventually publishes — closes the
+   "HIL can't even in principle catch this" gap directly.
+
 **Next session, in order:** (1) confirm THIS session's second push
 (`5489ed4..?`, the 3 hardware-bug fixes above) goes green, `stage-4-hil`
 specifically — check `gh run list` first before assuming; (2) re-run the
