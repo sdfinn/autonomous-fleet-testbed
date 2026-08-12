@@ -29,6 +29,23 @@
 # from a virtual bridge/veth/loopback on Linux), so it's correct on either machine,
 # however it's connected, with no manual step or per-machine interface name list to
 # maintain.
+#
+# The generated file's <Internal><SocketReceiveBufferSize> block (found live,
+# 2026-08-09, bench-verified, folded in here 2026-08-10): CycloneDDS's default
+# receive buffer is too small to deliver uncompressed sensor_msgs/Image at all —
+# 'ros2 topic hz' on /oak/rgb/image_raw hung indefinitely with no error, while the
+# same topic's compressed sibling worked immediately. A known, documented
+# ROS2/CycloneDDS limitation with large messages, not a depthai-ros or
+# project-specific bug. Additive to the Interfaces block above; doesn't touch
+# interface-priority selection at all. The matching sysctl
+# net.core.rmem_max=2147483647 half of this fix is a one-time, OS-level setting
+# (see RealRobotStartup.md); not something this per-launch-regenerated file can
+# express. This story was originally embedded as a long comment INSIDE the
+# generated XML itself — moved here 2026-08-12 after it started printing to
+# console on every single driver-layer/container start (twice per robot_boot.sh
+# run), which was pure noise for routine operation; the XML's own comment is now
+# a short pointer back to this file. NOTE: an XML comment body may never contain a
+# literal double hyphen — a real parse failure confirmed that the hard way.
 set -euo pipefail
 
 CONFIG_PATH="${CYCLONEDDS_CONFIG_PATH:-$HOME/cyclonedds-hil.xml}"
@@ -81,25 +98,16 @@ cat > "$CONFIG_PATH" <<EOF
 ${interfaces}      </Interfaces>
     </General>
     <Internal>
-      <!-- Large-message fix (found 2026-08-09, bench-verified, folded in here
-           2026-08-10): CycloneDDS's default receive buffer is too small to
-           deliver uncompressed sensor_msgs/Image at all: 'ros2 topic hz' on
-           /oak/rgb/image_raw hung indefinitely with no error, while the same
-           topic's compressed sibling worked immediately. A known, documented
-           ROS2/CycloneDDS limitation with large messages, not a depthai-ros or
-           project-specific bug. Additive to the Interfaces block above;
-           doesn't touch interface-priority selection at all. The matching
-           sysctl net.core.rmem_max=2147483647 half of this fix is a one-time,
-           OS-level setting (see RealRobotStartup.md); not something this
-           per-launch-regenerated file can express. NOTE: per the XML spec, a
-           comment body may never contain two consecutive hyphen characters;
-           a real parse failure while writing this exact comment confirmed
-           that the hard way, so keep any future edit here free of them. -->
+      <!-- Large-message fix, 2026-08-09/10: see this script's own header comment
+           for the full story. Kept short here on purpose (2026-08-12: the full
+           version got printed to console on every single driver/container start,
+           twice per run); do not lengthen without moving the story back out.
+           An XML comment body may never contain a literal double hyphen. -->
       <SocketReceiveBufferSize min="10MB"/>
     </Internal>
   </Domain>
 </CycloneDDS>
 EOF
 
-echo "cyclonedds-hil.xml regenerated at ${CONFIG_PATH}:"
-cat "$CONFIG_PATH"
+n_ifaces=$(grep -c NetworkInterface "$CONFIG_PATH")
+echo "cyclonedds config regenerated at ${CONFIG_PATH} (${n_ifaces} interface(s) -- cat it to see the full file)"
