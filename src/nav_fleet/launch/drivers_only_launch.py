@@ -30,8 +30,9 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 PKG = pathlib.Path(__file__).parent.parent
 
@@ -62,6 +63,39 @@ def generate_launch_description():
                     "Lite) — this Jetson's real path is /opt/ros/jazzy/share/"
                     "depthai_ros_driver/launch/camera.launch.py, confirmed "
                     "2026-08-09. Left empty = skipped, not a launch error.",
+    )
+
+    # robot_state_publisher: real, previously-undiscovered gap found live, 2026-08-12
+    # (bench smoke test AMCL-stall investigation, dug all the way to root cause) --
+    # this file NEVER started it, and neither does nav2_only_launch.py or
+    # container_entrypoint.sh -- confirmed by grepping the whole real-robot boot
+    # chain, zero references anywhere outside the SIM launch files
+    # (sim_launch_minimal.py/sim_only_launch.py/nav2_isaac_launch.py). Without it, no
+    # process ever publishes the URDF's static sensor-frame transforms (e.g.
+    # base_footprint -> the real lidar's own frame_id, "base_laser" per
+    # ld19.launch.py, confirmed by reading that file directly) -- AMCL's TF-
+    # synchronized scan subscription can NEVER resolve a transform for an incoming
+    # scan message with no known path to odom, so it silently buffers/drops every
+    # single scan forever without ever invoking its own processing callback (0 laser-
+    # related log lines, even at DEBUG level, confirmed live -- not a guess). This
+    # silently explains the map->odom deadlock chased across several live tests
+    # tonight; never caught in sim/HIL because sim_only_launch.py (the workstation-
+    # side Gazebo bridge) DOES start robot_state_publisher, so HIL's TF tree was
+    # always complete. Same URDF/remapping pattern as sim_only_launch.py's own
+    # already-proven robot_state_publisher -- hardcoded use_sim_time False, matching
+    # this file's own real-hardware-only convention (no use_sim_time arg exists here
+    # at all, see this file's own module docstring).
+    robot_desc = ParameterValue(
+        Command(['xacro ', str(PKG / 'urdf' / 'ugv_pt.urdf.xacro')]), value_type=str)
+    robot_state_publisher = Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        name='robot_state_publisher',
+        parameters=[{'robot_description': robot_desc, 'use_sim_time': False}],
+        remappings=[
+            ('/tf', '/robot_001/tf'),
+            ('/tf_static', '/robot_001/tf_static'),
+        ],
     )
 
     esp32_driver = Node(
@@ -114,5 +148,6 @@ def generate_launch_description():
     return LaunchDescription([
         serial_device_arg, serial_baud_arg, lidar_launch_file_arg,
         camera_launch_file_arg,
+        robot_state_publisher,
         esp32_driver, lidar_include, camera_include, scan_masker, camera_relay,
     ])

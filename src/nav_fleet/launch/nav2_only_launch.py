@@ -27,16 +27,63 @@ the original single-file timing: world load + bridge up + first sensor data). De
 import os
 import pathlib
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, GroupAction,
-                            IncludeLaunchDescription, TimerAction)
+                            IncludeLaunchDescription, OpaqueFunction,
+                            SetLaunchConfiguration, TimerAction)
 from launch.conditions import UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 PKG = pathlib.Path(__file__).parent.parent
+
+
+def _resolve_use_sim_time_in_params(context, *args, **kwargs):
+    """nav2_bringup's own bringup_launch.py (confirmed 2026-08-12 by reading its real
+    installed source, /opt/ros/jazzy/share/nav2_bringup/launch/bringup_launch.py) calls
+    RewrittenYaml with param_rewrites={} -- an EMPTY dict. This ROS2 Jazzy build never
+    dynamically injects use_sim_time into params_file at all for composed nodes; the
+    'use_sim_time' launch argument only reaches a handful of standalone nodes
+    bringup_launch.py starts directly, never AMCL/map_server/controller_server/etc,
+    which are all loaded straight from whatever's hardcoded in the params file.
+
+    This silently broke the real robot: nav2_params.yaml hardcodes use_sim_time: true
+    (needed for sim/HIL, where it correctly matches what's requested) -- so on the real
+    robot, passing use_sim_time:=false had ZERO effect on AMCL/map_server/etc, which
+    kept running with use_sim_time=true regardless (confirmed live via `ros2 param get
+    /robot_001/amcl use_sim_time` -> True, even with :=false passed). With no /clock
+    publisher on real hardware (no Gazebo), a node believing use_sim_time=true has its
+    internal clock frozen -- which stalled AMCL's own time-dependent localization-update
+    processing: it correctly received a request_nomotion_update call (a simple flag/
+    counter, doesn't need clock progression) but never completed the actual update or
+    published map->odom, even after several minutes of real wall-clock time. Never
+    surfaced in sim/HIL, which always requests use_sim_time=true anyway -- matching the
+    hardcoded default by coincidence, so this exact code path was never really exercised
+    there.
+
+    Fix: since bringup_launch.py's own rewrite mechanism is a no-op for this key, don't
+    depend on it -- rewrite nav2_params.yaml's use_sim_time for every node ourselves,
+    to match the ACTUAL resolved launch argument, and hand bringup_launch.py our own
+    corrected copy instead of the original static file."""
+    use_sim_time_str = LaunchConfiguration('use_sim_time').perform(context)
+    use_sim_time_bool = use_sim_time_str.lower() == 'true'
+
+    src_path = PKG / 'config' / 'nav2_params.yaml'
+    with open(src_path) as f:
+        params = yaml.safe_load(f)
+
+    for node_cfg in params.values():
+        if isinstance(node_cfg, dict) and 'ros__parameters' in node_cfg:
+            node_cfg['ros__parameters']['use_sim_time'] = use_sim_time_bool
+
+    out_path = f'/tmp/nav2_params_resolved_{os.getpid()}.yaml'
+    with open(out_path, 'w') as f:
+        yaml.safe_dump(params, f)
+
+    return [SetLaunchConfiguration('resolved_nav2_params_file', out_path)]
 
 
 def generate_launch_description():
@@ -114,6 +161,12 @@ def generate_launch_description():
                      'hsv_config': LaunchConfiguration('hsv_config')}],
     )
 
+    # Resolves use_sim_time into our own corrected copy of nav2_params.yaml before
+    # bringup_launch.py ever sees it -- see _resolve_use_sim_time_in_params's own
+    # docstring for why this is necessary (bringup_launch.py's own rewrite mechanism
+    # is a no-op for this key on this ROS2 Jazzy build).
+    resolve_params_action = OpaqueFunction(function=_resolve_use_sim_time_in_params)
+
     nav2_bringup_dir = get_package_share_directory('nav2_bringup')
     nav2 = GroupAction(
         condition=UnlessCondition(LaunchConfiguration('skip_nav2')),
@@ -127,7 +180,7 @@ def generate_launch_description():
                     'namespace': 'robot_001',
                     'use_namespace': 'true',
                     'use_sim_time': LaunchConfiguration('use_sim_time'),
-                    'params_file': str(PKG / 'config' / 'nav2_params.yaml'),
+                    'params_file': LaunchConfiguration('resolved_nav2_params_file'),
                     'map': LaunchConfiguration('map'),
                     'use_composition': 'True',
                     'autostart': 'true',
@@ -153,5 +206,6 @@ def generate_launch_description():
         skip_nav2_arg,
         ekf_node,
         ball_detector,
+        resolve_params_action,
         nav2,
     ])

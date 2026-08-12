@@ -218,6 +218,82 @@ Critical bugs invisible at single-task scope, both fixed in one follow-up commit
    back to sim thresholds with a loud warning now, but that's a mitigation, not a
    fix.
 
+**Later the SAME night (2026-08-11), a separate real investigation: Mike attempted
+a genuine bare-metal `robot_boot.sh` production run and hit a NEW, previously-
+undiscovered blocker — AMCL never processed a single lidar scan, `local_costmap`
+timed out waiting for the `map` transform forever, no error, no abort.** Chased to
+root cause live, over several hours, using DEBUG-level Nav2 logging, direct rclpy
+diagnostic scripts (bypassing repeatedly-hanging `ros2 run tf2_ros tf2_echo`), and
+reading vendor source directly rather than guessing. **Two real, independent bugs
+found stacked on top of each other, both fixed, both confirmed live:**
+1. **`robot_state_publisher` was never started anywhere in the real robot's boot
+   chain at all** — confirmed via `grep -rln "robot_state_publisher"` matching only
+   sim launch files. Without it, nothing published the URDF's static sensor-frame
+   transforms (`base_footprint`→`base_link`→`camera_link`/`imu_link`/`lidar_link`),
+   so AMCL's TF-synchronized scan subscription had no path to resolve at all. Fixed:
+   added to `drivers_only_launch.py` (real-hardware group), same pattern
+   `sim_only_launch.py` already proves.
+2. **A frame-name mismatch, found AFTER fix 1 still didn't resolve the deadlock:**
+   `ldlidar_ros2`'s own `ld19.launch.py` hardcodes `frame_id: 'base_laser'` on every
+   scan message (confirmed by reading the vendor launch file directly), but
+   `ugv_pt.urdf.xacro`'s real lidar link is named `lidar_link` — two different names
+   for the same physical mount, so even with `robot_state_publisher` running, the
+   scan's own frame_id still had no path into the rest of the TF tree. Fixed in
+   `scan_masker.py` (not the vendor file — this project's own convention) — it
+   already republishes every scan message (masking self-occlusion sectors), so it
+   now ALSO rewrites `header.frame_id` to a new `output_frame_id` param (default
+   `'lidar_link'`), TDD, 2 new tests including one that pins the OLD (wrong)
+   pass-through behavior as a regression test for the new one.
+   Two more real, supporting fixes found and confirmed live along the way, both
+   needed regardless of the two bugs above:
+   `nav2_only_launch.py`'s composed Nav2 nodes never actually received `use_sim_time`
+   — root cause: `nav2_bringup`'s own `bringup_launch.py` calls its internal
+   `RewrittenYaml` with `param_rewrites={}` (an empty dict, confirmed by reading that
+   file directly on this ROS2 Jazzy build) — fixed with a small `OpaqueFunction` in
+   `nav2_only_launch.py` that resolves `use_sim_time` into a fresh params YAML before
+   Nav2 loads it. Separately, `local_costmap` had no `global_frame` override at all,
+   silently defaulting to `"map"` instead of `"odom"` — fixed with an explicit
+   `global_frame: "odom"` in `nav2_params.yaml`, with a comment explaining why.
+   **A THIRD contributing factor, found only when testing the above two fixes fresh
+   tonight — likely present (and contaminating) every earlier test this session, not
+   a new bug from these fixes:** three orphaned `ekf_node` processes (`PPID=1`, each
+   from a separate earlier container/`nav2_only_launch.py` run that was never torn
+   down) were all still alive on the Jetson, all simultaneously publishing
+   `odom`→`base_footprint` onto the same `/robot_001/tf` — the exact "orphaned
+   process poisons every later run" failure class `src/nav_fleet/CLAUDE.md` already
+   documents for Gazebo, now recurring on the real driver stack. A 12+-hour-old
+   orphaned `static_transform_publisher` (`base_link`→`base_laser`, part of
+   `ld19.launch.py`'s own bring-up) was found alongside it. Both swept before the
+   final clean test — this is why the earlier "RSP added, deadlock persists" result
+   recorded mid-session shouldn't be fully trusted as a clean test of fix 1 alone.
+   **Confirmed genuinely fixed, launched completely fresh with zero orphans:** every
+   Nav2/AMCL node reports `active [3]` (`amcl`, `controller_server`, `planner_server`,
+   `smoother_server`, `behavior_server`, `bt_navigator`, `map_server`, both
+   costmaps); AMCL's own log shows `createLaserObject` (confirmed via reading
+   `amcl_node.cpp` directly — only fires from inside the scan-processing callback
+   that was dead silent all night); `map`→`odom` publishing continuously, **440
+   updates over 45s, ~9.75Hz**, not a one-off fluke. This is the first time the full
+   real-hardware Nav2 stack has come up genuinely healthy end to end.
+   **Committed locally, NOT pushed yet** (`robot_state_publisher`/`scan_masker.py`
+   frame_id rewrite/`nav2_only_launch.py` use_sim_time fix/`nav2_params.yaml`
+   `global_frame`/`robot_boot.sh` NAV2_MAP_FILE+HSV_CONFIG_FILE stand-ins) — this
+   commit (self-referencing a hash here just chases its own amend, so named by
+   description instead — `git log --oneline -- src/nav_fleet/nav_fleet/scan_masker.py`
+   finds it).
+   **What this does NOT yet prove:** all of tonight's testing ran the driver layer +
+   `nav2_only_launch.py` bare-metal directly (the same ad-hoc pattern used all
+   session) — NOT through `robot_boot.sh`'s real Docker container path. The arm64
+   image `robot_boot.sh` actually pulls/runs was built BEFORE these fixes existed,
+   so a real `robot_boot.sh` mission-mode run tonight would still hit the identical
+   deadlock — the container needs a rebuild with tonight's commit before that path is
+   provably fixed too. `robot_boot.sh`'s `NAV2_MAP_FILE`/`HSV_CONFIG_FILE` were ALSO
+   fixed tonight to point at files that actually exist (`living_room.yaml` — Mike
+   confirmed live this session it's the same physical room as `bedroom_real.yaml`,
+   which doesn't exist; `hsv_gazebo.yaml` as an explicit A4 stand-in, since
+   `hsv_realcam.yaml` still doesn't exist) — `bedroom_real.yaml`/A3 (real SLAM map)
+   and `hsv_realcam.yaml`/A4 (real HSV calibration) both remain genuinely open, not
+   fixed by tonight's work, just no longer silently crash-worthy placeholders.
+
 **Next session, in order:** (1) confirm THIS session's second push
 (`5489ed4..?`, the 3 hardware-bug fixes above) goes green, `stage-4-hil`
 specifically — check `gh run list` first before assuming; (2) re-run the
@@ -225,14 +301,20 @@ OFFICIAL `scripts/hil_stage.sh smoke <sha>` end to end for real, with Mike
 physically present, now that all 3 known hardware bugs are fixed (the ad-hoc
 scripts used to find/verify them today were deliberately narrower than a real
 attended run — this is the first real proof the FULL path works with the
-fixes in place); (3) Mike's own follow-up experiment, once (2) passes: rerun
-the smoke test with the yellow ball placed WITHOUT the riser (floor/table
-level) and confirm the PREDICTED failure mode — `camera`/`photo` still PASS,
-`ball_correlation` FAILs specifically because the 2D lidar's fixed scan plane
-(~6in up) physically cannot see a floor-level ball at any distance, regardless
-of width — a real physics constraint, not a bug, worth directly demonstrating;
-(4) A4 (HSV calibration — `hsv_realcam.yaml` still doesn't exist); (5) the
-production `robot_boot.sh` mission test (A6/A7) — blocked on (2) and (4) above.
+fixes in place); (3) rebuild the arm64 Docker image to include tonight's AMCL
+deadlock fix (`robot_state_publisher`/`scan_masker` frame_id rewrite/
+`use_sim_time` propagation/`local_costmap.global_frame`), then run a real
+`scripts/robot_boot.sh` mission-mode test — the bare-metal ad-hoc test proved
+the FIX, not yet the CONTAINER path production actually uses; (4) Mike's own
+follow-up experiment, once (2) passes: rerun the smoke test with the yellow
+ball placed WITHOUT the riser (floor/table level) and confirm the PREDICTED
+failure mode — `camera`/`photo` still PASS, `ball_correlation` FAILs
+specifically because the 2D lidar's fixed scan plane (~6in up) physically
+cannot see a floor-level ball at any distance, regardless of width — a real
+physics constraint, not a bug, worth directly demonstrating; (5) A4 (HSV
+calibration — `hsv_realcam.yaml` still doesn't exist, only stood-in for now);
+(6) A3 (a real SLAM map of the room — `living_room.yaml` is a real, confirmed
+room match, but was never actually built as this robot's own SLAM output).
 
 ## (superseded 2026-08-11) PREVIOUS (2026-08-10 EOD — ESP32 odom/imu resolved, A2 essentially
 complete (gimbal + scan FOV mask + footprint fixed, all live-verified), pushed, and

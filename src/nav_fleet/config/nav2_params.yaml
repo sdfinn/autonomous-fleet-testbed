@@ -193,6 +193,20 @@ local_costmap:
   local_costmap:
     ros__parameters:
       use_sim_time: true
+      # Real bug found live, 2026-08-12: this section never explicitly set
+      # global_frame, so it silently used nav2_costmap_2d's own internal default
+      # ("map") -- confirmed directly via `ros2 param get
+      # /robot_001/local_costmap/local_costmap global_frame` while running on the
+      # real Jetson. A ROLLING local costmap should use "odom" (the whole point
+      # of "local" -- it shouldn't need global/map localization to activate at
+      # all), matching robot_radius/robot_base_frame's own already-correct
+      # real-hardware values just below. This never blocked HIL/sim (AMCL there
+      # always eventually localizes, so the missing map->odom transform was only
+      # ever a startup delay, never a hard block) but fully blocked the real
+      # robot, where AMCL never localized at all (separate, still-open issue) --
+      # local_costmap (and therefore the whole navigation lifecycle manager) was
+      # waiting on a transform it never actually needed.
+      global_frame: "odom"
       rolling_window: true
       width: 4
       height: 4

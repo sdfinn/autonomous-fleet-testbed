@@ -148,14 +148,23 @@ echo "=== [robot-boot] running ${IMAGE} (real-robot context, operator ball place
 # ROBOT_MODE=mission is hardcoded here, never a variable — standalone power-on can
 # never run a smoke test (design spec). skip_nav2 is NOT set here — its default
 # (false) means Nav2 runs exactly as it always has.
+# NAV2_MAP_FILE/HSV_CONFIG_FILE stand-ins, 2026-08-11: bedroom_real.yaml (A3, a real
+# SLAM map of this room) and hsv_realcam.yaml (A4, real-camera HSV calibration)
+# neither exist yet — both are still-open, tracked gaps, not decided permanently
+# here. living_room.yaml is confirmed the SAME physical room (Mike, live, this
+# session — likely an early naming mixup, not two different rooms) and is already
+# nav2_only_launch.py's own default map, so it's a real value, not a placeholder.
+# hsv_gazebo.yaml is a genuine stand-in — sim color thresholds, not calibrated
+# against this room's real camera/lighting — ball_detector will run without
+# crashing but its detection accuracy is unproven until A4 happens.
 docker rm -f robot_mission 2>/dev/null || true
 mkdir -p "$REPO/reports"
 docker run --rm --name robot_mission --network host --ipc host \
   -v "$REPO/reports:/ros2_ws/reports" \
   -v "$HOME/fleet-ci-data:/root/fleet-ci-data" \
   -e USE_SIM_TIME=false \
-  -e HSV_CONFIG_FILE=hsv_realcam.yaml \
-  -e NAV2_MAP_FILE=bedroom_real.yaml \
+  -e HSV_CONFIG_FILE=hsv_gazebo.yaml \
+  -e NAV2_MAP_FILE=living_room.yaml \
   -e MISSION2_SELF_REPORT=1 \
   -e RUNNER_TYPE=real_robot \
   -e ROBOT_MODE=mission \

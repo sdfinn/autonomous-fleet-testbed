@@ -38,6 +38,7 @@ def test_construction_declares_expected_defaults():
         assert node.get_parameter('output_topic').value == '/robot_001/scan'
         assert list(node.get_parameter('mask_sectors_deg').value) == [
             46.0, 123.0, 268.0, 277.0]
+        assert node.get_parameter('output_frame_id').value == 'lidar_link'
     finally:
         node.destroy_node()
 
@@ -105,10 +106,56 @@ def test_republished_scan_preserves_non_masked_fields():
         while len(received) < 1 and time.monotonic() < deadline:
             rclpy.spin_once(node, timeout_sec=0.5)
         assert len(received) == 1
-        assert received[0].header.frame_id == 'base_laser'
         assert received[0].range_min == pytest.approx(0.02)
         assert received[0].range_max == pytest.approx(12.0)
         assert received[0].angle_increment == pytest.approx(msg.angle_increment)
+    finally:
+        node.destroy_subscription(sub)
+        node.destroy_node()
+
+
+def test_republished_scan_rewrites_frame_id_to_match_urdf_not_vendor_default():
+    # Real bug, found 2026-08-12: ldlidar_ros2's ld19.launch.py hardcodes
+    # frame_id='base_laser' on the RAW scan, but ugv_pt.urdf.xacro's real link is
+    # named 'lidar_link' — TF had no path connecting the two, so AMCL's
+    # TF-synchronized scan subscription silently buffered every scan forever.
+    # scan_masker must correct the frame_id on republish, not pass it through.
+    node = ScanMasker()
+    received = []
+    sub = node.create_subscription(
+        LaserScan, '/robot_001/scan', lambda m: received.append(m), 10)
+    pub = node.create_publisher(LaserScan, 'scan', 10)
+    try:
+        msg = _make_scan()
+        msg.header.frame_id = 'base_laser'  # the real vendor driver's actual value
+        pub.publish(msg)
+        deadline = time.monotonic() + 3.0
+        while len(received) < 1 and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.5)
+        assert len(received) == 1
+        assert received[0].header.frame_id == 'lidar_link'
+    finally:
+        node.destroy_subscription(sub)
+        node.destroy_node()
+
+
+def test_custom_output_frame_id_param_overrides_default():
+    node = ScanMasker()
+    node.set_parameters([rclpy.parameter.Parameter(
+        'output_frame_id', value='custom_lidar_frame')])
+    received = []
+    sub = node.create_subscription(
+        LaserScan, '/robot_001/scan', lambda m: received.append(m), 10)
+    pub = node.create_publisher(LaserScan, 'scan', 10)
+    try:
+        msg = _make_scan()
+        msg.header.frame_id = 'base_laser'
+        pub.publish(msg)
+        deadline = time.monotonic() + 3.0
+        while len(received) < 1 and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.5)
+        assert len(received) == 1
+        assert received[0].header.frame_id == 'custom_lidar_frame'
     finally:
         node.destroy_subscription(sub)
         node.destroy_node()
