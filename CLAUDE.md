@@ -32,6 +32,46 @@ the CI run's own artifact). **Not investigated further tonight — Mike wants to
 log off; next session should start here, before anything else**, since this
 is a regression in already-pushed `main`, not just an open TODO.
 
+**UPDATE 2026-08-12 — did NOT reproduce; best-evidenced explanation is
+environmental contamination, NOT the `OpaqueFunction`/`resolved_nav2_params_file`
+mechanism originally suspected above. Not confirmed via a deliberate repro, so
+treat as strong-but-not-proven.** Started this session by temporarily wiring
+`log_level:=debug` into `container_entrypoint.sh`'s `mission` branch (it was
+already threaded through `nav2_only_launch.py` → `bringup_launch.py`, just never
+actually passed at this one call site) and pushing to get a fresh, real
+DEBUG-level log of the failure — no other code touched. Before that push's CI run
+reached `stage-4-hil`, the Jetson lost power entirely (unrelated, physical) and
+Mike power-cycled it — the least ambiguous possible full teardown of whatever
+process/DDS state existed. The resulting run (`31602611709`) came back
+**genuinely green**: all 3 legs real PASS in telemetry (not skipped — checked
+`fleet_runs.db` directly, `home_photo_similarity` populated for no_ball/yellow as
+expected), and the new 219MB DEBUG log shows the exact original symptom is
+**gone**: `grep -c "Initial robot pose is not available"` → **0** (vs. **7** in
+the original failing run's log), AMCL's `createLaserObject` fires cleanly, both
+lifecycle managers active in both runs. Since the only code difference between
+the failing run and this one was the unrelated `log_level` flag, and the only
+other difference was the hard reboot, the leading explanation is that the
+failing run was contaminated by stale/orphaned process or DDS/TF state left over
+from that same night's hours of live bare-metal AMCL debugging (see this
+session's own retrospective below — orphaned `ekf_node`/
+`static_transform_publisher` processes were already found and swept once that
+night, but nothing ruled out more accumulating afterward, e.g. during the
+smoke-test bug-fixing work or the CI push itself) — this is the same failure
+class this project has hit repeatedly (Gazebo, the bare-metal driver stack;
+never before in this specific container/CI path). **`log_level:=debug` has been
+reverted** (`container_entrypoint.sh` is byte-identical to `22f1d0b` again) now
+that the diagnostic log was captured; re-add it (same one-line change) if this
+recurs. Original prime suspect (the `OpaqueFunction` mechanism) is now believed
+**exonerated, not fixed** — no code in it was changed. Concrete follow-up worth
+doing: extend the retrospective's "pre-flight orphan sweep as a standing habit"
+recommendation (below) to the container-mode/CI HIL path too, not just ad-hoc
+bare-metal testing — this is a second, different location the same contamination
+class may be able to hit. Logs for comparison: failing run —
+`reports/nav2_container_20260812T030606.log`; passing debug run —
+`nav2_container_20260812T135520.log` (pulled to `/tmp/hil_stage/` on the
+workstation via `hil-mission-evidence` scp, not committed — regenerate via the
+CI artifact or re-run with `log_level:=debug` if needed again).
+
 ## NEXT SESSION — START HERE (2026-08-11 — drivers-bare-metal-boot-fix DONE and
 PUSHED, first CI run's stage-4-hil failure fixed at the root cause and re-pushed
 GREEN — the attended bench smoke test was then genuinely ATTEMPTED live (real

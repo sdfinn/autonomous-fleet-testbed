@@ -95,13 +95,6 @@ case "$ROBOT_MODE" in
   mission)
     NAV2_LOG="/ros2_ws/reports/nav2_container_$(date +%Y%m%dT%H%M%S).log"
     rm -f "$NAV2_LOG"
-    # TEMP DEBUG (2026-08-12): CLAUDE.md's open "frozen TF timestamp" stage-4-hil
-    # regression (run 31558423291, use_sim_time=true/container mode -- bt_navigator
-    # never gets an initial pose, TF request stamp never advances) needs real
-    # DEBUG-level Nav2 logging to diagnose, same as Piece 9's stall investigation --
-    # log_level was already wired through nav2_only_launch.py/bringup_launch.py but
-    # never actually passed here. Revert to 'info' once this is root-caused.
-    LOG_LEVEL_ARG='debug'
     # Same (subshell) + < /dev/null pattern robot_boot.sh already uses and documents:
     # without the parens the backgrounded job inherits this script's own stdout/stderr
     # and holds the shell open forever; < /dev/null stops it inheriting stdin.
@@ -109,7 +102,6 @@ case "$ROBOT_MODE" in
        use_sim_time:="${USE_SIM_TIME}" \
        hsv_config:="/ros2_ws/src/nav_fleet/config/${HSV_CONFIG_FILE}" \
        map:="/ros2_ws/src/nav_fleet/maps/${NAV2_MAP_FILE}" \
-       log_level:="${LOG_LEVEL_ARG}" \
        > "$NAV2_LOG" 2>&1 < /dev/null &)
 
     echo "=== [container-entrypoint] waiting up to 120s for Nav2 to report active ==="
