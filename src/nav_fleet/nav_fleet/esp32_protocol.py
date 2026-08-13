@@ -43,6 +43,66 @@ OrientationData = collections.namedtuple(
 _FEEDBACK_BASE_INFO = 1001
 _FEEDBACK_ORIENTATION = 1002
 
+# QMI8658 raw-count -> physical-unit sensitivity constants (2026-08-12/13 root cause):
+# BaseInfo.ax/ay/az/gx/gy/gz are RAW LSB register counts, not already-scaled physical
+# units, despite esp32_driver._publish_imu previously passing them straight into a ROS
+# Imu message unconverted — flagged as an open, unconfirmed risk in that file's own
+# comment since 2026-08-10 ("NOT confirmed against real hardware... confirm before
+# trusting these as calibrated m/s^2 / rad/s"). Confirmed broken the hard way: a live
+# AMCL investigation found a STATIONARY robot's odom->base_footprint yaw jumping
+# through the full +/-pi range every ~100ms, traced through ekf_node's gyro-rate-only
+# motion-model input straight back to these unscaled counts (~200x too large once
+# treated as rad/s instead of raw LSB).
+#
+# ACCEL_SENSITIVITY_LSB_PER_G — HIGH confidence, cross-checked against real physics,
+# not read blindly from vendor source: two independent real hardware captures
+# (2026-08-10's test fixture below, a live 2026-08-12 capture, ~1 month apart) both
+# show az~8556-8576 raw counts while the robot sat stationary/level — i.e. ~1g on the
+# Z axis. Checked against every QMI8658 accel full-scale range's LSB/g value: only
+# +/-4g (8192 LSB/g) lands close to 1g (1.044-1.047g, a plausible few-percent real
+# tilt/bias); +/-2g/+/-8g/+/-16g give 0.52g/2.09g/4.18g respectively — all physically
+# implausible for a robot sitting still. An automated read of the vendor's own
+# QMI8658.cpp claimed a DEFAULT of +/-16g, which this real data directly contradicts —
+# exactly the vendor-source-vs-real-runtime mismatch this module's own docstring
+# already documents happening twice before on this same protocol. Trusting the
+# physics, not the doc.
+ACCEL_SENSITIVITY_LSB_PER_G = 8192.0
+GRAVITY_M_S2 = 9.80665
+
+# GYRO_SENSITIVITY_LSB_PER_DPS — LOWER confidence, NOT independently cross-checked the
+# same way accel was: unlike accel, true angular velocity at rest is 0 for ANY
+# sensitivity value, so there's no physical constant in this data to calibrate
+# against. This value (16 LSB/dps, the QMI8658's +/-2048dps range) is the vendor
+# source's own stated default for gyro; applying it to real stationary-robot raw
+# captures (~0-10 raw counts) produces a plausible near-zero angular velocity
+# (<0.7 dps / <0.012 rad/s) — consistent with a stationary robot, but a much weaker
+# check than accel's gravity cross-check, since many other range values would also
+# look "small enough" against these small raw counts. Needs a real calibration test
+# before this is trusted the way ACCEL_SENSITIVITY_LSB_PER_G now is — e.g. a
+# measured, hand-rotated known angle, mirroring spin_experiment.py's own methodology
+# for the wheel-odom rotation-over-report fix. Flagged, not guessed blind — but
+# flagged as the SPECIFIC open risk this fix does not close.
+GYRO_SENSITIVITY_LSB_PER_DPS = 16.0
+_DEG_TO_RAD = math.pi / 180.0
+
+
+def scale_imu_raw(ax, ay, az, gx, gy, gz):
+    """Convert QMI8658 raw LSB counts (BaseInfo.ax/ay/az/gx/gy/gz, as published in the
+    real firmware's T:1001 message) into the physical SI units sensor_msgs/Imu
+    requires: linear_acceleration in m/s^2, angular_velocity in rad/s. See the
+    sensitivity constants' own comments above for the confidence level behind each
+    conversion factor — accel is real-physics-verified, gyro is a flagged, unverified
+    best estimate pending a real calibration test.
+
+    Pure function (no ROS, no offset/bias correction — that's a separate, still-open
+    gap) so it's testable in stage-1-quality like the rest of this module.
+    esp32_driver._publish_imu calls this before populating the ROS message.
+    """
+    accel_scale = GRAVITY_M_S2 / ACCEL_SENSITIVITY_LSB_PER_G
+    gyro_scale = _DEG_TO_RAD / GYRO_SENSITIVITY_LSB_PER_DPS
+    return (ax * accel_scale, ay * accel_scale, az * accel_scale,
+            gx * gyro_scale, gy * gyro_scale, gz * gyro_scale)
+
 
 def encode_velocity_cmd(linear_x, angular_z):
     """CMD_ROS_CTRL (T:13) — documented in-source as (m/s, rad/s), a direct Twist

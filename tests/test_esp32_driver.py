@@ -253,10 +253,18 @@ def test_publish_odom_integrates_and_publishes(qos_capture=None):
         driver.destroy_node()
 
 
-def test_publish_imu_reads_raw_accel_gyro_from_base_info():
+def test_publish_imu_scales_raw_accel_gyro_to_physical_units():
     # _publish_imu takes a BaseInfo now (corrected 2026-08-10) — the raw accel/gyro
     # esp32_driver previously (and wrongly) expected from a separate T:1002 message
     # actually lives in the SAME T:1001 message as the wheel speeds.
+    #
+    # Root cause fix, 2026-08-12/13: this used to assert msg.linear_acceleration.z
+    # == 8556 — i.e. the RAW QMI8658 count passed straight through with no unit
+    # conversion, which is the actual bug a live AMCL investigation found (a
+    # stationary robot's yaw estimate spinning through +/-pi every ~100ms, traced
+    # back to this exact pass-through). Now asserts the physically-scaled value —
+    # see esp32_protocol.scale_imu_raw's own docstring for the conversion and its
+    # confidence level.
     driver, mock_ser = _make_driver()
     received = []
     sub = driver.create_subscription(
@@ -268,7 +276,7 @@ def test_publish_imu_reads_raw_accel_gyro_from_base_info():
         # coercion entirely and would miss the exact crash this fix addresses (a real
         # `Fatal Python error: Aborted` hit developing this test, see
         # esp32_protocol.py's parse_base_info docstring).
-        from nav_fleet.esp32_protocol import parse_base_info
+        from nav_fleet.esp32_protocol import parse_base_info, scale_imu_raw
         info = parse_base_info({"T": 1001, "L": 0, "R": 0, "ax": -36, "ay": 68,
                                 "az": 8556, "gx": -8, "gy": 16, "gz": 0, "mx": -555,
                                 "my": 502, "mz": 612, "odl": -1, "odr": 0, "v": 1203})
@@ -278,13 +286,20 @@ def test_publish_imu_reads_raw_accel_gyro_from_base_info():
             rclpy.spin_once(driver, timeout_sec=0.5)
         assert len(received) == 1
         msg = received[0]
-        assert msg.linear_acceleration.x == pytest.approx(-36)
-        assert msg.linear_acceleration.y == pytest.approx(68)
-        assert msg.linear_acceleration.z == pytest.approx(8556)
-        assert msg.angular_velocity.x == pytest.approx(-8)
-        assert msg.angular_velocity.y == pytest.approx(16)
-        assert msg.angular_velocity.z == pytest.approx(0)
+        expected = scale_imu_raw(ax=-36, ay=68, az=8556, gx=-8, gy=16, gz=0)
+        assert msg.linear_acceleration.x == pytest.approx(expected[0])
+        assert msg.linear_acceleration.y == pytest.approx(expected[1])
+        assert msg.linear_acceleration.z == pytest.approx(expected[2])
+        assert 9.0 < msg.linear_acceleration.z < 11.0  # ~1g, not the raw 8556 count
+        assert msg.angular_velocity.x == pytest.approx(expected[3])
+        assert msg.angular_velocity.y == pytest.approx(expected[4])
+        assert msg.angular_velocity.z == pytest.approx(expected[5])
         assert msg.orientation_covariance[0] == -1.0  # not yet wired in — see driver comment
+        # Zero covariance means "perfect measurement, trust completely" to a
+        # consuming EKF — wrong for an unscaled/uncharacterized sensor. -1 (REP-145's
+        # "not populated") is honest until real noise is characterized.
+        assert msg.angular_velocity_covariance[0] == -1.0
+        assert msg.linear_acceleration_covariance[0] == -1.0
     finally:
         driver.destroy_subscription(sub)
         driver.destroy_node()
@@ -313,7 +328,11 @@ def test_dispatch_line_real_hardware_base_info_publishes_odom_and_imu():
             rclpy.spin_once(driver, timeout_sec=0.5)
         assert len(odom_received) == 1
         assert len(imu_received) == 1
-        assert imu_received[0].linear_acceleration.x == pytest.approx(-36)
+        # Scaled, not the raw -36 count -- see test_publish_imu_scales_raw_accel_gyro_
+        # to_physical_units for the full story on why this changed.
+        from nav_fleet.esp32_protocol import scale_imu_raw
+        expected_ax = scale_imu_raw(ax=-36, ay=68, az=8556, gx=-8, gy=16, gz=0)[0]
+        assert imu_received[0].linear_acceleration.x == pytest.approx(expected_ax)
     finally:
         driver.destroy_subscription(odom_sub)
         driver.destroy_subscription(imu_sub)

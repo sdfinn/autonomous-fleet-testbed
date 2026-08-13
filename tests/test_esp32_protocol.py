@@ -9,7 +9,7 @@ from nav_fleet.esp32_protocol import (BaseInfo, OrientationData, encode_enable_f
                                       encode_feedback_flow_interval, encode_gimbal_cmd,
                                       encode_get_imu_data, encode_set_heartbeat_timeout,
                                       encode_velocity_cmd, integrate_odometry, parse_base_info,
-                                      parse_feedback_line, parse_orientation)
+                                      parse_feedback_line, parse_orientation, scale_imu_raw)
 
 
 def test_encode_velocity_cmd():
@@ -103,6 +103,40 @@ def test_parse_base_info_coerces_whole_number_fields_to_float():
     info = parse_base_info(data)
     for field in ('speed_l', 'speed_r', 'ax', 'ay', 'az', 'gx', 'gy', 'gz'):
         assert isinstance(getattr(info, field), float), f'{field} must be float'
+
+
+def test_scale_imu_raw_real_hardware_capture_gives_physically_plausible_values():
+    # Root cause, found 2026-08-12/13 via a live AMCL investigation: esp32_driver
+    # was publishing these RAW QMI8658 LSB counts straight into a ROS Imu message
+    # with NO unit conversion at all — flagged as an open, unconfirmed risk in
+    # esp32_driver.py's own comment since 2026-08-10, confirmed broken tonight (a
+    # stationary robot's odom->base_footprint yaw was jumping through the full
+    # +/-pi range every ~100ms; traced through ekf_node's motion-model input
+    # straight back to these unscaled raw counts). Same real capture as
+    # test_parse_base_info_real_hardware_capture above — robot was stationary and
+    # level. The whole point of this test: once scaled, az must land near ONE
+    # real g (9.80665 m/s^2) and gx/gy/gz must land near zero rad/s, not the raw
+    # 8556/-8/16/0 counts.
+    ax, ay, az, gx, gy, gz = scale_imu_raw(ax=-36, ay=68, az=8556, gx=-8, gy=16, gz=0)
+    assert az == pytest.approx(9.80665 * 8556 / 8192, abs=0.05)
+    assert 9.0 < az < 10.6, 'az must be close to one real g, not a raw LSB count'
+    for value in (ax, ay, gx, gy, gz):
+        assert abs(value) < 1.0, 'small raw counts must scale to small physical values'
+
+
+def test_scale_imu_raw_is_a_pure_linear_scale():
+    # Sensitivity-constant math sanity check, independent of any specific capture —
+    # doubling the raw input must double the scaled output (pure proportional scale,
+    # no offset/bias correction applied here — offset calibration is a separate,
+    # still-open gap, see esp32_driver.py's own comment).
+    single = scale_imu_raw(ax=1, ay=0, az=0, gx=1, gy=0, gz=0)
+    double = scale_imu_raw(ax=2, ay=0, az=0, gx=2, gy=0, gz=0)
+    assert double[0] == pytest.approx(2 * single[0])
+    assert double[3] == pytest.approx(2 * single[3])
+
+
+def test_scale_imu_raw_zero_input_is_zero_output():
+    assert scale_imu_raw(ax=0, ay=0, az=0, gx=0, gy=0, gz=0) == (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
 
 def test_parse_orientation_valid():

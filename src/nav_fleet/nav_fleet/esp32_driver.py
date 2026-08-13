@@ -31,7 +31,8 @@ from sensor_msgs.msg import Imu
 
 from nav_fleet.esp32_protocol import (encode_enable_feedback_flow, encode_get_imu_data,
                                       encode_velocity_cmd, integrate_odometry,
-                                      parse_base_info, parse_feedback_line, parse_orientation)
+                                      parse_base_info, parse_feedback_line, parse_orientation,
+                                      scale_imu_raw)
 
 
 class Esp32Driver(Node):
@@ -227,23 +228,38 @@ class Esp32Driver(Node):
         msg = Imu()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'imu_link'
-        # ax/ay/az/gx/gy/gz units are NOT confirmed against real hardware — the
-        # firmware's own field names ("Raw" in the C++ struct names) are ambiguous
-        # about whether QMI8658.cpp's driver already scales to physical SI units or
-        # returns raw LSB counts. Passed through as-is; confirm on real hardware
-        # before trusting these as calibrated m/s^2 / rad/s (design spec's "Known
-        # implementation-time risks" pattern — flag, don't guess).
-        msg.linear_acceleration.x = info.ax
-        msg.linear_acceleration.y = info.ay
-        msg.linear_acceleration.z = info.az
-        msg.angular_velocity.x = info.gx
-        msg.angular_velocity.y = info.gy
-        msg.angular_velocity.z = info.gz
+        # ax/ay/az/gx/gy/gz are RAW QMI8658 LSB counts, NOT already-scaled physical
+        # units — confirmed the hard way, 2026-08-12/13: this used to pass them
+        # straight through (the "confirm on real hardware before trusting these"
+        # comment this replaced was correct to flag it, and real hardware said no).
+        # A live AMCL investigation found a STATIONARY robot's odom->base_footprint
+        # yaw jumping through the full +/-pi range every ~100ms, traced through
+        # ekf_node's gyro-rate-only motion-model input straight back to these
+        # unscaled counts (raw az~8556-8576 read as 8556-8576 rad/s^2 instead of
+        # ~9.8 m/s^2 — ~2 orders of magnitude too large). See
+        # esp32_protocol.scale_imu_raw's own docstring for the conversion, and its
+        # sensitivity constants' comments for the confidence level behind each axis
+        # (accel is real-physics-verified against gravity; gyro is a flagged,
+        # unverified best estimate pending a real calibration test).
+        ax, ay, az, gx, gy, gz = scale_imu_raw(info.ax, info.ay, info.az,
+                                               info.gx, info.gy, info.gz)
+        msg.linear_acceleration.x = ax
+        msg.linear_acceleration.y = ay
+        msg.linear_acceleration.z = az
+        msg.angular_velocity.x = gx
+        msg.angular_velocity.y = gy
+        msg.angular_velocity.z = gz
         # self._last_orientation (from a T:1002 reply, if one has arrived yet) is NOT
         # used to populate msg.orientation here — its quaternion axis convention is
         # unconfirmed against real hardware (see __init__'s comment). Real, scoped
         # follow-up, not silently dropped.
         msg.orientation_covariance[0] = -1.0  # orientation not populated from this message
+        # angular_velocity_covariance/linear_acceleration_covariance default to all-
+        # zero, which tells a consuming EKF "zero variance, trust this completely" —
+        # backwards for a sensor whose real noise has never been characterized. -1
+        # (REP-145's "not populated") is the honest state until it has been.
+        msg.angular_velocity_covariance[0] = -1.0
+        msg.linear_acceleration_covariance[0] = -1.0
         self.imu_pub.publish(msg)
 
 
