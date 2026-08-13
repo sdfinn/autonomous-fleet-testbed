@@ -265,18 +265,195 @@ completely unrelated to and untouched by this fix.
    all 3 legs, useful for a future HSV/A4 session as real before-photos of the exact
    false-positive object.
 
-**Next session, in order:** (1) decide whether to commit the diagnostic scripts
-somewhere durable or let them stay ad-hoc; (2) a real gyro calibration test (hand-rotated
-known angle) to replace the flagged best-estimate `GYRO_SENSITIVITY_LSB_PER_DPS`; (3)
-decide push timing for tonight's IMU fix — CI's `stage-4-hil` has never exercised this
-exact bare-metal driver code path (it always runs `use_sim_time=true`, so this whole bug
-class was structurally invisible to it, same standing gap the 2026-08-11 retrospective
-already flagged) so a push proves nothing new about THIS fix by itself; a real
-`scripts/robot_boot.sh` rerun (as done tonight) is the only thing that actually validates
-it; (4) A4 (real-camera HSV calibration) — now has real reproduced evidence backing it,
-worth prioritizing over further AMCL work; (5) A3 (real SLAM map) still untouched, still
-worth doing eventually, though tonight's fix means the map itself was never actually the
-problem it looked like at first.
+**LATER THE SAME NIGHT — with the AMCL/IMU fix confirmed, tried a genuinely
+uninterrupted navigation test and found a separate, PRE-EXISTING, deeper gap: this
+robot currently has NO working collision-avoidance or stuck-recovery mechanism at
+all. Confirmed from real config + real bag data, not guessed. NOT fixed tonight —
+full punch list below, for tomorrow.**
+
+Added a diagnostic-only `MISSION2_IGNORE_REACTIONS` env var (TDD,
+`nav_fleet/mission_runner.py`'s `_detection_cb` + `tests/test_mission_run.py`) so a
+navigate leg's ball-color reactions can be suppressed for testing — the goal was to
+isolate navigation/localization validation from the still-open HSV/A4 false-positive
+bug. **First deployment attempt was a real mistake, worth remembering the shape of:**
+scp'd the fix to the Jetson's NATIVE checkout only, but `mission_runner.py` actually
+runs from a SEPARATE, plain (non-symlink) copy baked into the Docker image at
+`/ros2_ws/install/nav_fleet/lib/python3.12/site-packages/nav_fleet/mission_runner.py`
+(confirmed by reading the Dockerfile directly — plain `colcon build`, deliberately no
+`--symlink-install`, so `build/` can be safely dropped after). The native-checkout scp
+never reached this. Result: reactions were NOT actually suppressed on the first live
+attempt — the robot autonomously drove a full, unsupervised, ~60-second
+`photo_then_home` return-navigation with nobody expecting it to. Very likely why it
+ended up near Mike's desk, prompting a real physical intervention ("picked it up
+because it was on my desk"). Fixed properly the second time — bind-mounted
+`mission_runner.py` over the CONTAINER's actual installed path, and this time verified
+it live (grepped the file from inside a throwaway container) before trusting it. Lesson
+generalized: any fix meant to reach code running inside the container needs to target
+where the container actually imports from, and needs to be verified live inside the
+container before being trusted — the native-checkout convenience that worked for the
+bare-metal driver layer earlier tonight does not carry over.
+
+Corrected test confirmed reactions genuinely suppressed (no reaction events fired) —
+but leg 1 and leg 2 BOTH still failed anyway, this time via Nav2's own
+`SimpleProgressChecker` (`movement_time_allowance: 60.0`) — 74.166s and 60.122s
+respectively, a completely different failure signature than tonight's earlier ~20-30ms
+cold-aborts. Mike watched leg 1 drive straight into a wall; repositioned mid-room, the
+next attempt just circled. Confirmed everything was safely torn down (`docker stop` +
+zero remaining processes) before investigating further.
+
+**Mike's own correction, and it was the right one:** don't reflexively blame the map.
+The identical map file lets sim/HIL pass this exact leg regularly (dashboard status at
+session start showed `mission2_no_ball: PASS` for both `hil_jetson` and `local`) — so
+the map's planning graph is provably geometrically valid on paper. Whatever's actually
+failing has to be specific to real-hardware execution, not a map-authoring error. This
+correction is what led to the real finding below, instead of a third wrong guess.
+
+**Root investigation, from real config and real recorded data, not more live testing:**
+- `nav2_params.yaml`'s `FollowPath.use_collision_detection: false` — documented,
+  deliberate, not new tonight. Its own comment: `true` DID correctly stop the robot
+  before a real collision once ("the Dresser corner"), but then left it in "a
+  guaranteed deadlock with no way out," because recovery is separately, already
+  broken.
+- `bt_navigator`'s BT tree is `navigate_simple.xml` — one-shot, no periodic replanning,
+  NO recovery behaviors at all — because `behavior_server`'s recovery (spin/backup)
+  has "a real, separate bug" ("Pose Goes Off Grid") that "fails 100% of the time," an
+  "unsolvable-in-one-session tangle" from a past session (see this file's own top-of-
+  `nav2_params.yaml` comment), deferred to `Release1Todo.md` (private planning doc,
+  outside this public snapshot).
+- `collision_monitor`'s only polygon (`FootprintApproach`) is deliberately shrunk to a
+  2cm x 2cm square — smaller than the lidar's own minimum range (0.12m) — a documented,
+  deliberate no-op. A properly-sized version was tried once and hit an IDENTICAL
+  deadlock signature, per its own comment: "one real command, then zero [motion] for
+  ~225s" (a silent self-lock — clamps `cmd_vel` toward zero as it nears something, and
+  since the robot then stops, the distance never changes, so the clamp never lifts).
+- **Conclusion: there is currently no working collision-avoidance or stuck-recovery
+  mechanism anywhere in this robot's real navigation stack.** Both available
+  mechanisms were independently tried, both caused a WORSE failure (a permanent,
+  silent deadlock) than the collision they existed to prevent, so both are
+  deliberately disabled. This predates tonight entirely — it was simply never exposed
+  before, because every previous real-hardware run got interrupted early (cold-aborts
+  from the AMCL bug, or false ball-detections) before ever running long enough to
+  reach it. Fixing both of those earlier tonight removed the accidental early exits
+  that had been masking this deeper gap.
+- Pulled both kept `failure_bag`s (real rosbag2/mcap — `/robot_001/scan` +
+  `/robot_001/cmd_vel` + `/robot_001/amcl_pose`) to the workstation for analysis
+  (`reports/failure_bags_analysis/`, not tracked by git). One
+  (`mission2_20260813_031705`, the actual wall-collision leg Mike watched) was lost —
+  empty, no metadata — because `docker stop` doesn't let rosbag2's recorder cleanly
+  finalize the mcap file the way SIGINT does. Real, separate lesson: prefer a graceful
+  SIGINT-based teardown over `docker stop` whenever a live recording might be in
+  flight. The other (`mission2_20260813_031206`, a DIFFERENT leg's stall — the
+  yellow-reaction's return-home timeout, from the earlier still-reaction-affected
+  attempt) was intact and analyzed directly (`rosbag2_py` + `rclpy.serialization`,
+  no existing tool for this in the repo, done ad-hoc):
+  - `/robot_001/cmd_vel`: one real ~2s burst of forward motion, then **exactly zero
+    linear velocity for the remaining ~73s**, with `angular.z` pegged at a constant
+    +0.160 rad/s for ~57 continuous seconds — the controller was trying to rotate in
+    place, not drive forward, almost the entire time.
+  - `/robot_001/amcl_pose`: only 4 messages, all within the first ~2 seconds — AMCL
+    never published again for the remaining ~73s, consistent with the robot genuinely
+    not making real physical progress (translation OR rotation) despite the sustained
+    rotation command.
+  - `/robot_001/scan`: "closest obstacle" readings throughout were 3-29cm — genuinely
+    very close — but the reported bearing only drifted slowly (46 deg -> 124 deg ->
+    150-178 deg) across the full ~75s window, far less angular sweep than 57 seconds
+    of genuinely free rotation at 0.16 rad/s would produce (several full 360 deg
+    sweeps). Strong evidence the robot was NOT actually freely rotating despite being
+    commanded to — consistent with being physically wedged against something real.
+- **New, separate, concrete finding: the scan self-occlusion mask may be too narrow.**
+  `scan_masker.py`'s `DEFAULT_MASK_SECTORS_DEG = [46.0, 123.0, 268.0, 277.0]` masks the
+  mast (46-123 deg) and WiFi antenna (268-277 deg). A cluster of the bag's
+  "closest obstacle" readings landed at 45.7-46.0 deg and 123.3-124.1 deg — right at
+  the mask sector's own edges — suggesting the mast's real angular extent is slightly
+  WIDER than the hardcoded boundary, letting its own edge leak through as a phantom
+  "obstacle right next to me." Does NOT explain the whole episode by itself (later
+  readings at 147-178 deg are outside either masked sector and don't correspond to any
+  known self-occlusion source, so likely a real external object) — but it's a real,
+  fixable, independently-testable bug on its own, separate from the collision/recovery
+  gap above.
+
+**Mike's punch list for tomorrow, recorded in full (his own framing, expanded with
+tonight's context so it's actionable cold):**
+
+1. **Mast/mask redesign — restrict the useful lidar FOV to the forward 180 deg instead
+   of precisely masking individual sectors.** Rather than maintaining narrow,
+   precisely-bounded exclusion sectors (fragile — tonight's finding shows the boundary
+   itself may already be wrong), just keep the front half of the scan (roughly bearing
+   195 deg - 15 deg, centered on `TRUE_FORWARD_BEARING_RAD` = 285 deg, confirmed in
+   `tools/smoke_test.py`) and discard everything behind the robot, where the mast
+   lives (46-123 deg is fully in that rear half — confirmed, a front-180 clip would
+   exclude it with no masking needed at all). **Real nuance to design around before
+   implementing, checked directly against the numbers:** the WiFi antenna (268-277 deg)
+   sits INSIDE that forward-180 window (only ~8-17 deg off true-forward), not behind
+   the robot — a naive front/back split would keep the antenna's self-occlusion and
+   still need its own small explicit exclusion. Also worth deciding deliberately, not
+   assuming: does discarding the rear 180 deg cost Nav2's local costmap anything it
+   actually needs (e.g. obstacles behind the robot during an in-place rotation or
+   backing up go completely undetected)? A real tradeoff to think through, not just
+   implement.
+2. **The fixes we think we need, roughly cheapest/most-isolated to hardest/most-
+   architectural:**
+   - Widen (or replace via #1) the scan self-occlusion mask so the mast's own edge
+     stops registering as a phantom obstacle.
+   - **The big one, and the real root gap:** collision-avoidance and stuck-recovery
+     are both currently non-functional by design. This needs real design work, not a
+     quick parameter flip — recall `use_collision_detection: true` alone already
+     caused a WORSE failure (permanent deadlock) once, because recovery doesn't work;
+     simply flipping it back on without fixing recovery first would very likely
+     reproduce that immediately. The actual fix is almost certainly: root-cause
+     `behavior_server`'s "Pose Goes Off Grid" bug (or replace/reimplement recovery some
+     other way), THEN re-enable collision detection, one capability at a time with a
+     real test at each step — exactly matching this file's own existing "Deferred Nav2
+     capability" guidance in `nav2_params.yaml`'s own top comment. Check
+     `Release1Todo.md` (private planning doc, outside this public snapshot) for
+     whatever context already exists there before starting fresh.
+   - HSV real-camera calibration (A4) — still open, still real (confirmed again
+     tonight, separately from all of this).
+   - Gyro scale calibration (from earlier tonight's IMU fix) — still an unverified
+     best estimate, needs a real hand-rotated calibration test.
+   - Real SLAM map (A3) — tonight's evidence doesn't prove this is the primary driver
+     of the wall/circling episode (sim proves the existing map's plan is geometrically
+     valid), but it's still worth doing eventually for real margin/precision, and
+     hasn't been ruled OUT as a contributing factor either — the real room's actual
+     furniture/clearances still aren't independently verified against the map.
+3. **Better debugging, and a real open question, both from Mike directly:**
+   - **We should know the lidar's actual distance-to-nearest-obstacle BEFORE the robot
+     ever moves, live, not reconstructed after the fact from a bag.** Tonight's
+     diagnosis relied entirely on forensic post-hoc analysis of a failure bag —
+     useful, but by definition too late to prevent anything. Concrete ask: a live,
+     prominent (not buried in DEBUG-level Nav2 log spam) readout of forward-arc lidar
+     range, ideally available before a navigate goal is even dispatched, so a human
+     watching (or an automated pre-flight check) can catch "the lidar says something
+     is 5cm away, that's suspicious" BEFORE commanding motion, not just after a
+     60-second stall.
+   - **Open question, not yet answered: does this same path's turning segment bring
+     the robot close to a wall in SIM too, and if so, why does sim handle it fine
+     while the real robot doesn't?** If sim's version of this maneuver also turns near
+     a wall at comparable clearance and it's a non-issue there, that's real evidence
+     pointing at something specific to real execution (localization precision during
+     motion, real wheel slip, real vs. simulated wall placement, controller tuning
+     only ever validated in sim) rather than the path itself being unsafe on paper. If
+     sim's turn happens with much MORE clearance than reality actually has, that would
+     point back toward a real map/room mismatch after all. Needs a real, direct
+     comparison — not assumed either way.
+
+**Next session, in order:** (1) Mike's 3-item punch list above — mast/mask redesign,
+the collision/recovery architecture gap (the real priority — everything else is
+secondary until the robot has a working way to not get permanently stuck), and the
+live lidar-distance debugging tool + the sim-vs-real turning-clearance comparison; (2)
+decide whether to commit tonight's ad-hoc diagnostic scripts (`robot_boot_debug.sh`,
+`odom_isolation_test.sh`, `amcl_tf_test.sh` + `tf_watch.py`, `raw_imu_test.sh`, the
+rosbag2_py bag-analysis one-off) somewhere durable, or let them stay scratch; (3) a
+real gyro calibration test (hand-rotated known angle) to replace the flagged
+best-estimate `GYRO_SENSITIVITY_LSB_PER_DPS`; (4) decide push timing for tonight's IMU
+fix — CI's `stage-4-hil` has never exercised this exact bare-metal driver code path
+(it always runs `use_sim_time=true`, so this whole bug class was structurally
+invisible to it, same standing gap the 2026-08-11 retrospective already flagged) so a
+push proves nothing new about THIS fix by itself; a real `scripts/robot_boot.sh` rerun
+(as done tonight) is the only thing that actually validates it; (5) A4 (real-camera
+HSV calibration) — now has real reproduced evidence backing it twice over; (6) A3
+(real SLAM map) — still open, not proven to be tonight's primary driver but not ruled
+out as a contributing factor either.
 
 ## (superseded 2026-08-12) PREVIOUS NEXT SESSION — START HERE (2026-08-11 — drivers-bare-metal-boot-fix DONE and
 PUSHED, first CI run's stage-4-hil failure fixed at the root cause and re-pushed
