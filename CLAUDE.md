@@ -375,22 +375,27 @@ correction is what led to the real finding below, instead of a third wrong guess
 **Mike's punch list for tomorrow, recorded in full (his own framing, expanded with
 tonight's context so it's actionable cold):**
 
-1. **Mast/mask redesign — restrict the useful lidar FOV to the forward 180 deg instead
-   of precisely masking individual sectors.** Rather than maintaining narrow,
-   precisely-bounded exclusion sectors (fragile — tonight's finding shows the boundary
-   itself may already be wrong), just keep the front half of the scan (roughly bearing
-   195 deg - 15 deg, centered on `TRUE_FORWARD_BEARING_RAD` = 285 deg, confirmed in
-   `tools/smoke_test.py`) and discard everything behind the robot, where the mast
-   lives (46-123 deg is fully in that rear half — confirmed, a front-180 clip would
-   exclude it with no masking needed at all). **Real nuance to design around before
-   implementing, checked directly against the numbers:** the WiFi antenna (268-277 deg)
-   sits INSIDE that forward-180 window (only ~8-17 deg off true-forward), not behind
-   the robot — a naive front/back split would keep the antenna's self-occlusion and
-   still need its own small explicit exclusion. Also worth deciding deliberately, not
-   assuming: does discarding the rear 180 deg cost Nav2's local costmap anything it
-   actually needs (e.g. obstacles behind the robot during an in-place rotation or
-   backing up go completely undetected)? A real tradeoff to think through, not just
-   implement.
+1. **Mast/mask redesign — CONFIRMED plan: restrict the useful lidar FOV to the
+   forward 180 deg (robot-relative bearing -90 deg to +90 deg around
+   `TRUE_FORWARD_BEARING_RAD` = 285 deg, i.e. raw bearing [195 deg, 360 deg) union
+   [0 deg, 15 deg)) instead of maintaining narrow, precisely-bounded per-object
+   exclusion sectors.** Mike's call, and the numbers support it cleanly: the mast
+   (46-123 deg, confirmed opposite-of-forward, ~160 deg off centerline) is fully in
+   the rear half, no masking needed once this lands. The WiFi antenna is physically
+   at the back of the robot too (off to one side of the mast, per Mike directly —
+   not literally behind the mast, but still rear-hemisphere) — this contradicts its
+   CURRENTLY RECORDED sector (268-277 deg, which computes to only ~12.5 deg off
+   dead-ahead-forward, i.e. essentially in front) — so that recorded value is stale
+   or wrong, not a sign the front-180 design has a gap. **First concrete step, a
+   quick confirmation not an open design question:** re-measure the antenna's real
+   bearing the same way the mast's was originally confirmed (marker at a known real
+   position, read back the lidar's own reported bearing for it) — expected to land
+   somewhere in the rear hemisphere, at which point the front-180 restriction covers
+   both objects with zero per-object special-casing, exactly as designed. Also worth
+   deciding deliberately, not assuming, while implementing: does discarding the rear
+   180 deg cost Nav2's local costmap anything it actually needs (e.g. obstacles
+   behind the robot during an in-place rotation or backing up go completely
+   undetected)? A real tradeoff to think through, not just implement.
 2. **The fixes we think we need, roughly cheapest/most-isolated to hardest/most-
    architectural:**
    - Widen (or replace via #1) the scan self-occlusion mask so the mast's own edge
