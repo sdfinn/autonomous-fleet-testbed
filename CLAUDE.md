@@ -98,7 +98,187 @@ fail again). Treat as functionally resolved for now; the concrete follow-up
 two paragraphs up (extend the pre-flight orphan sweep habit to the
 container-mode/CI HIL path) is the real preventive fix still worth doing.
 
-## NEXT SESSION — START HERE (2026-08-11 — drivers-bare-metal-boot-fix DONE and
+## NEXT SESSION — START HERE (2026-08-12 late night — first real `robot_boot.sh`
+production-path test found a genuine, serious AMCL localization bug; root-caused
+to raw/unscaled IMU data, fixed with TDD, deployed to the Jetson, and CONFIRMED
+FIXED live — HSV/A4 false-positive risk also newly confirmed real, still open)
+
+**Picks up exactly where the "REAL REGRESSION" section above left off** — Mike asked to
+try the real `scripts/robot_boot.sh` production path (never yet run end to end with the
+AMCL deadlock fix) "just to see what happens." Pre-flight was clean (Jetson reachable,
+native checkout at `551a973` matching `origin/main`, zero orphan processes, arm64 image
+for that sha already local, no leftover containers) — genuinely fair conditions for a
+first real test, not a contaminated one.
+
+**First run (unattended — Mike ran it himself before reading the readiness question)
+surfaced two real problems, both initially misdiagnosed, both eventually root-caused
+correctly:**
+1. Leg 1 (`no_ball`) failed 4/4 goal attempts with `COLD-START GOAL ABORT`
+   (~20-30ms each, near-zero displacement) — NOT the intermittent bt_navigator
+   ack-timeout race that classifier was built for (2026-07-18, always cleared by
+   attempt 2 historically); this persisted every time.
+2. Legs 2 and 3 both immediately (within ~20-40ms of first motion) fired a false
+   `red` ball reaction — no ball was ever placed. Photos pulled back
+   (`reports/robot_boot_20260813_review/`) showed a real red-painted object near
+   Mike's desk in the background — `ball_detector` is still running on the sim-tuned
+   `hsv_gazebo.yaml` stand-in (A4, real-camera HSV calibration, was already a flagged
+   open gap — this is the first real, reproduced evidence of the exact false-positive
+   risk that gap predicted, not fixed tonight, still open).
+
+**First (wrong) hypothesis for #1, corrected live by Mike, worth remembering the
+lesson:** pixel-checked `living_room.pgm` against `semantic_map.py`'s coordinates —
+found the robot's AMCL-reported pose sitting on occupied ("wall"/furniture) map cells
+near the mapped `bed` object, while `home_base` (the AMCL seed) and the goal were both
+free space, and reasoned the camera photo showing a bed/desk in frame "corroborated"
+the robot being physically near them. **Mike correctly rejected this** — he'd placed
+the robot exactly at the doorway both times, and a camera can see a bed across the room
+through an open doorway without being anywhere near it; seeing furniture in frame is
+not evidence of proximity. Lesson: don't over-read camera CONTENT as proof of camera
+POSITION.
+
+**Real root cause, found via a live, monitored, iteratively-narrowed debug arc (door to
+the other bedroom closed, red desk covered, Mike watching throughout, several live
+robot_boot-style reruns with a bind-mounted debug entrypoint — `log_level:=debug`
+re-added the same one-line way as the earlier REAL REGRESSION section, this time via a
+non-committed bind-mount override so no image rebuild/push was needed for iteration):**
+- A rerun's DEBUG-level AMCL log showed the robot's own tracked pose smoothly
+  "translating" ~4m across the room over ~8 seconds — BEFORE any navigate_to_pose goal
+  was ever dispatched (mission_runner was still on step 1, "reference photo at home").
+  **Mike confirmed directly: the robot never moved, not even a centimeter**, ruling out
+  real uncommanded motion (a serious safety bug) in favor of a pure software issue.
+- Isolated the odometry pipeline directly (driver layer + `ekf_node` only, no Nav2/AMCL,
+  no goals ever sent): raw `/robot_001/odom` and EKF-fused `/robot_001/odometry/filtered`
+  **position** fields both sat at exact `(0,0,0)` for a full 20s — pipeline looked clean.
+  This test had a real gap (only checked `pose.pose.position`, never orientation) that
+  wasn't caught until the next step.
+- A separate physical detour, not the cause: Mike found and moved two unidentified
+  "position sensor"-looking modules ("tucked them under the hood") mid-session — rerun
+  the same stationary AMCL/TF capture before and after touching them, byte-for-byte
+  identical chaotic-yaw pattern both times. Genuinely ruled out, not just assumed —
+  matches Mike's own guess that they're unused kit parts, nothing in this repo's code
+  references a second IMU/position sensor.
+- Wrote a small direct-rclpy `tf2_ros.Buffer`/`TransformListener` diagnostic (NOT
+  `ros2 run tf2_ros tf2_echo` — this project's own past investigation already documented
+  that hanging repeatedly; also had to fix it once live to subscribe to `/robot_001/tf`
+  instead of the unremapped default `/tf`, this project's real per-robot TF-namespacing
+  convention, confirmed against `src/nav_fleet/CLAUDE.md`) to watch `odom->base_footprint`
+  directly, full Nav2/AMCL running, no goal ever sent. **Found it: X/Y sat at exact
+  `0.0000` the entire 20s (matching the odometry test above), but YAW bounced randomly
+  through the FULL +/-pi range every ~100-200ms.** EKF's translation output was perfect;
+  its orientation output was garbage.
+- `config/ekf.yaml`'s own design (read directly, not assumed) explained exactly why this
+  is diagnostic gold: it deliberately fuses ONLY wheel-odom `vx` (translation) and ONLY
+  IMU gyro-rate `vyaw` (rotation) — no redundancy on either axis. X/Y being solid and yaw
+  being garbage points at exactly one thing: whatever feeds `vyaw` (the raw gyro
+  reading) is bad.
+- Captured raw `/robot_001/imu/data` directly (driver layer only, no EKF/Nav2 at all):
+  `angular_velocity` in small single-digit-to-low-teens counts, `linear_acceleration.z`
+  = **8556-8576** — not physically plausible SI values (8576 m/s^2 would be ~875g).
+  These are **raw, unscaled QMI8658 LSB register counts** being published directly as if
+  they were already rad/s and m/s^2. `esp32_driver.py`'s own existing comment had
+  already flagged this exact risk as unconfirmed since 2026-08-10 ("NOT confirmed
+  against real hardware... confirm before trusting these as calibrated") — tonight is
+  that confirmation, and the answer was no.
+- **Real, independent confirmation, not a one-off:** this project's own existing test
+  fixture (`tests/test_esp32_protocol.py`'s real-hardware-capture test, captured
+  2026-08-10) already had `az=8556` baked in from a real probe a month earlier — tonight's
+  live capture (`az=8576`) matches it almost exactly. A highly stable, repeatable raw
+  reading, not noise.
+
+**Fix, found + drafted + TDD'd this session (`src/nav_fleet/nav_fleet/esp32_protocol.py`,
+`esp32_driver.py`, `tests/test_esp32_protocol.py`, `tests/test_esp32_driver.py` — 3 new
+tests + 2 updated, full local suite 548 passed, NOT yet committed anywhere — see "what's
+still open" below):**
+- New `scale_imu_raw()` in `esp32_protocol.py` converts raw LSB counts into real SI units
+  before they reach ROS. `esp32_driver._publish_imu` now calls it instead of assigning
+  raw counts straight into the `Imu` message.
+- `ACCEL_SENSITIVITY_LSB_PER_G = 8192.0` — HIGH confidence, cross-checked against real
+  physics, not trusted blindly from vendor source: found+fetched the real vendor firmware
+  (`waveshareteam/ugv_base_general`'s `QMI8658.cpp`) via web search — an automated read
+  claimed a DEFAULT of +/-16g, which the real captured data directly contradicts (would
+  mean the stationary robot reads 4.18g; only the +/-4g range's 8192 LSB/g gives a
+  plausible ~1.04-1.05g). Same vendor-doc-vs-real-runtime mismatch this exact protocol's
+  module docstring already documents happening twice before — trusted the physics, not
+  the doc, and said so in the code comment.
+- `GYRO_SENSITIVITY_LSB_PER_DPS = 16.0` — LOWER confidence, explicitly flagged as such in
+  the code: unlike accel, true angular velocity at rest is 0 regardless of scale, so
+  there's no physical constant in stationary data to cross-check against the way gravity
+  cross-checks accel. This is the vendor doc's own stated default; applying it to real
+  captured noise gives a plausible near-zero result but that's a much weaker check. Real
+  next step: a measured, hand-rotated known-angle calibration, mirroring
+  `spin_experiment.py`'s own methodology for the wheel-odom rotation-over-report fix
+  (`config/ekf.yaml`'s own header comment) — NOT done tonight.
+- Also fixed `angular_velocity_covariance[0]`/`linear_acceleration_covariance[0]`, which
+  were defaulting to all-zero (= "zero variance, trust this completely" to a consuming
+  EKF — backwards for an unscaled/uncharacterized sensor) — now `-1` (REP-145 "not
+  populated"), honest until real noise is characterized.
+
+**Deployed and CONFIRMED FIXED live, same session:** `esp32_driver.py`/
+`esp32_protocol.py` scp'd directly onto the Jetson's native checkout (this package
+builds `--symlink-install`, confirmed this takes effect immediately with no rebuild —
+verified live via a direct `python3 -c 'from nav_fleet.esp32_protocol import
+scale_imu_raw...'` import on the Jetson before re-testing). Reran the exact same
+stationary TF capture: **yaw held at exact `0.0000` for the full 20s** (was bouncing
+through the full +/-pi range every ~100-200ms before) — X/Y unchanged (already solid).
+AMCL's own `Num samples` debug line dropped from **167** forced updates in 20s (stuck at
+`max_particles`=2000, never converging) to **exactly 1** (the initial seed) — it
+correctly recognizes no real motion now and stops churning. Then closed the loop with a
+full production-path mission retest, robot repositioned exactly at the doorway (same
+bind-mounted-debug `robot_boot.sh` harness used all session): AMCL's reported pose is
+now **`(-1.276, 1.200)`/`(-1.276, 1.329)`** — right at `home_base`, matching real
+placement, versus the earlier run's ~4m-off `(0.27-0.32, 5.3-5.4)`. Leg 1's navigation
+succeeded normally this time — one ordinary ~0.3s controller-startup delay (well inside
+the existing `COLD_ABORT_WINDOW_S=2.0` tolerance), no retries needed, real velocity
+~0.1 m/s. **Mike directly observed the robot move a real, small, controlled ~4 inches
+forward before stopping** — the first genuine confirmed real motion of the whole
+investigation. All 3 legs still fired the same false `red` reaction as the first run
+(desk wasn't re-covered for this rerun) — confirms that risk is real and reproducible,
+completely unrelated to and untouched by this fix.
+
+**What's still open, as fact, not assumption:**
+1. **Nothing from tonight has been pushed anywhere.** The code fix is committed locally
+   on the workstation's `main` only (this commit). The Jetson's native checkout has the
+   two fixed files scp'd directly over the tracked versions — a DIRTY tree, not a commit
+   — matching this project's own established ad-hoc live-verification pattern (see the
+   `hil_stage.sh sync` self-healing fix, 2026-08-11/12 — a future `sync()` call will
+   `git reset --hard`/`git clean -fd` this away automatically, don't be surprised
+   finding it dirty next session).
+2. **Gyro scale factor is a flagged best estimate, not independently verified** — the
+   concrete follow-up (a real, measured, hand-rotated calibration test) is still open.
+3. **HSV real-camera calibration (A4) still doesn't exist** — `hsv_gazebo.yaml` is still
+   the running stand-in, and tonight gave it a REAL, reproduced false-positive case
+   (the desk's red paint), not just a theoretical risk.
+4. **Accel/gyro zero-offset (bias) calibration is a separate, still-open gap**, flagged
+   in the new code comments — tonight's fix is a pure proportional scale factor only, no
+   bias/offset correction attempted.
+5. Whether/when to push this fix, and whether the arm64 Docker image needs a rebuild for
+   it (the driver layer runs bare-metal — this fix never touches the container image
+   directly — but worth confirming deliberately, not assuming, before trusting CI's own
+   `stage-4-hil`/HIL path reflects it) — not decided, bring to Mike.
+6. Ad-hoc diagnostic scripts built tonight (`robot_boot_debug.sh`,
+   `odom_isolation_test.sh`, `amcl_tf_test.sh` + `tf_watch.py`, `raw_imu_test.sh`) live
+   only in `~/robot_boot_debug/` on the Jetson — genuinely useful, reusable diagnostic
+   tools, not part of the tracked repo. Worth deciding whether any belong in
+   `scripts/` properly, or should stay scratch.
+7. Photos from the closing-loop rerun: `reports/robot_boot_20260813_postfix/` on the
+   workstation (real checkout, not `/tmp`) — home-reference + reaction-red pairs for
+   all 3 legs, useful for a future HSV/A4 session as real before-photos of the exact
+   false-positive object.
+
+**Next session, in order:** (1) decide whether to commit the diagnostic scripts
+somewhere durable or let them stay ad-hoc; (2) a real gyro calibration test (hand-rotated
+known angle) to replace the flagged best-estimate `GYRO_SENSITIVITY_LSB_PER_DPS`; (3)
+decide push timing for tonight's IMU fix — CI's `stage-4-hil` has never exercised this
+exact bare-metal driver code path (it always runs `use_sim_time=true`, so this whole bug
+class was structurally invisible to it, same standing gap the 2026-08-11 retrospective
+already flagged) so a push proves nothing new about THIS fix by itself; a real
+`scripts/robot_boot.sh` rerun (as done tonight) is the only thing that actually validates
+it; (4) A4 (real-camera HSV calibration) — now has real reproduced evidence backing it,
+worth prioritizing over further AMCL work; (5) A3 (real SLAM map) still untouched, still
+worth doing eventually, though tonight's fix means the map itself was never actually the
+problem it looked like at first.
+
+## (superseded 2026-08-12) PREVIOUS NEXT SESSION — START HERE (2026-08-11 — drivers-bare-metal-boot-fix DONE and
 PUSHED, first CI run's stage-4-hil failure fixed at the root cause and re-pushed
 GREEN — the attended bench smoke test was then genuinely ATTEMPTED live (real
 terminal, real ball, Mike watching) and found 3 MORE real hardware bugs, all
