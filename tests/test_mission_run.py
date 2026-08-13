@@ -27,7 +27,7 @@ from PIL import Image as PILImage
 from nav_fleet import mission_runner as mission_runner_module
 from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.mission_runner import MissionRunner
-from nav_fleet.missions import MISSIONS
+from nav_fleet.missions import MISSIONS, REACTION_FRAMES
 from nav_fleet.semantic_map import SEMANTIC_MAP
 
 # Physical arrival tolerance for the ground-truth check: Nav2's xy_goal_tolerance (0.15)
@@ -217,6 +217,23 @@ def test_detection_cb_ignores_far_and_unwatched(runner):
 def test_detection_cb_inactive_outside_reactive_leg(runner):
     runner._watch = None
     runner._detection_cb(_detection_msg([('red_ball', 0.5)]))  # must not raise
+
+
+def test_detection_cb_ignores_all_when_env_flag_set(runner, monkeypatch):
+    # 2026-08-13: a real diagnostic need, not hypothetical — an unattended real-hardware
+    # run kept getting a navigate leg interrupted by a false-positive color detection
+    # (hsv_gazebo.yaml stand-in vs real camera/lighting, A4 still open), which made it
+    # impossible to test navigation/localization in isolation. This env-var escape hatch
+    # lets a diagnostic run ignore ball-color reactions entirely, matching a genuine
+    # no-ball leg's behavior, without touching the mission model
+    # (missions.py's reactions={'red': ..., 'yellow': ...} stays declared and armed —
+    # only the trigger-counting is skipped).
+    monkeypatch.setenv('MISSION2_IGNORE_REACTIONS', '1')
+    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'counts': {},
+                     'triggered': None}
+    for _ in range(REACTION_FRAMES + 5):  # well past the normal trigger threshold
+        runner._detection_cb(_detection_msg([('red_ball', 0.1)]))  # well within range
+    assert runner._watch['triggered'] is None
 
 
 def test_reaction_red_stops_and_photographs(runner, monkeypatch):

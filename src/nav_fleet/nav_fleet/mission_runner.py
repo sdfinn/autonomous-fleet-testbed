@@ -167,6 +167,16 @@ class MissionRunner(Node):
         lost glimpse resets the count with no timing heuristics needed."""
         if self._watch is None:
             return
+        # Diagnostic escape hatch (2026-08-13): a real-hardware run kept getting a
+        # navigate leg interrupted by a false-positive color detection (hsv_gazebo.yaml
+        # stand-in vs real camera/lighting, A4 still open), making it impossible to test
+        # navigation/localization in isolation from that separate, unrelated bug.
+        # Ignores every detection while active — matches a genuine no-ball leg's
+        # behavior — without touching the mission model itself (missions.py's declared
+        # reactions stay armed; only the trigger-counting below is skipped). Not meant
+        # for a real judged/self-reported run — diagnostic use only.
+        if os.environ.get('MISSION2_IGNORE_REACTIONS'):
+            return
         w = self._watch
         in_range = set()
         for det in msg.detections:
