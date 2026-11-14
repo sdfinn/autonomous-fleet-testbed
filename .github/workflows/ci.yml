@@ -117,7 +117,9 @@ jobs:
           path: reports/traceability_latest.json
 
   stage-1-quality:
-    runs-on: ubuntu-latest
+    # Pinned to 24.04 (noble): ROS 2 Jazzy's apt repo only publishes for noble, and
+    # ubuntu-latest moved to 26.04 by 2026-11, breaking the ament-* lint installs.
+    runs-on: ubuntu-24.04
     needs: stage-0-requirements
     steps:
       - uses: actions/checkout@v4
