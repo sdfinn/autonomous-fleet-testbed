@@ -39,11 +39,12 @@ charger), Jetson runner re-registered, stage-1 pinned to `ubuntu-24.04` (hosted
 telemetry DB (backup kept). Run `43654099360`: all stages green and **all HIL legs
 PASS**, but stage-4 was **cancelled** — the post-mission Nav2-log scp went over WiFi
 (`discover()` prefers `jetson.local` mDNS, now the WiFi IP) and pulled ~367 MB of
-August DEBUG logs. **First thing next session:** get Mike's OK for the proposed fixes
-in the notes (prefer `10.42.0.x` in `discover()`, fetch only newest log + step
-timeout, move old logs off the Jetson), kill the orphaned CI Gazebo stack on the
-workstation if still running (`pgrep -fa "gz sim|parameter_bridge|robot_state_pub"`),
-push, re-run. Also: intermittent stage-2 near-goal stall (19 cm short, passed on
+August DEBUG logs. **First thing next session (agreed with Mike 2026-11-14):**
+(1) echo the session's lessons learned WITH their code snippets (from the notes);
+(2) **Mike makes the stage-4 fix edits himself** — point him to the lines
+(`scripts/hil_stage.sh:121-126`, `.github/workflows/ci.yml:668-675`), explain, review
+his diff; don't type the change for him. Then move the old logs off the Jetson,
+commit, ask before push, re-run. Orphaned CI Gazebo stack was killed at close. Also: intermittent stage-2 near-goal stall (19 cm short, passed on
 re-run) is real and unfixed.
 
 **Where things stand:** the real physical robot (Waveshare UGV + Jetson Orin Nano)
