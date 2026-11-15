@@ -13,6 +13,12 @@ the durable rules. When a rule below says "see history," grep that file for its
 keyword. Keep this file under ~40k chars: when a session's write-up is done, append the
 long version to the history file and leave a short summary here.
 
+**Session notes (since 2026-11-14, Mike — mirrors synthetic-fleet):** every session
+closes with `docs/sessions/YYYY-MM-DD.md` — each item written as issue → how found →
+fix (code excerpt + file:line) → verified → lesson, plus an "Open at close" / "Next"
+list and a "Learning — guided reading" section (file + line ranges, what to notice, a
+small exercise). At the START of a session, offer to re-show the latest one.
+
 **Releases relabeled 2026-07-17: numbers now = execution order.** The agentic &
 alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean today's
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
@@ -25,6 +31,20 @@ AMCL recovery params — directly relevant to this repo's open collision/recover
 below; read those commits before designing that fix.
 
 ## Current status — START HERE (last real work 2026-08-12/13, resumed 2026-11-14)
+
+**2026-11-14 session** (full notes: `docs/sessions/2026-11-14.md`): robot re-powered
+(it had been charged with the Jetson's 19 V brick — robot needs its own 12.6 V
+charger), Jetson runner re-registered, stage-1 pinned to `ubuntu-24.04` (hosted
+`ubuntu-latest` = 26.04 has no Jazzy apt), 79 synthetic-fleet rows removed from the
+telemetry DB (backup kept). Run `43654099360`: all stages green and **all HIL legs
+PASS**, but stage-4 was **cancelled** — the post-mission Nav2-log scp went over WiFi
+(`discover()` prefers `jetson.local` mDNS, now the WiFi IP) and pulled ~367 MB of
+August DEBUG logs. **First thing next session:** get Mike's OK for the proposed fixes
+in the notes (prefer `10.42.0.x` in `discover()`, fetch only newest log + step
+timeout, move old logs off the Jetson), kill the orphaned CI Gazebo stack on the
+workstation if still running (`pgrep -fa "gz sim|parameter_bridge|robot_state_pub"`),
+push, re-run. Also: intermittent stage-2 near-goal stall (19 cm short, passed on
+re-run) is real and unfixed.
 
 **Where things stand:** the real physical robot (Waveshare UGV + Jetson Orin Nano)
 is mid bring-up. Full sim + HIL CI pipeline is green. The real-robot production path
@@ -62,10 +82,8 @@ working collision avoidance or stuck recovery.
   123.3-124.1° — right at the mast mask edges (`scan_masker.py`
   `DEFAULT_MASK_SECTORS_DEG = [46, 123, 268, 277]`).
 
-**Repo state at resume:** `main` had 6 commits ahead of `origin/main` (IMU fix,
-`MISSION2_IGNORE_REACTIONS`, docs) — not pushed. The Jetson's native checkout has the
-fixed `esp32_driver.py`/`esp32_protocol.py` scp'd over tracked files (dirty tree; the
-next `hil_stage.sh sync` will reset it — expected). Ad-hoc diagnostic scripts
+**Repo state:** the August IMU fix / `MISSION2_IGNORE_REACTIONS` commits were pushed
+2026-11-14; the Jetson's checkout was reset to `15f9371` by that day's CI sync. Ad-hoc diagnostic scripts
 (`robot_boot_debug.sh`, `odom_isolation_test.sh`, `amcl_tf_test.sh` + `tf_watch.py`,
 `raw_imu_test.sh`) live only in `~/robot_boot_debug/` on the Jetson. Failure bags +
 photos are in `reports/` on the workstation (untracked).
