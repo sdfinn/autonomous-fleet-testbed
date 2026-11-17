@@ -199,3 +199,79 @@ def test_integrate_odometry_quarter_circle_from_90deg_heading():
                                    track_width=0.172, dt=1.0)
     assert x == pytest.approx(0.0, abs=1e-9)
     assert y == pytest.approx(0.1)
+
+
+# --- chassis type (T:602 query / stored T:900 line) — real-robot root cause, 2026-11-16
+
+def test_encode_boot_mission_info():
+    from nav_fleet.esp32_protocol import encode_boot_mission_info
+    assert encode_boot_mission_info() == {'T': 602}
+
+
+def test_parse_chassis_main_type_real_hardware_capture():
+    """Lines captured verbatim from this robot's controller, 2026-11-16: the first is
+    what it had stored (UGV Beast on a UGV Rover), the second after the fix."""
+    from nav_fleet.esp32_protocol import parse_chassis_main_type
+    assert parse_chassis_main_type('[StepNum: 1 ] - {"T":900,"main":3,"module":0}') == 3
+    assert parse_chassis_main_type('[StepNum: 1 ] - {"T":900,"main":2,"module":0}') == 2
+    assert parse_chassis_main_type('[lineNum: 2 ] - {"T": 900, "main": 2, "module": 2}') == 2
+
+
+def test_parse_chassis_main_type_ignores_other_lines():
+    from nav_fleet.esp32_protocol import parse_chassis_main_type
+    assert parse_chassis_main_type('{"T":1001,"L":0,"R":0,"odl":-129}') is None
+    assert parse_chassis_main_type('reading file: [boot] starts:') is None
+    assert parse_chassis_main_type('') is None
+
+
+# --- GyroBiasEstimator — resting gyro drift, measured 0.26 deg/s on z, 2026-11-16 ---
+
+def _feed(est, n, sample, stationary=True):
+    out = None
+    for _ in range(n):
+        out = est.update(*sample, stationary=stationary)
+    return out
+
+
+def test_gyro_bias_is_zero_until_a_full_quiet_window_has_been_seen():
+    from nav_fleet.esp32_protocol import GyroBiasEstimator
+    est = GyroBiasEstimator(window=40)
+    assert _feed(est, 39, (0.001, 0.018, 0.0045)) == (0.0, 0.0, 0.0)
+
+
+def test_gyro_bias_converges_to_the_resting_offset():
+    from nav_fleet.esp32_protocol import GyroBiasEstimator
+    est = GyroBiasEstimator(window=40)
+    bx, by, bz = _feed(est, 40, (-0.0028, 0.0182, 0.0046))   # today's measured offsets
+    assert bx == pytest.approx(-0.0028)
+    assert by == pytest.approx(0.0182)
+    assert bz == pytest.approx(0.0046)
+
+
+def test_gyro_bias_ignores_samples_while_the_robot_is_driving():
+    from nav_fleet.esp32_protocol import GyroBiasEstimator
+    est = GyroBiasEstimator(window=40)
+    _feed(est, 40, (0.0, 0.0, 0.0046))
+    # A long real turn while driving must not be learned as "bias".
+    assert _feed(est, 200, (0.0, 0.0, 0.5), stationary=False)[2] == pytest.approx(0.0046)
+
+
+def test_gyro_bias_rejects_a_window_with_real_motion_in_it():
+    """Wheels stopped does not prove the robot is still: on 2026-11-16 it was turned
+    a full circle BY HAND with the wheels reporting zero. A window whose readings
+    spread more than max_spread (or sit far from zero) is thrown away."""
+    from nav_fleet.esp32_protocol import GyroBiasEstimator
+    est = GyroBiasEstimator(window=40)
+    _feed(est, 40, (0.0, 0.0, 0.0046))
+    for i in range(40):                       # hand turn: rate ramps 0 -> 1 rad/s
+        est.update(0.0, 0.0, i / 40.0, stationary=True)
+    assert est.bias[2] == pytest.approx(0.0046)
+    # ...and a steady hand turn (no spread, but far too fast to be drift) as well.
+    assert _feed(est, 80, (0.0, 0.0, 0.4))[2] == pytest.approx(0.0046)
+
+
+def test_gyro_bias_tracks_slow_change_window_by_window():
+    from nav_fleet.esp32_protocol import GyroBiasEstimator
+    est = GyroBiasEstimator(window=40)
+    _feed(est, 40, (0.0, 0.0, 0.0046))
+    assert _feed(est, 40, (0.0, 0.0, 0.0060))[2] == pytest.approx(0.0060)

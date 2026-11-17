@@ -53,3 +53,21 @@ def parse_mask_sectors(flat_degrees):
             f'mask_sectors_deg must have an even number of values (lo,hi pairs), '
             f'got {len(flat_degrees)}: {flat_degrees}')
     return [(flat_degrees[i], flat_degrees[i + 1]) for i in range(0, len(flat_degrees), 2)]
+
+
+def rotate_scan_frame(angle_min, angle_max, forward_bearing_deg):
+    """Returns (new_angle_min, new_angle_max) such that the reading at RAW bearing
+    `forward_bearing_deg` is published at angle 0 — i.e. the scan's angle 0 becomes
+    the ROBOT's forward, which is what its frame (lidar_link, zero rotation in the
+    URDF) already claims. Only the two header angles change; ranges keep their order.
+
+    Why: this unit's lidar is mounted rotated — true forward is raw bearing ~285deg
+    (measured 2026-08-10, object placed dead ahead). Publishing raw angles in a
+    zero-rotation frame made Nav2/AMCL/the costmaps see every wall 75deg away from
+    where it really was (found 2026-11-16 on a real run).
+
+    new_angle_min is wrapped into (-pi, pi]; the span is preserved exactly, so
+    new_angle_max may exceed pi (consumers compute angle_min + i*increment)."""
+    shifted = angle_min - math.radians(forward_bearing_deg)
+    new_min = math.atan2(math.sin(shifted), math.cos(shifted))
+    return new_min, new_min + (angle_max - angle_min)

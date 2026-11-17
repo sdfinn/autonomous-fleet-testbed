@@ -33,6 +33,7 @@ those exact captured lines as fixtures:
 import collections
 import json
 import math
+import re
 
 BaseInfo = collections.namedtuple(
     'BaseInfo', ['speed_l', 'speed_r', 'ax', 'ay', 'az', 'gx', 'gy', 'gz',
@@ -104,10 +105,73 @@ def scale_imu_raw(ax, ay, az, gx, gy, gz):
             gx * gyro_scale, gy * gyro_scale, gz * gyro_scale)
 
 
+class GyroBiasEstimator:
+    """Learns the gyro's resting offset while the robot sits still, so the driver can
+    subtract it. Pure logic, no ROS.
+
+    Why: on 2026-11-16 the stationary robot's gyro z read +0.0046 rad/s (0.26 deg/s),
+    which the heading filter integrated into 22 degrees of false turn in 90 s.
+
+    update() takes one scaled sample (rad/s) and whether the caller believes the
+    robot is stationary (wheels reporting zero, no drive command). Samples collect
+    into a window; when `window` of them are in hand, the window becomes the new bias
+    ONLY if it looks like a still robot: every axis spread (max - min) is within
+    `max_spread` and every axis mean within `max_bias`. That second test matters
+    because "wheels stopped" is not proof of stillness — the robot can be carried or
+    turned by hand. Any non-stationary sample discards the partial window.
+    Returns the current bias (0, 0, 0) until the first good window."""
+
+    def __init__(self, window=40, max_spread=0.05, max_bias=0.06):
+        self._window = window
+        self._max_spread = max_spread
+        self._max_bias = max_bias
+        self._samples = []
+        self.bias = (0.0, 0.0, 0.0)
+
+    def update(self, gx, gy, gz, stationary):
+        if not stationary:
+            self._samples = []
+            return self.bias
+        self._samples.append((gx, gy, gz))
+        if len(self._samples) >= self._window:
+            axes = list(zip(*self._samples))
+            means = tuple(sum(a) / len(a) for a in axes)
+            quiet = all(max(a) - min(a) <= self._max_spread for a in axes)
+            small = all(abs(m) <= self._max_bias for m in means)
+            if quiet and small:
+                self.bias = means
+            self._samples = []
+        return self.bias
+
+
 def encode_velocity_cmd(linear_x, angular_z):
     """CMD_ROS_CTRL (T:13) — documented in-source as (m/s, rad/s), a direct Twist
     mapping. The firmware does its own diff-drive -> L/R wheel-speed math."""
     return {"T": 13, "X": linear_x, "Z": angular_z}
+
+
+def encode_boot_mission_info():
+    """CMD_BOOT_MISSION_INFO (T:602) — asks the controller to print the commands it
+    runs at every power-up. The chassis type lives there as a stored T:900 line (see
+    parse_chassis_main_type). The reply is plain text lines, not a JSON message."""
+    return {"T": 602}
+
+
+_CHASSIS_LINE = re.compile(r'"T"\s*:\s*900\s*,\s*"main"\s*:\s*(\d+)')
+
+
+def parse_chassis_main_type(line):
+    """Returns the firmware's stored chassis "main" type (1 RaspRover, 2 UGV Rover,
+    3 UGV Beast — ugv_base_ros README / mm_settings()) if `line` contains a T:900
+    command, else None. Matches the T:602 reply text, e.g.
+    '[StepNum: 1 ] - {"T":900,"main":2,"module":0}'.
+
+    Why this matters (found 2026-11-16): this unit shipped with main=3 (tracked UGV
+    Beast) stored on a 6-wheel UGV Rover. In that state the firmware mis-scales its
+    own speed measurement by 2.53x (so the robot drives 2.5x faster than commanded and
+    reports odometry 2.5x short) and reverses motor direction."""
+    m = _CHASSIS_LINE.search(line)
+    return int(m.group(1)) if m else None
 
 
 def encode_enable_feedback_flow(enable):

@@ -294,7 +294,11 @@ def check_ball_correlation(node, ball_ops, known_distance_m=KNOWN_DISTANCE_M,
         forward_bearing_rad = 0.0
     else:
         ball_ops.place('yellow', known_distance_m)
-        forward_bearing_rad = TRUE_FORWARD_BEARING_RAD
+        # 0.0 since 2026-11-16: scan_masker now rotates the real scan so angle 0 is
+        # the robot's forward (forward_bearing_deg, default 285) before it reaches
+        # /robot_001/scan. Applying TRUE_FORWARD_BEARING_RAD here as well would
+        # correct twice and look 75deg the wrong way.
+        forward_bearing_rad = 0.0
 
     scan_state = {'min_range': None}
     det_state = {'yellow_range_m': None}

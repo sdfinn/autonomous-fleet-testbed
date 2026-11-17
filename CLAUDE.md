@@ -13,7 +13,7 @@ the durable rules. When a rule below says "see history," grep that file for its
 keyword. Keep this file under ~40k chars: when a session's write-up is done, append the
 long version to the history file and leave a short summary here.
 
-**Session notes (since 2026-11-14, Mike — mirrors synthetic-fleet):** every session
+**Session notes (since 2026-11-14, Mike — mirrors wayfarer):** every session
 closes with `docs/sessions/YYYY-MM-DD.md` — each item written as issue → how found →
 fix (code excerpt + file:line) → verified → lesson, plus an "Open at close" / "Next"
 list and a "Learning — guided reading" section (file + line ranges, what to notice, a
@@ -24,36 +24,60 @@ alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean 
 R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
 Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
 
-**Sister project:** `~/synthetic-fleet` (private, sim-only, Isaac Sim, "Project Luna")
+**Sister project:** `~/wayfarer` (private, sim-only, Isaac Sim, "Project Luna";
+named `synthetic-fleet` until 2026-11 — older docs/notes use that name)
 — a deliberate split from this repo with a two-way lessons-learned relationship. As of
 2026-09-09 it switched `bt_navigator` to `navigate_to_pose_recovery.xml` and tuned
 AMCL recovery params — directly relevant to this repo's open collision/recovery gap
 below; read those commits before designing that fix.
+**`~/wayfarer/docs/transfer/`** holds notes written there FOR this repo (sim findings
+that may apply to the Rover). `ls` it when debugging a nav/doorway/costmap/harness
+issue here; treat each as a sim-only hypothesis to verify against this repo's code.
+First note (2026-11-15, doorway): this repo's `tools/mission2_day.py`
+`_judge_and_log_leg` ignores the mission's own `ok` flag, so a failed navigate leg
+can still be judged PASS (verified true here 2026-11-16; not fixed).
 
-## Current status — START HERE (last real work 2026-08-12/13, resumed 2026-11-14)
+## Current status — START HERE (last real work 2026-11-16)
 
-**2026-11-14 session** (full notes: `docs/sessions/2026-11-14.md`): robot re-powered
-(it had been charged with the Jetson's 19 V brick — robot needs its own 12.6 V
-charger), Jetson runner re-registered, stage-1 pinned to `ubuntu-24.04` (hosted
-`ubuntu-latest` = 26.04 has no Jazzy apt), 79 synthetic-fleet rows removed from the
-telemetry DB (backup kept). Run `43654099360`: all stages green and **all HIL legs
-PASS**, but stage-4 was **cancelled** — the post-mission Nav2-log scp went over WiFi
-(`discover()` prefers `jetson.local` mDNS, now the WiFi IP) and pulled ~367 MB of
-August DEBUG logs. **First thing next session (agreed with Mike 2026-11-14):**
-(1) echo the session's lessons learned WITH their code snippets (from the notes);
-(2) **Mike makes the stage-4 fix edits himself** — point him to the lines
-(`scripts/hil_stage.sh:121-126`, `.github/workflows/ci.yml:668-675`), explain, review
-his diff; don't type the change for him. Then move the old logs off the Jetson,
-commit, ask before push, re-run. Orphaned CI Gazebo stack was killed at close. Also: intermittent stage-2 near-goal stall (19 cm short, passed on
-re-run) is real and unfixed.
+**2026-11-16 session** (full notes: `docs/sessions/2026-11-16.md`; previous:
+`docs/sessions/2026-11-14.md`). Stage-4 CI hang fixed and pushed (`a6a5da6`, run
+`43990188953` fully green). Then two real `robot_boot.sh` runs and a long bench session
+found four real-hardware causes behind "drives into a wall, then circles":
+1. **Motor controller had the wrong chassis type stored** (`{"T":900,"main":3}` = UGV
+   Beast on a 6-wheel UGV Rover): real speed 2.5x the command, odometry echoing the
+   command, motor direction reversed. Now `main:2` (saved on the ESP32; firmware is
+   `ugv_base_ros` 0.96, NOT `ugv_base_general`). The August driver sign flips were a
+   compensation for this and are removed.
+2. **EKF ignored the gyro** (`angular_velocity_covariance[0] = -1` means "ignore" to
+   `robot_localization`). Now 1e-4; resting gyro offset is learned and subtracted.
+3. **Lidar scan was published unrotated** (true front = raw 269 deg, not 285).
+   `scan_masker` now rotates it; the stale 268-277 "antenna" mask (dead ahead) is gone.
+4. **`MISSION2_IGNORE_REACTIONS` never reached the container** (`robot_boot.sh` now
+   passes it).
+Result: run 2 made one trip to the marker and back but stopped ~0.55 m from home (the
+pose estimate jumped right after "Reached the goal"); the second attempt started from
+there and hit the dresser. No bag was recorded for run 2, so that is undiagnosed.
+
+**UNCOMMITTED at close:** everything after `a6a5da6` (driver, scan, `robot_boot.sh`,
+tests, `CLAUDE.md`, session notes). The Jetson has the code copied by hand; any CI
+sync wipes it unless pushed first. Mike's rule: "commit and push everything" = all of it.
+
+**Next session, in order:** (1) commit/push, CI green; (2) make the bag recording
+automatic in `robot_boot.sh` and make Ctrl+C actually stop the mission (today it does
+NOT — the only stop is `docker rm -f robot_mission`); (3) re-run nav-only with a bag
+and diagnose the home error; (4) build the robot's own SLAM map (A3); (5) collision
+avoidance/recovery; (6) turn gain while driving. Front-right tyre came partly off its
+rim in run 1 — on-the-spot spins load it; check it before runs. Intermittent stage-2
+near-goal stall is still real and unfixed.
 
 **Where things stand:** the real physical robot (Waveshare UGV + Jetson Orin Nano)
 is mid bring-up. Full sim + HIL CI pipeline is green. The real-robot production path
 (`scripts/robot_boot.sh`: driver layer bare-metal + Nav2/EKF/ball_detector/
-mission_runner in the arm64 container) now boots, localizes, and drives — but has no
-working collision avoidance or stuck recovery.
+mission_runner in the arm64 container) now boots, localizes, and drives at true speed
+with real odometry and heading (since 2026-11-16) — but has no working collision
+avoidance or stuck recovery, and uses a borrowed map.
 
-**Last session (2026-08-12/13), in brief** (full detail: history, "first real
+**2026-08-12/13 session, in brief (several conclusions SUPERSEDED 2026-11-16 — see above)** (full detail: history, "first real
 `robot_boot.sh` production-path test"):
 - **AMCL localization bug — FIXED, live-confirmed.** `esp32_driver` was publishing raw
   QMI8658 LSB counts as if SI units; garbage gyro `vyaw` scrambled EKF yaw (X/Y were
@@ -80,8 +104,8 @@ working collision avoidance or stuck recovery.
   circled; Nav2 progress checker aborted legs at ~60-74s. The map is NOT the suspect
   (same map passes in sim/HIL — Mike's correction).
 - **Scan mask edge leak:** closest-obstacle readings clustered at 45.7-46.0° and
-  123.3-124.1° — right at the mast mask edges (`scan_masker.py`
-  `DEFAULT_MASK_SECTORS_DEG = [46, 123, 268, 277]`).
+  123.3-124.1° — right at the mast mask edges (`scan_masker.py`; the 268-277 sector
+  was removed 2026-11-16). Edge leak itself not re-checked.
 
 **Repo state:** the August IMU fix / `MISSION2_IGNORE_REACTIONS` commits were pushed
 2026-11-14; the Jetson's checkout was reset to `15f9371` by that day's CI sync. Ad-hoc diagnostic scripts
@@ -89,24 +113,21 @@ working collision avoidance or stuck recovery.
 `raw_imu_test.sh`) live only in `~/robot_boot_debug/` on the Jetson. Failure bags +
 photos are in `reports/` on the workstation (untracked).
 
-**Next, in order (Mike's punch list):**
-1. **Mast/mask redesign — confirmed plan:** restrict the lidar to the forward 180°
-   (robot-relative ±90° around `TRUE_FORWARD_BEARING_RAD` = 285° raw, i.e. raw
-   [195°, 360°) ∪ [0°, 15°)) instead of per-object sectors. First re-measure the WiFi
-   antenna's real bearing (marker at known position) — Mike says it's rear-mounted, so
-   its recorded 268-277° is likely stale. Decide deliberately whether losing the rear
-   180° costs the local costmap anything during rotate-in-place/backup.
+**Older punch list (August; items 1 and 5 updated 2026-11-16 — the order above takes precedence):**
+1. **Mast/mask: mostly resolved 2026-11-16** — true front re-measured (269 deg raw),
+   scan rotated, stale antenna sector removed. Still open: whether to restrict to the
+   forward 180 deg at all, and the mast-edge leak.
 2. **Collision avoidance + recovery (the real priority).** Root-cause
    `behavior_server`'s "Pose Goes Off Grid" (or replace recovery), THEN re-enable
    collision detection — one capability at a time, real test at each step. Don't just
    flip `use_collision_detection: true` (known deadlock). Check `planning/
-   Release1Todo.md` and synthetic-fleet's 2026-09-09 recovery commits first.
+   Release1Todo.md` and wayfarer's 2026-09-09 recovery commits first.
 3. **Live pre-motion lidar readout** — prominent forward-arc nearest-obstacle range
    before a goal is dispatched (human or automated pre-flight check), not forensic bag
    analysis after. Plus an open question: does sim's turn segment also pass close to
    a wall, and if so why does sim cope? Compare directly.
 4. Decide whether the Jetson's ad-hoc diagnostic scripts belong in `scripts/`.
-5. Gyro scale calibration (hand-rotated known angle, mirror `spin_experiment.py`).
+5. ~~Gyro scale calibration~~ DONE 2026-11-16 (verified by a 360 deg hand turn).
 6. Push timing: CI's `stage-4-hil` runs `use_sim_time=true` and never exercises the
    bare-metal driver path, so a push proves nothing about the IMU fix — only a real
    `robot_boot.sh` run does.
@@ -196,14 +217,19 @@ scripts/robot_boot.sh                # real production mission path
 - **HIL always runs `use_sim_time=true`** — it is structurally blind to the
   real-driver code path (frames, RSP, IMU scaling, sign conventions). Only a real
   `robot_boot.sh` / `hil_stage.sh smoke` run validates that path.
-- **Physical calibration facts for this unit** (verify date before trusting):
-  `linear.x` and `angular.z` are both inverted at the firmware — negated in
-  `esp32_driver._cmd_vel_cb`, T:1001 feedback negated in `_publish_odom`
-  (2026-08-11, direct visual; an earlier 2026-08-10 telemetry-inferred `angular.z`
-  finding was WRONG). Lidar true forward = raw bearing ~285° (`TRUE_FORWARD_BEARING_RAD`).
-  Mast occludes ~46-123° raw. Vendor lidar frame `base_laser` is rewritten to
-  `lidar_link` by `scan_masker`. Real footprint 0.253 × 0.231 m; `robot_radius: 0.24`.
-  Gimbal T:133: pan −=left/+=right, tilt −=down.
+- **Physical calibration facts for this unit** (bench-measured 2026-11-16 unless dated):
+  ESP32 firmware `ugv_base_ros` 0.96; chassis type MUST be `main:2` (UGV Rover) —
+  `esp32_driver` checks it at start (`T:602`) and refuses to drive otherwise; fix with
+  `{"T":900,"main":2,"module":0}` (persists in flash). With that set, +X is forward
+  and +Z is left: NO sign flips in the driver. Speed and odometry are true to ~5%.
+  Skid-steer scrub: real turn rate ~1/2.8 of wheel-implied (`angular_cmd_gain: 2.8`,
+  spins on the spot only, one floor). Gyro: 16 LSB/dps verified (364 deg for a 360 deg
+  hand turn), negative = right turn, resting offset ~0.26 deg/s removed in the driver.
+  Lidar true forward = raw bearing 269 deg (`scan_masker` `forward_bearing_deg`); mast
+  occludes 46-123 deg raw; nothing occludes dead ahead. The OAK camera the stack uses
+  is fixed to the chassis front (not on the pan-tilt). Vendor lidar frame `base_laser`
+  is rewritten to `lidar_link` by `scan_masker`. Real footprint 0.253 x 0.231 m;
+  `robot_radius: 0.24`. Gimbal T:133: pan -=left/+=right, tilt -=down.
 - **Per-robot TF is namespaced:** subscribe to `/robot_001/tf`, not `/tf`.
 - `local_costmap.global_frame: "odom"` is explicit; `nav2_only_launch.py` uses an
   `OpaqueFunction` to inject `use_sim_time` into the params YAML because
@@ -231,7 +257,7 @@ scripts/robot_boot.sh                # real production mission path
 
 **Process / workflow**
 - **Shared machine.** This workstation is the self-hosted CI runner AND a dev box
-  that may run `synthetic-fleet`'s Gazebo on the same `/robot_001` namespace. Before
+  that may run `wayfarer`'s Gazebo on the same `/robot_001` namespace. Before
   any local Gazebo/Nav2 run: `gh run list` (a push auto-starts CI here, whose sweep
   step pkills local sims) and `pgrep -fa "gz sim|robot_state_publisher"` checking
   the PROJECT PATH. Never kill another project's session unasked.

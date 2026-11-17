@@ -159,6 +159,13 @@ echo "=== [robot-boot] running ${IMAGE} (real-robot context, operator ball place
 # crashing but its detection accuracy is unproven until A4 happens.
 docker rm -f robot_mission 2>/dev/null || true
 mkdir -p "$REPO/reports"
+# Navigation-only diagnostic runs (2026-11-16): the container only sees env vars
+# passed with -e, so exporting MISSION2_IGNORE_REACTIONS in the calling shell did
+# nothing before this line existed. Usage:  MISSION2_IGNORE_REACTIONS=1 scripts/robot_boot.sh
+# Unset (the normal case, incl. systemd boot) adds no argument at all.
+if [ -n "${MISSION2_IGNORE_REACTIONS:-}" ]; then
+  echo "=== [robot-boot] MISSION2_IGNORE_REACTIONS set — ball reactions SUPPRESSED (navigation-only diagnostic run) ==="
+fi
 docker run --rm --name robot_mission --network host --ipc host \
   -v "$REPO/reports:/ros2_ws/reports" \
   -v "$HOME/fleet-ci-data:/root/fleet-ci-data" \
@@ -168,5 +175,6 @@ docker run --rm --name robot_mission --network host --ipc host \
   -e MISSION2_SELF_REPORT=1 \
   -e RUNNER_TYPE=real_robot \
   -e ROBOT_MODE=mission \
+  ${MISSION2_IGNORE_REACTIONS:+-e MISSION2_IGNORE_REACTIONS=1} \
   "$IMAGE" bash /ros2_ws/scripts/container_entrypoint.sh \
   2>&1 | tee "$LOG_DIR/robot_boot_${TS}.log"

@@ -11,6 +11,7 @@ established treatment of thin hardware boundaries, e.g. JetsonExecutor's SSH lay
 these tests verify wiring and the pure logic reachable from callbacks, not real
 hardware.
 """
+import json
 import math
 import time
 from unittest.mock import MagicMock, patch
@@ -22,7 +23,7 @@ from nav_msgs.msg import Odometry
 from rclpy.time import Time
 from sensor_msgs.msg import Imu
 
-from nav_fleet.esp32_driver import Esp32Driver
+from nav_fleet.esp32_driver import GYRO_VARIANCE_RAD2_S2, Esp32Driver
 
 
 @pytest.fixture(scope='module', autouse=True)
@@ -86,58 +87,90 @@ def test_cmd_vel_callback_sends_velocity_command():
         driver._cmd_vel_cb(msg)
         (sent_bytes,) = mock_ser.write.call_args.args
         assert b'"T": 13' in sent_bytes or b'"T":13' in sent_bytes
-        # Both fields are NEGATED before they reach the firmware -- see
-        # test_cmd_vel_negates_linear_and_angular_for_reversed_hardware below for why.
-        assert b'-0.2' in sent_bytes
-        assert b'-0.5' in sent_bytes
+        # No sign flips (see test_cmd_vel_sends_ros_signs_unchanged...). angular.z is
+        # multiplied by angular_cmd_gain (2.8): 0.5 -> 1.4.
+        sent = json.loads(sent_bytes)
+        assert sent['X'] == pytest.approx(0.2)
+        assert sent['Z'] == pytest.approx(0.5 * 2.8)
     finally:
         driver.destroy_node()
 
 
-def test_cmd_vel_negates_linear_and_angular_for_reversed_hardware():
-    """Real-hardware findings, 2026-08-11 (RealRobotStartup.md A2/A6 bench smoke
-    test), both confirmed live with Mike watching the physical robot:
+def test_cmd_vel_sends_ros_signs_unchanged_and_scales_turn_rate():
+    """+linear.x must reach the firmware as +X, and +angular.z as +Z.
 
-    linear.x: this specific unit physically drives BACKWARD when sent a positive
-    T:13 X value (ROS +linear.x commanded, robot visibly moved backward while
-    /robot_001/odom simultaneously reported FORWARD -- the firmware's own T:1001
-    wheel-speed feedback shares the same reversed sign convention as its setpoint
-    math -- see esp32_protocol.py's integrate_odometry docstring / _publish_odom's
-    own comment).
-
-    angular.z: a positive T:13 Z value physically turns the robot RIGHT, not LEFT
-    as REP-103 requires -- directly, repeatedly observed live. This CONTRADICTS an
-    earlier A2-session CLAUDE.md note claiming "negative angular.z = turn right"
-    was already confirmed correct on this hardware -- that earlier record is now
-    believed mistaken (an artifact of a since-not-reproducible telemetry-based
-    check, not this session's direct, repeated visual observation), not this one.
-
-    The vendor's own protocol convention (Waveshare UGV wiki, ugv_base_general
-    firmware) is unambiguous that +X=forward and +Z=CCW(left) -- this is a
-    wiring/assembly property of THIS specific unit (arrived 90% pre-assembled, no
-    wiring changed since), not a protocol misunderstanding. Fixed here (not in
-    esp32_protocol.py, which stays a hardware-quirk-free pure encode/decode module,
-    matching its own stated purity contract) by negating both fields before
-    encoding."""
+    From 2026-08-11 to 2026-11-16 this driver NEGATED both, believing this unit was
+    wired backwards. Root cause found 2026-11-16: the controller had chassis type
+    main=3 (tracked UGV Beast) stored on a 6-wheel UGV Rover, which reverses motor
+    direction and mis-scales speed 2.53x. With main=2 stored, bench-verified on the
+    real robot: +X drove it 0.281 m toward a wall (lidar) for a 0.30 m command, and
+    +Z turned it left (gyro positive). The turn rate is multiplied by
+    angular_cmd_gain to make up for skid-steer tyre scrub."""
     driver, mock_ser = _make_driver()
     try:
+        assert driver.get_parameter('angular_cmd_gain').value == 2.8
         mock_ser.write.reset_mock()
         msg = Twist()
         msg.linear.x = 0.15
         msg.angular.z = 0.3
         driver._cmd_vel_cb(msg)
-        (sent_bytes,) = mock_ser.write.call_args.args
-        assert b'-0.15' in sent_bytes  # a ROS +forward command sends firmware -X
-        assert b'-0.3' in sent_bytes   # a ROS +left-turn command sends firmware -Z
+        sent = json.loads(mock_ser.write.call_args.args[0])
+        assert sent['T'] == 13
+        assert sent['X'] == pytest.approx(0.15)
+        assert sent['Z'] == pytest.approx(0.3 * 2.8)
 
-        mock_ser.write.reset_mock()
         msg2 = Twist()
         msg2.linear.x = -0.15
         msg2.angular.z = -0.3
         driver._cmd_vel_cb(msg2)
-        (sent_bytes2,) = mock_ser.write.call_args.args
-        assert b'": 0.15' in sent_bytes2 or b'":0.15' in sent_bytes2  # and vice versa
-        assert b'": 0.3' in sent_bytes2 or b'":0.3' in sent_bytes2
+        sent2 = json.loads(mock_ser.write.call_args.args[0])
+        assert sent2['X'] == pytest.approx(-0.15)
+        assert sent2['Z'] == pytest.approx(-0.3 * 2.8)
+    finally:
+        driver.destroy_node()
+
+
+def test_startup_asks_controller_for_its_stored_chassis_type():
+    driver, mock_ser = _make_driver()
+    try:
+        sent = [json.loads(c.args[0]) for c in mock_ser.write.call_args_list]
+        assert {'T': 602} in sent
+        assert driver._chassis_ok is None        # nothing reported yet
+    finally:
+        driver.destroy_node()
+
+
+def test_wrong_chassis_type_blocks_all_motion():
+    """If the controller reports any chassis type but the expected one (2, UGV
+    Rover), the robot would run ~2.5x fast and possibly backwards (the real state of
+    this unit until 2026-11-16) — so every cmd_vel must become a zero command."""
+    driver, mock_ser = _make_driver()
+    try:
+        driver._check_chassis_line('[StepNum: 1 ] - {"T":900,"main":3,"module":0}')
+        assert driver._chassis_ok is False
+        mock_ser.write.reset_mock()
+        msg = Twist()
+        msg.linear.x = 0.3
+        msg.angular.z = 0.5
+        driver._cmd_vel_cb(msg)
+        sent = json.loads(mock_ser.write.call_args.args[0])
+        assert sent == {'T': 13, 'X': 0.0, 'Z': 0.0}
+    finally:
+        driver.destroy_node()
+
+
+def test_correct_chassis_type_allows_motion_and_unrelated_lines_are_ignored():
+    driver, mock_ser = _make_driver()
+    try:
+        driver._check_chassis_line('{"T":1001,"L":0,"R":0}')       # not a T:900 line
+        assert driver._chassis_ok is None
+        driver._check_chassis_line('[StepNum: 1 ] - {"T":900,"main":2,"module":0}')
+        assert driver._chassis_ok is True
+        mock_ser.write.reset_mock()
+        msg = Twist()
+        msg.linear.x = 0.1
+        driver._cmd_vel_cb(msg)
+        assert json.loads(mock_ser.write.call_args.args[0])['X'] == pytest.approx(0.1)
     finally:
         driver.destroy_node()
 
@@ -181,16 +214,8 @@ def test_publish_odom_integrates_and_publishes(qos_capture=None):
         # Non-speed fields are irrelevant to _publish_odom's own math (it only reads
         # speed_l/speed_r) — zeroed rather than omitted since BaseInfo's real shape
         # (corrected 2026-08-10) requires them.
-        # Real-hardware finding, 2026-08-11 (same session as the cmd_vel negation
-        # fix): this unit's wheel-speed FEEDBACK (T:1001 L/R) is ALSO sign-inverted
-        # relative to real physical motion -- confirmed live across several rounds
-        # of testing (full story in _publish_odom's own comment and _cmd_vel_cb's).
-        # Final, live-verified transform: uniform negation of both wheels, which
-        # only works out correctly once angular.z's OWN command-side sign is also
-        # fixed (an earlier CLAUDE.md record claiming this hardware's angular.z was
-        # already correct turned out to be mistaken). This test's expected values
-        # use the same uniform-negation transform _publish_odom applies, not the raw
-        # BaseInfo fields.
+        # Wheel speeds are used exactly as the controller reports them (no sign flip
+        # since 2026-11-16 — see _publish_odom's comment for the chassis-type story).
         info = BaseInfo(speed_l=0.1, speed_r=0.3, ax=0, ay=0, az=0, gx=0, gy=0, gz=0,
                         mx=0, my=0, mz=0, odl=0, odr=0, voltage=11.8)
 
@@ -223,19 +248,14 @@ def test_publish_odom_integrates_and_publishes(qos_capture=None):
         # computed independently from known inputs (x=y=yaw=0, dt=0.5s) — not
         # read back from driver internals, so a wiring bug (e.g. wrong dt sign,
         # dt never applied) would produce a real mismatch, not a vacuous pass.
-        # Inputs are uniformly NEGATED to match _publish_odom's own real-hardware
-        # correction (see BaseInfo construction above) — hand-verified independently
-        # (corrected_l=-info.speed_l=-0.1, corrected_r=-info.speed_r=-0.3,
-        # v=(corrected_l+corrected_r)/2=-0.2, omega=(corrected_r-corrected_l)/0.172=
-        # (-0.3-(-0.1))/0.172=-1.16279..., mid_yaw=omega*dt/2=-0.290698...,
-        # x=v*cos(mid_yaw)*dt=-0.0958044..., y=v*sin(mid_yaw)*dt=+0.0286621...
-        # (v AND sin(mid_yaw) are BOTH negative, so y comes out positive — verified
-        # by direct computation, not sign-flipped by eye), yaw=omega*dt=-0.5813953...).
+        # Hand-verified: v=(0.1+0.3)/2=0.2, omega=(0.3-0.1)/0.172=1.16279...,
+        # mid_yaw=omega*dt/2=0.290698..., x=v*cos(mid_yaw)*dt=0.0958044...,
+        # y=v*sin(mid_yaw)*dt=0.0286621..., yaw=omega*dt=0.5813953...
         expected_x, expected_y, expected_yaw = integrate_odometry(
-            0.0, 0.0, 0.0, -info.speed_l, -info.speed_r, driver._track_width, dt)
-        assert expected_x == pytest.approx(-0.09580441407640837)
+            0.0, 0.0, 0.0, info.speed_l, info.speed_r, driver._track_width, dt)
+        assert expected_x == pytest.approx(0.09580441407640837)
         assert expected_y == pytest.approx(0.028662069769576793)
-        assert expected_yaw == pytest.approx(-0.5813953488372093)
+        assert expected_yaw == pytest.approx(0.5813953488372093)
 
         assert driver._x == pytest.approx(expected_x)
         assert driver._y == pytest.approx(expected_y)
@@ -295,11 +315,51 @@ def test_publish_imu_scales_raw_accel_gyro_to_physical_units():
         assert msg.angular_velocity.y == pytest.approx(expected[4])
         assert msg.angular_velocity.z == pytest.approx(expected[5])
         assert msg.orientation_covariance[0] == -1.0  # not yet wired in — see driver comment
-        # Zero covariance means "perfect measurement, trust completely" to a
-        # consuming EKF — wrong for an unscaled/uncharacterized sensor. -1 (REP-145's
-        # "not populated") is honest until real noise is characterized.
-        assert msg.angular_velocity_covariance[0] == -1.0
+        # The gyro MUST carry a real, positive variance. robot_localization drops
+        # the whole angular velocity when angular_velocity_covariance[0] == -1
+        # ("Ignoring angular velocity..."), which froze the fused heading at 0 on
+        # the real robot (2026-08-12 .. 2026-11-16 — see the driver comment). Zero
+        # is wrong too ("perfect measurement"). Only the diagonal is populated.
+        cov = list(msg.angular_velocity_covariance)
+        assert cov[0] == cov[4] == cov[8] == GYRO_VARIANCE_RAD2_S2
+        assert GYRO_VARIANCE_RAD2_S2 > 0.0
+        assert all(c == 0.0 for i, c in enumerate(cov) if i not in (0, 4, 8))
+        # Accel is not fused by ekf.yaml and its noise is uncharacterized: -1 stays.
         assert msg.linear_acceleration_covariance[0] == -1.0
+    finally:
+        driver.destroy_subscription(sub)
+        driver.destroy_node()
+
+
+def test_publish_imu_subtracts_resting_gyro_offset_once_learned():
+    """Real robot, 2026-11-16: stationary gyro z read +0.26 deg/s, which the heading
+    filter turned into 22 deg of false rotation in 90 s. After ~2 s of stillness
+    (40 samples, wheels at zero, no command) the published rate must be ~0."""
+    driver, _ = _make_driver()
+    received = []
+    sub = driver.create_subscription(Imu, '/robot_001/imu/data',
+                                     lambda m: received.append(m), 50)
+    try:
+        from nav_fleet.esp32_protocol import BaseInfo, scale_imu_raw
+        info = BaseInfo(speed_l=0, speed_r=0, ax=0, ay=0, az=8192, gx=-3, gy=16, gz=4,
+                        mx=0, my=0, mz=0, odl=0, odr=0, voltage=11.1)
+        raw_gz = scale_imu_raw(0, 0, 8192, -3, 16, 4)[5]
+        assert raw_gz > 0.004                      # the offset is really there
+        driver._stopped = True                     # watchdog has zeroed the command
+        for _ in range(41):
+            driver._publish_imu(info)
+        deadline = time.monotonic() + 3.0
+        while len(received) < 41 and time.monotonic() < deadline:
+            rclpy.spin_once(driver, timeout_sec=0.2)
+        assert received[0].angular_velocity.z == pytest.approx(raw_gz)   # not learned yet
+        assert received[-1].angular_velocity.z == pytest.approx(0.0, abs=1e-9)
+        assert received[-1].angular_velocity.y == pytest.approx(0.0, abs=1e-9)
+
+        # While a drive command is active the offset is kept, not re-learned.
+        driver._stopped = False
+        moving = info._replace(speed_l=0.1, speed_r=0.1, gz=404)
+        driver._publish_imu(moving)
+        assert driver._gyro_bias.bias[2] == pytest.approx(raw_gz)
     finally:
         driver.destroy_subscription(sub)
         driver.destroy_node()

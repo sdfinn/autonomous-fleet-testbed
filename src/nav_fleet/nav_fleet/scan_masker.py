@@ -37,16 +37,33 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 
-from nav_fleet.scan_filter import mask_scan_values, parse_mask_sectors
+from nav_fleet.scan_filter import mask_scan_values, parse_mask_sectors, rotate_scan_frame
 
-# Confirmed live against the real Waveshare UGV-PT + ldlidar_ros2, 2026-08-10 (see
-# scan_filter.py's module docstring for how these were measured).
-DEFAULT_MASK_SECTORS_DEG = [46.0, 123.0, 268.0, 277.0]
+# RAW lidar bearings hidden from Nav2. 46-123 is the pan-tilt mast (confirmed live
+# 2026-08-10; see scan_filter.py's module docstring). A second sector, 268-277
+# ("WiFi antenna"), was REMOVED 2026-11-16: with a box 0.5 m in front of the robot the
+# unmasked scan showed clean box returns right through 268-277 (0.576-0.580 m, no near
+# occluder), and that strip is the robot's dead-ahead direction (true forward ~269) --
+# the mask was blinding the 9 degrees straight in front for nothing.
+DEFAULT_MASK_SECTORS_DEG = [46.0, 123.0]
 
 # Must match ugv_pt.urdf.xacro's real lidar link name (confirmed via grep, not
 # assumed) — NOT ldlidar_ros2's own hardcoded 'base_laser' scan frame_id. See the
 # module docstring above for the full story.
 DEFAULT_OUTPUT_FRAME_ID = 'lidar_link'
+
+# RAW lidar bearing of the robot's true forward. The published scan is rotated so
+# this bearing becomes angle 0 -- until 2026-11-16 nothing did that for Nav2, which
+# therefore saw the room turned (see scan_filter.rotate_scan_frame).
+# 269, measured 2026-11-16 on the bench: a flat box 0.5 m ahead, line-fitted
+# (2.7 mm rms), has its square-on direction at raw 269.9; the robot's own camera
+# photo shows that box square to the robot (bench_box.png), and correcting the box's
+# off-centre position by the camera gives ~267. Also consistent with the mast being
+# directly behind (centre 84.5 + 180 = 264.5). The earlier value, 285 (2026-08-10,
+# object placed by eye), was ~16 degrees off. Good to a few degrees; a long flat wall
+# with the robot squared against it would tighten it.
+# mask_sectors_deg above stay in RAW bearings and are applied BEFORE the rotation.
+DEFAULT_FORWARD_BEARING_DEG = 269.0
 
 
 class ScanMasker(Node):
@@ -57,6 +74,7 @@ class ScanMasker(Node):
         self.declare_parameter('output_topic', '/robot_001/scan')
         self.declare_parameter('mask_sectors_deg', DEFAULT_MASK_SECTORS_DEG)
         self.declare_parameter('output_frame_id', DEFAULT_OUTPUT_FRAME_ID)
+        self.declare_parameter('forward_bearing_deg', DEFAULT_FORWARD_BEARING_DEG)
 
         output_topic = self.get_parameter('output_topic').value
         self.pub = self.create_publisher(LaserScan, output_topic, 10)
@@ -66,7 +84,8 @@ class ScanMasker(Node):
         self.get_logger().info(
             f"scan_masker up — {input_topic} -> {output_topic}, "
             f"mask_sectors_deg={list(self.get_parameter('mask_sectors_deg').value)}, "
-            f"output_frame_id={self.get_parameter('output_frame_id').value}")
+            f"output_frame_id={self.get_parameter('output_frame_id').value}, "
+            f"forward_bearing_deg={self.get_parameter('forward_bearing_deg').value}")
 
     def _cb(self, msg):
         # Re-read the params each message (not cached at __init__) so a live
@@ -78,6 +97,10 @@ class ScanMasker(Node):
         if msg.intensities:
             msg.intensities = mask_scan_values(msg.intensities, msg.angle_min,
                                                msg.angle_increment, sectors_deg)
+        # Masking above used the RAW angles. Now rotate the header angles so angle 0
+        # is the robot's forward, matching what the frame_id below claims.
+        msg.angle_min, msg.angle_max = rotate_scan_frame(
+            msg.angle_min, msg.angle_max, self.get_parameter('forward_bearing_deg').value)
         # Rewrite the frame_id to match robot_state_publisher's real URDF link name —
         # see the module docstring for why the vendor driver's own 'base_laser' can't
         # be trusted to line up with the TF tree.
