@@ -20,7 +20,7 @@ simulation.
 second robot for real multi-robot coordination testing.
 
 **What's next:** the lessons from this project are seeding a follow-on effort
-(working name `synthetic-fleet`) that drops the physical-hardware tether entirely to
+that drops the physical-hardware tether entirely to
 explore large-scale synthetic fleet simulation and sim-to-real transfer — likely
 returning to NVIDIA's Isaac Sim/Isaac Lab ecosystem, whose GPU-parallelized,
 tensor-native training interface fits large-scale RL work in a way Gazebo doesn't.

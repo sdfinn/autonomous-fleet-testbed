@@ -3,7 +3,7 @@
 # Runs identically from a local shell and from the CI job — debug locally first (Tier-1 rule).
 #
 # Subcommands:
-#   discover          print the Jetson's current IP (mDNS first, ip-neigh fallback), verify SSH
+#   discover          print the Jetson's current IP (Ethernet ip-neigh first, mDNS fallback), verify SSH
 #   power-mode        set nvpmodel mode $POWER_MODE_ID on the Jetson and print it
 #   sync <sha>        fetch+checkout <sha> on the Jetson (no build — the checkout only identifies which commit is under test)
 #   run               HIL STACK GATE (Task 13b): clean STATE_DIR, then sim-up (workstation
@@ -120,11 +120,14 @@ real_power_mode_label() {
 
 discover() {
   local ip
-  ip=$(getent hosts jetson.local | awk '{print $1; exit}' || true)
+  # Ethernet neighbour first: every later ssh/scp uses this address, and once the
+  # Jetson is also on WiFi, jetson.local resolves to the WiFi IP (150-300 ms vs
+  # 0.17 ms on the cable) — that hung stage-4's log fetch in run 43654099360.
+  ip=$(ip neigh show dev enp6s0 | awk '$1 ~ /^10\.42\.0\./ && /lladdr/ {print $1; exit}' || true)
   if [ -z "$ip" ]; then
-    ip=$(ip neigh show dev enp6s0 | awk '$1 ~ /^10\.42\.0\./ && /lladdr/ {print $1; exit}' || true)
+    ip=$(getent hosts jetson.local | awk '{print $1; exit}' || true)
   fi
-  [ -n "$ip" ] || { echo "FATAL: cannot discover Jetson IP (mDNS and ip-neigh both empty — is it powered on and cabled?)" >&2; exit 1; }
+  [ -n "$ip" ] || { echo "FATAL: cannot discover Jetson IP (ip-neigh and mDNS both empty — is it powered on and cabled?)" >&2; exit 1; }
   ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${JETSON_USER}@${ip}" true \
     || { echo "FATAL: SSH to ${JETSON_USER}@${ip} failed" >&2; exit 1; }
   echo "$ip"

@@ -17,7 +17,7 @@ on:
 # a real full-pipeline run to confirm everything still works end-to-end post-rewrite.
 #
 # 2026-08-01: local dashboard showed FAIL rows (bedroom_nav drift, mission2_* variants)
-# from a run contended by a concurrent synthetic-fleet Gazebo session on this same
+# from a run contended by a concurrent sister-project Gazebo session on this same
 # machine. Machine re-verified clear (no stray gz sim/robot_state_publisher processes,
 # no in-flight CI). This comment forces a real full-pipeline run to confirm clean vs.
 # a genuine regression.
@@ -667,11 +667,19 @@ jobs:
 
       - name: Fetch Jetson Nav2 logs (the autopsy — MUST precede the artifact upload)
         if: always()
+        # `|| true` stops this step FAILING the job; only a timeout stops it HANGING
+        # it (run 43654099360: 15 min stuck here, teardown + evidence upload never ran).
+        timeout-minutes: 3
         run: |
           # The per-run Nav2 logs are now written directly into the container's reports/
           # bind-mount and land in the Jetson's ~/autonomous-fleet-testbed/reports/ with
           # a timestamp suffix. Best-effort: never fail the job.
-          scp -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JETSON_USER}@${JETSON_IP}:~/autonomous-fleet-testbed/reports/nav2_container_*.log /tmp/hil_stage/ || true
+          # Newest log only — the glob used to pull every old log still on the Jetson
+          # (root-owned + gitignored, so `hil_stage.sh sync` never cleans them).
+          LATEST=$(ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JETSON_USER}@${JETSON_IP} 'ls -t ~/autonomous-fleet-testbed/reports/nav2_container_*.log 2>/dev/null | head -1' || true)
+          if [ -n "$LATEST" ]; then
+            scp -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${JETSON_USER}@${JETSON_IP}:${LATEST}" /tmp/hil_stage/ || true
+          fi
           ls -la /tmp/hil_stage/nav2_container_*.log 2>/dev/null || echo "no Jetson nav2 logs fetched"
 
       - name: Ingest on-Jetson VLM canary result (real on-device inference, 2026-07-31)
