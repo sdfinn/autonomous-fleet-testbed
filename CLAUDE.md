@@ -78,6 +78,13 @@ proven on the robot.
 - Also: gyro offset now learned during teleop; `scripts/ensure_nav_fleet_built.sh`
   rebuilds the Jetson's bare-metal install when a new node has no launcher.
 
+**Repo state at close (2026-11-18):** code is `e563ad1`, pushed (CI run `44454375242`
+green, all stages incl. the Jetson); `70d7f9e` (docs, `[skip ci]`) pushed; the closing
+notes commit after it is LOCAL ONLY until Mike asks for a push. The Jetson's checkout
+and cached image are `e563ad1`. Robot left on its 12.6 V charger (pack was 9.17 V
+after the incident, 10.64 V 40 min later). Evidence for the whole day is under
+`reports/` on the workstation (gitignored).
+
 **Next session, in order:** (1) charge fully, re-seat tyres, compare the logged voltage
 with a multimeter; (2) **bench test wheels-up: `tools/bench_stop_on_silence.py` -> PASS
 and `--legacy-t13` -> FAIL**, then a real `robot_boot.sh` start on the stand with
@@ -443,3 +450,5 @@ scripts/robot_boot.sh                # real production mission path
 - Isaac Sim gotchas — `scripts/CLAUDE.md`
 - Isaac GUI nav-test procedure — `isaac-gui-nav-test` skill
 - Jetson hardware gotchas — `jetson-hardware-notes` skill
+- Bringing up ANY physical robot (the portable lessons from this one) —
+  `bringing-up-a-robot` skill, user-level (`~/.claude/skills/`), not in this repo
