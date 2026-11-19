@@ -231,6 +231,35 @@ until [ "$count_esp32" -ge 1 ] && [ "$count_lidar" -ge 1 ] \
 done
 echo "=== [robot-boot] driver layer up ==="
 
+# --- Battery pre-flight (2026-11-18) ---
+# Two sessions in a row ended on a flat pack; the second time the Jetson lost power in
+# the middle of a spin. esp32_driver now logs one line a few seconds after start-up:
+#   esp32_driver: battery 11.82 V (ok|low|critical)
+# No mission starts unless that line says "ok". A missing line is treated the same as
+# a bad one (fail closed). ROBOT_BOOT_IGNORE_BATTERY=1 overrides, for bench work on a
+# supply or a deliberate last short run.
+battery_line=""
+battery_deadline=$((SECONDS + 15))
+while [ -z "$battery_line" ] && (( SECONDS < battery_deadline )); do
+  battery_line=$(grep -oE 'esp32_driver: battery [0-9.]+ V \((ok|low|critical)\)' "$DRIVERS_LOG" 2>/dev/null | tail -n 1 || true)
+  [ -n "$battery_line" ] || sleep 1
+done
+if [ -n "$battery_line" ]; then
+  echo "=== [robot-boot] ${battery_line#esp32_driver: } ==="
+else
+  echo "=== [robot-boot] no battery reading from esp32_driver within 15s ===" >&2
+fi
+case "$battery_line" in
+  *"(ok)") ;;
+  *)
+    if [ -n "${ROBOT_BOOT_IGNORE_BATTERY:-}" ]; then
+      echo "=== [robot-boot] WARNING: ROBOT_BOOT_IGNORE_BATTERY set -- starting anyway ===" >&2
+    else
+      echo "FATAL: battery is not OK -- charge the pack (12.6 V charger), or set ROBOT_BOOT_IGNORE_BATTERY=1 to run anyway" >&2
+      exit 1
+    fi ;;
+esac
+
 # --- Nav2/EKF/ball_detector/mission_runner, containerized (unchanged) ---
 echo "=== [robot-boot] running ${IMAGE} (real-robot context, operator ball placement) ==="
 # RUNNER_TYPE=real_robot matches the convention every other real-robot telemetry row

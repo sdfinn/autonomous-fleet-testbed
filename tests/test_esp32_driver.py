@@ -22,6 +22,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.time import Time
 from sensor_msgs.msg import Imu
+from std_msgs.msg import Float32
 
 from nav_fleet.esp32_driver import GYRO_VARIANCE_RAD2_S2, Esp32Driver
 
@@ -86,18 +87,22 @@ def test_cmd_vel_callback_sends_velocity_command():
         msg.angular.z = 0.5
         driver._cmd_vel_cb(msg)
         (sent_bytes,) = mock_ser.write.call_args.args
-        assert b'"T": 13' in sent_bytes or b'"T":13' in sent_bytes
+        # Wheel speeds (T:1), not a twist (T:13): only T:1 re-arms the board's
+        # stop-on-silence timer (see test_motion_is_never_sent_as_t13...).
         # No sign flips (see test_cmd_vel_sends_ros_signs_unchanged...). angular.z is
-        # multiplied by angular_cmd_gain (2.8): 0.5 -> 1.4.
+        # multiplied by angular_cmd_gain (2.8): 0.5 -> 1.4 rad/s, which over the
+        # 0.172 m track is +-0.1204 m/s between the two sides.
         sent = json.loads(sent_bytes)
-        assert sent['X'] == pytest.approx(0.2)
-        assert sent['Z'] == pytest.approx(0.5 * 2.8)
+        assert sent['T'] == 1
+        assert sent['L'] == pytest.approx(0.2 - 1.4 * 0.172 / 2)
+        assert sent['R'] == pytest.approx(0.2 + 1.4 * 0.172 / 2)
     finally:
         driver.destroy_node()
 
 
 def test_cmd_vel_sends_ros_signs_unchanged_and_scales_turn_rate():
-    """+linear.x must reach the firmware as +X, and +angular.z as +Z.
+    """+linear.x must drive both sides forward, and +angular.z must make the RIGHT
+    side faster (a left turn) -- i.e. reach the firmware with ROS's own signs.
 
     From 2026-08-11 to 2026-11-16 this driver NEGATED both, believing this unit was
     wired backwards. Root cause found 2026-11-16: the controller had chassis type
@@ -115,17 +120,18 @@ def test_cmd_vel_sends_ros_signs_unchanged_and_scales_turn_rate():
         msg.angular.z = 0.3
         driver._cmd_vel_cb(msg)
         sent = json.loads(mock_ser.write.call_args.args[0])
-        assert sent['T'] == 13
-        assert sent['X'] == pytest.approx(0.15)
-        assert sent['Z'] == pytest.approx(0.3 * 2.8)
+        half = 0.3 * 2.8 * 0.172 / 2
+        assert sent['T'] == 1
+        assert (sent['L'] + sent['R']) / 2 == pytest.approx(0.15)      # forward speed
+        assert sent['R'] - sent['L'] == pytest.approx(2 * half)        # +Z: right faster
 
         msg2 = Twist()
         msg2.linear.x = -0.15
         msg2.angular.z = -0.3
         driver._cmd_vel_cb(msg2)
         sent2 = json.loads(mock_ser.write.call_args.args[0])
-        assert sent2['X'] == pytest.approx(-0.15)
-        assert sent2['Z'] == pytest.approx(-0.3 * 2.8)
+        assert (sent2['L'] + sent2['R']) / 2 == pytest.approx(-0.15)
+        assert sent2['R'] - sent2['L'] == pytest.approx(-2 * half)
     finally:
         driver.destroy_node()
 
@@ -154,7 +160,7 @@ def test_wrong_chassis_type_blocks_all_motion():
         msg.angular.z = 0.5
         driver._cmd_vel_cb(msg)
         sent = json.loads(mock_ser.write.call_args.args[0])
-        assert sent == {'T': 13, 'X': 0.0, 'Z': 0.0}
+        assert sent == {'T': 1, 'L': 0.0, 'R': 0.0}
     finally:
         driver.destroy_node()
 
@@ -170,7 +176,8 @@ def test_correct_chassis_type_allows_motion_and_unrelated_lines_are_ignored():
         msg = Twist()
         msg.linear.x = 0.1
         driver._cmd_vel_cb(msg)
-        assert json.loads(mock_ser.write.call_args.args[0])['X'] == pytest.approx(0.1)
+        sent = json.loads(mock_ser.write.call_args.args[0])
+        assert (sent['L'], sent['R']) == pytest.approx((0.1, 0.1))
     finally:
         driver.destroy_node()
 
@@ -182,7 +189,7 @@ def test_watchdog_sends_zero_velocity_after_timeout():
         mock_ser.write.reset_mock()
         driver._watchdog_cb()
         (sent_bytes,) = mock_ser.write.call_args.args
-        assert b'"X": 0.0' in sent_bytes or b'"X":0.0' in sent_bytes
+        assert json.loads(sent_bytes) == {'T': 1, 'L': 0.0, 'R': 0.0}
         assert driver._stopped is True
     finally:
         driver.destroy_node()
@@ -196,6 +203,111 @@ def test_watchdog_does_not_resend_once_already_stopped():
         mock_ser.write.reset_mock()
         driver._watchdog_cb()  # second tick, still stopped, still no new cmd_vel
         mock_ser.write.assert_not_called()
+    finally:
+        driver.destroy_node()
+
+
+def _sent_commands(mock_ser):
+    return [json.loads(call.args[0]) for call in mock_ser.write.call_args_list]
+
+
+def test_startup_sets_the_boards_own_stop_on_silence_timeout():
+    """The board's timer is the only stop that still works when the Jetson itself is
+    gone. It is not stored in flash, so it is set on every start-up."""
+    driver, mock_ser = _make_driver()
+    try:
+        assert driver.get_parameter('firmware_stop_ms').value == 500
+        assert {'T': 136, 'cmd': 500} in _sent_commands(mock_ser)
+    finally:
+        driver.destroy_node()
+
+
+def test_motion_is_never_sent_as_t13_which_does_not_arm_the_boards_stop_timer():
+    """2026-11-18: the Jetson lost power mid-spin and the robot kept spinning until
+    its power switch was thrown. In the firmware only T:1 (and T:11) refresh the
+    stop-on-silence timer; T:13, which this driver used, never does. Every motion
+    command -- a move, a stop, the watchdog's stop -- must be T:1."""
+    driver, mock_ser = _make_driver()
+    try:
+        mock_ser.write.reset_mock()
+        msg = Twist()
+        msg.linear.x = 0.2
+        msg.angular.z = -0.4
+        driver._cmd_vel_cb(msg)
+        driver._cmd_vel_cb(Twist())
+        driver._last_cmd_time -= 10.0
+        driver._watchdog_cb()
+        sent = _sent_commands(mock_ser)
+        assert [c['T'] for c in sent] == [1, 1, 1]
+        # the firmware tests is<float>() on both fields: 0 must go out as 0.0
+        assert b'"L": 0.0' in mock_ser.write.call_args.args[0]
+    finally:
+        driver.destroy_node()
+
+
+def _status(voltage_raw):
+    from nav_fleet.esp32_protocol import BaseInfo
+    return BaseInfo(speed_l=0, speed_r=0, ax=0, ay=0, az=8192, gx=0, gy=0, gz=0,
+                    mx=0, my=0, mz=0, odl=0, odr=0, voltage=voltage_raw)
+
+
+def test_battery_voltage_is_published_in_volts():
+    driver, _ = _make_driver()
+    received = []
+    sub = driver.create_subscription(Float32, '/robot_001/battery_voltage',
+                                     lambda m: received.append(m.data), 10)
+    try:
+        for _ in range(40):                          # 2 s of status lines -> 2 publishes
+            driver._on_battery_sample(1182)          # the board reports centivolts
+        deadline = time.monotonic() + 3.0
+        while len(received) < 2 and time.monotonic() < deadline:
+            rclpy.spin_once(driver, timeout_sec=0.2)
+        assert received == pytest.approx([11.82, 11.82])
+    finally:
+        driver.destroy_subscription(sub)
+        driver.destroy_node()
+
+
+def test_healthy_battery_allows_motion():
+    driver, mock_ser = _make_driver()
+    try:
+        for _ in range(60):
+            driver._on_battery_sample(1182)
+        assert driver._battery_state == 'ok'
+        mock_ser.write.reset_mock()
+        msg = Twist()
+        msg.linear.x = 0.2
+        driver._cmd_vel_cb(msg)
+        assert _sent_commands(mock_ser)[-1] == {'T': 1, 'L': 0.2, 'R': 0.2}
+    finally:
+        driver.destroy_node()
+
+
+def test_critical_battery_stops_the_robot_and_refuses_motion():
+    """9.17 V is what the pack read on 2026-11-18 after the Jetson had browned out
+    mid-run. Below the critical level the driver stops at once and turns every later
+    cmd_vel into a stop, rather than risk losing the Jetson with a command latched."""
+    driver, mock_ser = _make_driver()
+    try:
+        mock_ser.write.reset_mock()
+        for _ in range(60):
+            driver._on_battery_sample(917)
+        assert driver._battery_state == 'critical'
+        assert _sent_commands(mock_ser)[-1] == {'T': 1, 'L': 0.0, 'R': 0.0}   # stopped at once
+        msg = Twist()
+        msg.linear.x = 0.2
+        driver._cmd_vel_cb(msg)
+        assert _sent_commands(mock_ser)[-1] == {'T': 1, 'L': 0.0, 'R': 0.0}
+    finally:
+        driver.destroy_node()
+
+
+def test_a_brief_sag_under_load_is_not_a_critical_battery():
+    driver, mock_ser = _make_driver()
+    try:
+        for i in range(120):
+            driver._on_battery_sample(900 if i % 10 == 0 else 1120)   # dips to 9.0 V
+        assert driver._battery_state == 'ok'
     finally:
         driver.destroy_node()
 

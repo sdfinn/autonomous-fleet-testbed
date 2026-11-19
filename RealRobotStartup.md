@@ -564,49 +564,55 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
 
 ### A3. Build the real-room SLAM map
 
-- [ ] Joystick setup — pick one and note which for next time:
-  - [ ] **Plug the joystick into the Jetson** (USB dongle or Bluetooth), run
-    `teleop_twist_joy` locally on the robot. No laptop needed while driving — just
-    walk around with the controller.
-  - [ ] OR plug the joystick into the workstation, run `teleop_twist_joy` there,
-    commands travel over WiFi.
-- [ ] Start SLAM Toolbox on the Jetson:
+**Done 2026-11-18, and the procedure below replaces the original plan** (joystick +
+live SLAM Toolbox on the Jetson + RViz pose read-out). What changed and why:
+
+- **No joystick, nothing new on the Jetson.** `scripts/robot_map_drive.sh` starts only
+  the driver layer and a bag, then hands the terminal to a hold-to-move keyboard teleop
+  (`nav_fleet/key_teleop.py`).
+- **The map is built offline on the workstation** from that bag
+  (`scripts/build_map_from_bag.sh`). The drive never has to be repeated to try other
+  mapping settings.
+- **The map is NOT committed.** It is a floor plan of a real home and this repo is
+  public. It lives in `~/fleet-ci-data/maps/` on the Jetson; `robot_boot.sh` mounts it
+  into the container when it is there and warns loudly when it is not.
+- **No AMCL seed pose to measure.** The map is built so that the spot where the mapping
+  drive began IS the configured home pose (`nav2_params.yaml` `amcl.initial_pose`,
+  `semantic_map` `home_base`). So: start the mapping drive on the home spot, and start
+  every mission on that same spot. Nothing in `nav2_params.yaml` changes.
+
+Why this mattered: the borrowed `living_room.yaml` has an accurate bedroom but a
+made-up hallway, and its home pose is about 0.6 m from where the robot is really put
+down. That was the cause of the home errors on 2026-11-16 and 2026-11-18
+(`docs/sessions/2026-11-18.md`).
+
+Procedure (repeat whenever furniture moves enough to matter):
+
+- [X] Mark the home spot and heading on the floor (tape). Put the robot on it.
+- [X] Drive, from a workstation terminal (WiFi; unplug the Ethernet cable first):
   ```bash
-  source /opt/ros/jazzy/setup.bash
-  ros2 launch slam_toolbox online_async_launch.py use_sim_time:=false
+  ssh -t mike@jetson.local '~/autonomous-fleet-testbed/scripts/robot_map_drive.sh'
   ```
-- [ ] Drive the robot slowly around the room perimeter + past all furniture.
-- [ ] **Done when:** the map has no big unexplored gaps and the perimeter closes
-  cleanly (check in RViz if available, or by eye if the map image looks complete).
-- [ ] Save the map:
+  Wait for `drivers up -- the keyboard now drives the robot`. Hold `w`/`s` (forward/
+  back), `a`/`d` (spin), `q`/`e` (curve); let go to stop; `x` ends the drive. Go slowly,
+  cover every room and the hallway once, stay behind the robot, and **finish back on
+  the home spot facing the starting direction**. 3-5 minutes is plenty.
+- [X] Copy the bag to the workstation and build the map (about half the drive's length):
   ```bash
-  ros2 run nav2_map_server map_saver_cli -f src/nav_fleet/maps/bedroom_real
-  # Creates: maps/bedroom_real.pgm + maps/bedroom_real.yaml
+  rsync -a mike@jetson.local:fleet-ci-data/map_drive_logs/bag_<ts> reports/map_drive/
+  scripts/build_map_from_bag.sh reports/map_drive/bag_<ts>
+  # -> reports/maps/bedroom_real.yaml + .pgm
   ```
-- [ ] Commit `bedroom_real.pgm`/`.yaml`.
-- [ ] **Determine and set the real AMCL seed pose — found 2026-08-05, not yet done
-  anywhere.** `nav2_params.yaml`'s `amcl.initial_pose` is ONE shared block for
-  sim/HIL/real robot; today it's hardcoded to the SIM map's coordinates
-  (`x: -1.276, y: 1.2, yaw: 1.5708`, commented "hallway entrance — robot_001 spawn
-  point" — `living_room.yaml`'s frame, meaningless once `bedroom_real.yaml` exists).
-  `set_initial_pose: true` means this value is what AMCL seeds from on EVERY boot,
-  unattended — no RViz "2D Pose Estimate" click happens in the automated systemd
-  flow, so this IS the entire localization strategy, not a one-time nicety.
-  Procedure:
-  1. Physically mark the exact spot + facing direction the robot will always start
-     from day-to-day — this becomes B1's "known starting position, documented
-     heading." Write it down / tape a mark; don't rely on memory.
-  2. With `bedroom_real.yaml` loaded, bring up Nav2 on the Jetson
-     (`nav2_only_launch.py use_sim_time:=false map:=.../bedroom_real.yaml ...`); run
-     RViz2 from the workstation over WiFi against the robot's topics (same
-     remote-viz pattern as any GUI-watched HIL run).
-  3. Place the robot at the marked spot, give AMCL a rough seed via RViz's "2D Pose
-     Estimate," let the particle cloud converge (drive a short loop if needed).
-  4. Read the converged pose: `ros2 topic echo /robot_001/amcl_pose --once` (or read
-     it off RViz) — record x, y, yaw.
-  5. Update `nav2_params.yaml`'s `amcl.initial_pose` block with these real values,
-     and fix the stale `# Map: maps/living_room.pgm` / `# Initial pose: hallway entrance` comments above it to describe the real map instead.
-  6. Commit the updated `nav2_params.yaml` alongside the map/HSV config.
+- [X] **Done when:** walls are single and thin, rooms close up, and the mission's
+  waypoints fall on open floor. Look at the `.pgm`; a doubled or smeared wall means
+  drive again, slower.
+- [X] Install it on the robot:
+  ```bash
+  ssh mike@jetson.local 'mkdir -p ~/fleet-ci-data/maps'
+  scp reports/maps/bedroom_real.yaml reports/maps/bedroom_real.pgm mike@jetson.local:fleet-ci-data/maps/
+  ```
+- [ ] Check `robot_boot.sh` prints `map: the robot's own map` on the next run. A
+  `WARNING: no real map` line means it fell back to the borrowed one.
 
 ### A4. Calibrate ball-color detection for the real camera
 
@@ -652,7 +658,7 @@ never created. `src/nav_fleet/launch/nav2_only_launch.py` — the same file HIL 
 uses — is reused directly, parameterized by three launch arguments
 (`use_sim_time:=false hsv_config:=... map:=...`), passed in by
 `scripts/container_entrypoint.sh` (see A6). Nothing to write here.
-**`hsv_realcam.yaml`/`bedroom_real.yaml` still don't exist (A3/A4, still open)** —
+**(2026-11-18: `bedroom_real.yaml` now exists, outside git — see A3. The text below is still true for `hsv_realcam.yaml`.)** **`hsv_realcam.yaml`/`bedroom_real.yaml` still don't exist (A3/A4, still open)** —
 `robot_boot.sh` currently points these two args at real, existing stand-ins instead
 (`hsv_gazebo.yaml`/`living_room.yaml`, confirmed 2026-08-11 to be the same physical
 room) so a mission-mode run doesn't crash on a missing file; ball-detection accuracy
@@ -728,7 +734,7 @@ in one follow-up commit, both re-reviewed independently clean ("Ready to push: Y
    USB/udev enumeration for the OAK-D camera and the lidar is expected to be
    slower. Worth timing for real before trusting the systemd unit as-is, or
    consider bumping the 60s timeout.
-4. **`hsv_realcam.yaml` (A4) and `bedroom_real.yaml` (A3) still don't exist.**
+4. **`hsv_realcam.yaml` (A4) still doesn't exist; `bedroom_real.yaml` (A3) was built 2026-11-18 (see A3).** Original note: **`hsv_realcam.yaml` (A4) and `bedroom_real.yaml` (A3) still don't exist.**
    `robot_boot.sh` no longer crashes on this (repointed at `hsv_gazebo.yaml`/
    `living_room.yaml`, both real files, 2026-08-11 — see the A5 note above), but
    ball-detection accuracy against sim HSV thresholds and navigation against a
@@ -833,6 +839,30 @@ with your own eyes-on confirmation; the systemd unit is installed and enabled;
 ---
 
 ## Part B — Day-to-Day Operation
+
+### B0. Before the robot touches the floor (added 2026-11-18)
+
+- [ ] **Stop-on-silence bench test: must have PASSED on this robot since the last
+  firmware update or change to how motion commands are sent.** Robot on a stand, every
+  wheel off the ground, `esp32_driver` not running:
+  ```bash
+  python3 ~/autonomous-fleet-testbed/tools/bench_stop_on_silence.py
+  ```
+  It drives the wheels slowly for 2 s, then goes silent without sending a stop, and
+  checks that the motor board stops by itself. Why this exists: on 2026-11-18 the
+  Jetson lost power in the middle of a spin and the robot spun until its power switch
+  was thrown — the board's own stop timer had never been armed by the command the
+  driver used (`docs/sessions/2026-11-18.md`, sections 8-9). **Status: not yet run
+  since that fix.**
+- [ ] **Know where the robot's power switch is and stay within reach of it.** It is the
+  only stop that needs nothing else to be working. A remote kill command needs the
+  Jetson alive AND WiFi up.
+- [ ] **Battery.** `robot_boot.sh` prints `battery NN.NN V (ok)` after the drivers come
+  up and will not start a mission on `low` (< 10.5 V), `critical` (< 9.9 V) or no
+  reading. Charge with the robot's own 12.6 V charger. Two sessions ended on a flat
+  pack that looked like a network failure; a flat pack is also what switched the Jetson
+  off mid-run.
+- [ ] **Tyres seated on their rims**, all six. Spins on carpet peel them.
 
 ### B1. Turn on and go
 

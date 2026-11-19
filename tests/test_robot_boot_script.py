@@ -77,6 +77,11 @@ case "$1" in
     echo "ldlidar communication is normal"
     echo "Camera with MXID 123 opened"
     echo "camera_relay up"
+    # FAKE_BATTERY_LINE: what esp32_driver logs about the pack ("none" = nothing).
+    if [ "${FAKE_BATTERY_LINE:-}" != "none" ]; then
+      line="${FAKE_BATTERY_LINE:-esp32_driver: battery 11.82 V (ok)}"
+      echo "[esp32_driver-2] [INFO] [1.0] [esp32_driver]: $line"
+    fi
     while true; do sleep 0.2; done ;;
   bag)
     echo "bag_start $*" >> "$EVENTS"
@@ -350,3 +355,40 @@ def test_no_mission_when_the_rebuild_does_not_produce_the_launcher(boot_env, col
     assert 'FATAL' in out
     assert 'drivers_start' not in _events(events)
     assert 'docker_run' not in _events(events)
+
+
+def test_healthy_battery_is_reported_and_the_mission_runs(boot_env):
+    env, events, _home = boot_env
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+    assert 'battery 11.82 V (ok)' in out
+    assert 'docker_run' in _events(events)
+
+
+@pytest.mark.parametrize('line', [
+    'esp32_driver: battery 10.31 V (low) -- charge before the next mission',
+    'esp32_driver: battery 9.17 V (critical) -- motion REFUSED until the pack is charged',
+    'none',                                   # no reading at all: fail closed
+])
+def test_no_mission_on_a_low_critical_or_unknown_battery(boot_env, line):
+    """2026-11-17 and 2026-11-18 both ended on a flat pack; the second time the
+    Jetson lost power mid-spin and the robot could not be stopped."""
+    env, events, _home = boot_env
+    env['FAKE_BATTERY_LINE'] = line
+    env['FAKE_MISSION_SECONDS'] = '1'
+    proc = _start(env)
+    out = _finish(proc, timeout=60.0)
+    assert proc.returncode == 1
+    assert 'FATAL: battery is not OK' in out
+    assert 'docker_run' not in _events(events)
+    assert 'drivers_sigint' in _events(events)       # and the drivers were shut down
+
+
+def test_battery_check_can_be_overridden_for_bench_work(boot_env):
+    env, events, _home = boot_env
+    env['FAKE_BATTERY_LINE'] = 'esp32_driver: battery 10.31 V (low)'
+    env['ROBOT_BOOT_IGNORE_BATTERY'] = '1'
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+    assert 'ROBOT_BOOT_IGNORE_BATTERY set' in out
+    assert 'docker_run' in _events(events)

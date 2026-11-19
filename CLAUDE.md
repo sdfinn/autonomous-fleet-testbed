@@ -41,40 +41,55 @@ First note (2026-11-15, doorway): this repo's `tools/mission2_day.py`
 `_judge_and_log_leg` ignores the mission's own `ok` flag, so a failed navigate leg
 can still be judged PASS (verified true here 2026-11-16; not fixed).
 
-## Current status — START HERE (last real work 2026-11-17)
+## Current status — START HERE (last real work 2026-11-18)
 
-**2026-11-17 session** (full notes: `docs/sessions/2026-11-17.md`).
-- **`robot_boot.sh` now records a bag on every run** (bare-metal, to
-  `~/fleet-ci-data/robot_boot_logs/bag_<ts>/`, all topics minus full camera frames,
-  ~0.5 MB/s; `ROBOT_BOOT_NO_BAG=1` skips) **and Ctrl+C / SIGTERM / SIGHUP stop the
-  mission**: container force-removed, then bag finalized, then drivers. Proven by
-  `tests/test_robot_boot_script.py` (stand-ins that ignore signals like the real
-  container) and on the robot with Ctrl+C before Nav2 was up. Not explicitly tested:
-  Ctrl+C mid-drive, SIGHUP on the robot.
-- **Second camera explored** — USB webcam on the pan-tilt mast, `/dev/video0`. Better
-  than the OAK for colour in room light (OAK exposure tuning does not fix its dark
-  image); the OAK is the one with depth. All facts, measurements and an ordered list of
-  ways to combine the two: `docs/cameras.md`.
-- **Attended nav-only run: wheel slip at the hallway runner's edge.** Wheels spun for
-  ~16 s, odometry counted ~1.1 m that did not happen, AMCL followed the odometry, the
-  robot turned for the bedroom door a metre early and drove into the hall-end corner.
-  Slip is invisible to the stack (EKF's only speed source is the wheel encoders; the
-  board reports one speed per side). Likely also behind the 2026-11-16 0.55 m home
-  error (hypothesis). Evidence: `reports/robot_boot_20261117_navonly/`.
-- Session ended on a flat robot battery (looked like WiFi trouble: the address kept
-  changing, then no route).
+**SAFETY, READ FIRST: the robot must not drive on the floor until
+`tools/bench_stop_on_silence.py` prints PASS on the real robot, wheels off the ground.**
+On 2026-11-18 the Jetson lost power mid-spin (flat pack, 9.17 V) and the motor board
+kept executing its last command; the robot spun until Mike cut power. Cause, from the
+firmware source: only wheel-speed commands (T:1) re-arm the board's stop-on-silence
+timer, and the driver sent T:13, which leaves it disarmed 3 s after power-on. The driver
+now sends T:1 and sets the timer to 500 ms at start-up — tested in software, NOT yet
+proven on the robot.
 
-**UNCOMMITTED at close (2026-11-17):** `scripts/robot_boot.sh`,
-`tests/test_robot_boot_script.py`, `RealRobotStartup.md`, `docs/cameras.md`,
-`docs/sessions/2026-11-17.md`, `CLAUDE.md`. The Jetson has an older hand copy of
-`robot_boot.sh` (no SIGHUP handling). Mike's rule: "commit and push everything" = all of it.
+**2026-11-18 session** (full notes: `docs/sessions/2026-11-18.md`).
+- **Home error explained and fixed.** The borrowed `living_room.yaml` has an accurate
+  bedroom but a made-up hallway, and its home pose is ~0.6 m from where the robot is
+  put down. On the robot's own map: 3 of 3 round trips, home error 2-11 cm (was 55 cm),
+  believed vs true pose within 1-5 cm at every stop. Two more clean trips with the
+  hallway runner down.
+- **The robot's own map (A3 done).** Mapping drive = `scripts/robot_map_drive.sh`
+  (drivers + bag + hold-to-move `key_teleop`); built offline with
+  `scripts/build_map_from_bag.sh`, in the mission frame (drive starts on the home spot
+  = the configured home pose, so no waypoint or AMCL seed changes). **Not in git** (a
+  floor plan of a real home): `~/fleet-ci-data/maps/bedroom_real.{yaml,pgm}` on the
+  Jetson, mounted by `robot_boot.sh`; workstation copy in `reports/maps/`.
+- **Wheel-slip detection** (`nav_fleet/scan_motion.py`, `slip_monitor` node,
+  `tools/slip_replay.py`): wheels vs scan-to-scan motion. Fires ~1 s into the
+  2026-11-17 slip and at the dresser contact; silent on clean trips. Observe-only.
+- **Battery** is now read: `/robot_001/battery_voltage`, a state line in the driver
+  log, motion refused when critical (<9.9 V), and `robot_boot.sh` starts no mission
+  unless the pack reads `ok` (>=10.5 V; `ROBOT_BOOT_IGNORE_BATTERY=1` overrides).
+- **Final heading at home overshoots** by up to 37 deg (the end-of-leg spin runs at
+  1.2-1.5 rad/s and coasts through the goal). The robot knows; not fixed.
+- Also: gyro offset now learned during teleop; `scripts/ensure_nav_fleet_built.sh`
+  rebuilds the Jetson's bare-metal install when a new node has no launcher.
 
-**Next session, in order:** (1) charge; commit/push, CI green, Jetson checkout matches;
-(2) roll the hallway runner back, re-run nav-only (bag is automatic) and look at the
-home error; (3) lidar-based slip detection, developed offline against the 2026-11-17
-bag; (4) the robot's own SLAM map (A3); (5) collision avoidance/recovery; (6) turn gain
-while driving; (7) A4 colour calibration on the USB camera. Check the front-right tyre
-before runs. Intermittent stage-2 near-goal stall is still real and unfixed.
+**Next session, in order:** (1) charge fully, re-seat tyres, compare the logged voltage
+with a multimeter; (2) **bench test wheels-up: `tools/bench_stop_on_silence.py` -> PASS
+and `--legacy-t13` -> FAIL**, then a real `robot_boot.sh` start on the stand with
+`kill -9` on `esp32_driver`; (3) one attended nav-only run (motion unchanged with T:1?);
+(4) a remote stop that works when WiFi drops but the Jetson lives; (5) final-heading
+overshoot; (6) collision avoidance/recovery + what a slip verdict should do (test case:
+the dresser bag in `reports/robot_boot_20261118_navonly/`); (7) A4 colour calibration,
+mast-camera recording. Intermittent stage-2 near-goal stall is still real and unfixed.
+
+**2026-11-17 session, in brief** (`docs/sessions/2026-11-17.md`): `robot_boot.sh`
+records a bag on every run (`~/fleet-ci-data/robot_boot_logs/bag_<ts>/`;
+`ROBOT_BOOT_NO_BAG=1` skips) and stops on Ctrl+C / SIGTERM / SIGHUP (container, then
+bag, then drivers) — but note a DROPPED link sends no SIGHUP, the session just hangs
+open. USB webcam on the mast explored (`docs/cameras.md`). Wheel slip at the runner's
+edge found (the reason slip detection exists).
 
 **2026-11-16 session** (full notes: `docs/sessions/2026-11-16.md`; previous:
 `docs/sessions/2026-11-14.md`). Stage-4 CI hang fixed and pushed (`a6a5da6`, run
@@ -100,9 +115,10 @@ there and hit the dresser. No bag was recorded for run 2, so that is undiagnosed
 **Where things stand:** the real physical robot (Waveshare UGV + Jetson Orin Nano)
 is mid bring-up. Full sim + HIL CI pipeline is green. The real-robot production path
 (`scripts/robot_boot.sh`: driver layer bare-metal + Nav2/EKF/ball_detector/
-mission_runner in the arm64 container) now boots, localizes, and drives at true speed
-with real odometry and heading (since 2026-11-16) — but has no working collision
-avoidance or stuck recovery, no wheel-slip detection, and uses a borrowed map.
+mission_runner in the arm64 container) boots, localizes on its own map and completes
+the nav-only mission with a home error of a few centimetres (2026-11-18) — but has no
+proven stop when the Jetson dies (fix written, bench test owed), no collision avoidance
+or stuck recovery, and only observes wheel slip.
 
 **2026-08-12/13 session, in brief (several conclusions SUPERSEDED 2026-11-16 — see above)** (full detail: history, "first real
 `robot_boot.sh` production-path test"):
@@ -260,6 +276,13 @@ scripts/robot_boot.sh                # real production mission path
   2026-11-17); the serial port is exclusive, so not while `esp32_driver` runs. Drive:
   front and rear wheel pairs are motorized, the centre pair rolls free; the board
   reports ONE speed per side. A second, USB camera sits on the pan-tilt (`docs/cameras.md`).
+  Motion commands MUST be T:1 (left/right wheel speeds), never T:13: only T:1/T:11
+  re-arm the firmware's stop-on-silence timer (`uart_ctrl.h`; source at
+  `waveshareteam/ugv_base_ros`, folder `ROS_Driver/`). The timer (T:136) is not kept
+  in flash; the driver sets 500 ms at start-up. Pack voltage is `"v"` in T:1001, in
+  hundredths of a volt (3-cell pack: 12.6 V full; 9.17 V read flat on 2026-11-18).
+  Real map and home: `~/fleet-ci-data/maps/bedroom_real.yaml`, home spot = configured
+  home pose (-1.276, 1.2, 90 deg); bedroom door 0.75 m wide, dresser just right of it.
 - **Per-robot TF is namespaced:** subscribe to `/robot_001/tf`, not `/tf`.
 - `local_costmap.global_frame: "odom"` is explicit; `nav2_only_launch.py` uses an
   `OpaqueFunction` to inject `use_sim_time` into the params YAML because
@@ -278,6 +301,8 @@ scripts/robot_boot.sh                # real production mission path
   4 hil (Jetson), 5 reports, coverage-report. (`stage-4-isaac` retired Session 16;
   pre-2026-07-10 docs use old stage numbering.)
 - `RealRobotStartup.md` — real-robot bring-up runbook (Part A one-time, Part B daily).
+- `reports/` (gitignored, whole directory) — run bags, logs, photos, analysis scratch;
+  `reports/maps/` holds the workstation copy of the real map.
 - `planning/` (gitignored) — Release1Todo.md, Releases2Plus.md.
 - `/home/mike/BC/isaac_project` (outside repo) — reference: real HSV detector
   (`src/behavior_controller.py`). Its `MasterBrief.md` describes a YOLO+ArUco design
@@ -299,6 +324,18 @@ scripts/robot_boot.sh                # real production mission path
   (`/ros2_ws/install/.../site-packages/`, plain non-symlink build). Scp to the
   Jetson's native checkout only reaches bare-metal (driver layer). For container
   code, bind-mount over the installed path and verify inside a container first.
+- **A stop mechanism that has never been seen to work is an assumption.** Test "the
+  computer is gone" by taking the computer away, wheels up, before floor runs — and
+  after any firmware update or change to how motion commands are sent (2026-11-18).
+- **The Jetson's bare-metal install is a `--symlink-install` build and sync does not
+  rebuild.** Edited files arrive via symlinks; a NEW console script needs a build
+  (`scripts/ensure_nav_fleet_built.sh`, called by the robot scripts).
+- **`ros2 launch x.py arg:=''` is a malformed argument** and exits at once — omit the
+  argument to get an empty default.
+- **slam_toolbox rejects scans whose reading count varies** (the LD19 gives 500-505);
+  `tools/map_from_bag.py` resamples. Its `map_start_pose` does nothing in mapping mode.
+- **A hard power-off leaves the bag unfinalized:** `ros2 bag reindex -s mcap <dir>`
+  recovers all but the last ~15 s.
 - **Prefer SIGINT teardown over `docker stop`** when a rosbag may be recording —
   `docker stop` leaves an empty, unfinalized mcap.
 - **`hil_stage.sh sync` self-heals** (`git reset --hard FETCH_HEAD && git clean -fd`)

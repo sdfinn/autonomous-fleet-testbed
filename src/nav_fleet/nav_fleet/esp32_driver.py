@@ -28,12 +28,21 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
+from std_msgs.msg import Float32
 
-from nav_fleet.esp32_protocol import (GyroBiasEstimator, encode_boot_mission_info,
+from nav_fleet.esp32_protocol import (BATTERY_CRITICAL, BATTERY_LOW, BatteryMonitor,
+                                      GyroBiasEstimator, battery_volts,
+                                      encode_boot_mission_info,
                                       encode_enable_feedback_flow, encode_get_imu_data,
-                                      encode_velocity_cmd, integrate_odometry,
-                                      parse_base_info, parse_chassis_main_type,
-                                      parse_feedback_line, parse_orientation, scale_imu_raw)
+                                      encode_set_heartbeat_timeout, encode_wheel_speed_cmd,
+                                      integrate_odometry, parse_base_info,
+                                      parse_chassis_main_type, parse_feedback_line,
+                                      parse_orientation, scale_imu_raw, twist_to_wheel_speeds)
+
+# Publish the pack voltage once per this many status lines (~1 Hz at the board's ~20 Hz).
+BATTERY_PUBLISH_EVERY = 20
+# Repeat the low/critical log line this often while the state persists.
+BATTERY_REMIND_S = 60.0
 
 # Variance published on the gyro's angular_velocity_covariance diagonal, (rad/s)^2.
 # Measured 2026-11-16 from 15 s of a stationary real robot: gyro z std = 0.0028 rad/s
@@ -68,6 +77,15 @@ class Esp32Driver(Node):
         # First-cut value from one floor: surface-dependent, and only measured for
         # turns on the spot, not while driving forward.
         self.declare_parameter('angular_cmd_gain', 2.8)
+        # The BOARD's own stop-on-silence timeout (T:136), set at every start-up: if no
+        # wheel-speed command reaches it for this long, the firmware zeroes the motors
+        # by itself. This is the only protection that still works when the Jetson
+        # process, the Jetson's OS or the Jetson's power is gone (2026-11-18: it was
+        # not armed at all, and the robot spun until its power switch was thrown --
+        # see esp32_protocol.encode_wheel_speed_cmd). Must be comfortably longer than
+        # the gap between commands (Nav2 and key_teleop both send at ~20 Hz = 50 ms)
+        # and short enough to matter: at 0.3 m/s, 500 ms is 15 cm.
+        self.declare_parameter('firmware_stop_ms', 500)
 
         self._track_width = self.get_parameter('track_width').value
         self._angular_cmd_gain = self.get_parameter('angular_cmd_gain').value
@@ -77,6 +95,12 @@ class Esp32Driver(Node):
         # Resting gyro offset, re-learned every ~2 s the robot sits still (40 samples
         # at the ~20 Hz feedback rate). See GyroBiasEstimator.
         self._gyro_bias = GyroBiasEstimator(window=40)
+        # Pack voltage from the same status line; see BatteryMonitor. _battery_state is
+        # the last state logged (None until the first full window of samples).
+        self._battery = BatteryMonitor()
+        self._battery_state = None
+        self._battery_last_log = 0.0
+        self._battery_samples = 0
         self._watchdog_timeout_s = self.get_parameter('watchdog_timeout_ms').value / 1000.0
 
         device = self.get_parameter('serial_device').value
@@ -114,10 +138,13 @@ class Esp32Driver(Node):
 
         self.odom_pub = self.create_publisher(Odometry, '/robot_001/odom', 10)
         self.imu_pub = self.create_publisher(Imu, '/robot_001/imu/data', 10)
+        self.battery_pub = self.create_publisher(Float32, '/robot_001/battery_voltage', 10)
         self.create_subscription(Twist, '/robot_001/cmd_vel', self._cmd_vel_cb, 10)
 
         self._send(encode_enable_feedback_flow(True))
         self._send(encode_boot_mission_info())
+        self._send(encode_set_heartbeat_timeout(
+            int(self.get_parameter('firmware_stop_ms').value)))
 
         imu_poll_hz = self.get_parameter('imu_poll_hz').value
         self.create_timer(1.0 / imu_poll_hz, self._imu_poll_cb)
@@ -128,7 +155,8 @@ class Esp32Driver(Node):
 
         self.get_logger().info(
             f"esp32_driver up — {device}@{baud}, track_width={self._track_width}m, "
-            f"watchdog={self.get_parameter('watchdog_timeout_ms').value}ms")
+            f"watchdog={self.get_parameter('watchdog_timeout_ms').value}ms, "
+            f"board stop-on-silence={self.get_parameter('firmware_stop_ms').value}ms")
 
     def _send(self, cmd):
         line = (json.dumps(cmd) + '\n').encode('utf-8')
@@ -142,7 +170,12 @@ class Esp32Driver(Node):
         # Refuse to drive if the controller reported the wrong chassis type: in that
         # state it runs ~2.5x faster than commanded and possibly backwards.
         if self._chassis_ok is False:
-            self._send(encode_velocity_cmd(0.0, 0.0))
+            self._send_motion(0.0, 0.0)
+            return
+        # Refuse to drive on a critically low pack: the next heavy turn can pull the
+        # voltage low enough to switch the Jetson off mid-command (2026-11-18).
+        if self._battery_state == BATTERY_CRITICAL:
+            self._send_motion(0.0, 0.0)
             return
         # No sign flips. From 2026-08-11 to 2026-11-16 both linear.x and angular.z
         # were negated here, on the belief that this unit was wired backwards. The
@@ -151,8 +184,14 @@ class Esp32Driver(Node):
         # 2026-11-16: +X drives forward (lidar: 0.281 m for a 0.30 m command) and +Z
         # turns left (gyro positive). angular.z is scaled by angular_cmd_gain for
         # skid-steer tyre scrub (see the parameter's comment).
-        self._send(encode_velocity_cmd(msg.linear.x,
-                                       msg.angular.z * self._angular_cmd_gain))
+        self._send_motion(msg.linear.x, msg.angular.z * self._angular_cmd_gain)
+
+    def _send_motion(self, linear_x, angular_z):
+        """Send a body twist as left/right wheel speeds (T:1), never as T:13: only T:1
+        re-arms the board's stop-on-silence timer. Same arithmetic the firmware applies
+        to T:13, so the motion itself is unchanged."""
+        self._send(encode_wheel_speed_cmd(
+            *twist_to_wheel_speeds(linear_x, angular_z, self._track_width)))
 
     def _imu_poll_cb(self):
         self._send(encode_get_imu_data())
@@ -164,7 +203,7 @@ class Esp32Driver(Node):
             return
         if time.time() - self._last_cmd_time > self._watchdog_timeout_s:
             self._stopped = True
-            self._send(encode_velocity_cmd(0.0, 0.0))
+            self._send_motion(0.0, 0.0)
             self.get_logger().warn('esp32_driver: cmd_vel watchdog tripped — zero-velocity sent')
 
     def destroy_node(self):
@@ -226,10 +265,39 @@ class Esp32Driver(Node):
             # in one line, not two separate messages as originally assumed.
             self._publish_odom(base_info)
             self._publish_imu(base_info)
+            self._on_battery_sample(base_info.voltage)
             return
         orientation = parse_orientation(data)
         if orientation is not None:
             self._last_orientation = orientation
+
+    def _on_battery_sample(self, raw):
+        """Publish the pack voltage (~1 Hz) and log when its state changes."""
+        volts = battery_volts(raw)
+        self._battery_samples += 1
+        if self._battery_samples % BATTERY_PUBLISH_EVERY == 0:
+            self.battery_pub.publish(Float32(data=volts))
+        state = self._battery.update(volts)
+        if state is None:
+            return
+        now = time.time()
+        changed = state != self._battery_state
+        remind = (state in (BATTERY_LOW, BATTERY_CRITICAL)
+                  and now - self._battery_last_log >= BATTERY_REMIND_S)
+        if not (changed or remind):
+            return
+        # One fixed, greppable shape: robot_boot.sh reads this line before a mission.
+        line = f'esp32_driver: battery {self._battery.volts:.2f} V ({state})'
+        if state == BATTERY_CRITICAL:
+            self.get_logger().error(line + ' -- motion REFUSED until the pack is charged')
+            if changed:
+                self._send_motion(0.0, 0.0)
+        elif state == BATTERY_LOW:
+            self.get_logger().warning(line + ' -- charge before the next mission')
+        else:
+            self.get_logger().info(line)
+        self._battery_state = state
+        self._battery_last_log = now
 
     def _publish_odom(self, info):
         # Used as reported — no sign flip. They were negated from 2026-08-11 to

@@ -275,3 +275,67 @@ def test_gyro_bias_tracks_slow_change_window_by_window():
     est = GyroBiasEstimator(window=40)
     _feed(est, 40, (0.0, 0.0, 0.0046))
     assert _feed(est, 40, (0.0, 0.0, 0.0060))[2] == pytest.approx(0.0060)
+
+
+# --- wheel-speed command, battery (2026-11-18) -------------------------------------
+
+from nav_fleet.esp32_protocol import (  # noqa: E402
+    BATTERY_CRITICAL, BATTERY_LOW, BATTERY_OK, BatteryMonitor, battery_volts,
+    encode_wheel_speed_cmd, twist_to_wheel_speeds,
+)
+
+
+def test_encode_wheel_speed_cmd_is_t1_with_float_fields():
+    cmd = encode_wheel_speed_cmd(0, -0.25)
+    assert cmd == {"T": 1, "L": 0.0, "R": -0.25}
+    # the firmware checks is<float>() on both: an int 0 must still go out as 0.0
+    assert json.dumps(cmd) == '{"T": 1, "L": 0.0, "R": -0.25}'
+
+
+def test_twist_to_wheel_speeds_matches_the_firmwares_own_ros_ctrl_arithmetic():
+    # movtion_module.h rosCtrl(): A = X - Z*W/2 (left), B = X + Z*W/2 (right)
+    assert twist_to_wheel_speeds(0.2, 0.0, 0.172) == pytest.approx((0.2, 0.2))
+    assert twist_to_wheel_speeds(0.0, 1.0, 0.172) == pytest.approx((-0.086, 0.086))
+    left, right = twist_to_wheel_speeds(0.15, -0.5, 0.172)
+    assert left > right                                  # -Z = right turn: left side faster
+    assert (left + right) / 2 == pytest.approx(0.15)
+
+
+def test_battery_volts_reads_centivolts():
+    assert battery_volts(917) == pytest.approx(9.17)     # the flat pack, 2026-11-18
+    assert battery_volts(1260) == pytest.approx(12.6)
+
+
+def test_battery_monitor_gives_no_state_until_it_has_a_full_window():
+    mon = BatteryMonitor(window=5)
+    assert [mon.update(11.8) for _ in range(4)] == [None] * 4
+    assert mon.update(11.8) == BATTERY_OK
+    assert mon.volts == pytest.approx(11.8)
+
+
+@pytest.mark.parametrize('volts, expected', [
+    (12.6, BATTERY_OK), (10.5, BATTERY_OK), (10.49, BATTERY_LOW),
+    (9.9, BATTERY_LOW), (9.89, BATTERY_CRITICAL), (9.17, BATTERY_CRITICAL),
+])
+def test_battery_monitor_thresholds(volts, expected):
+    mon = BatteryMonitor(window=3)
+    for _ in range(3):
+        state = mon.update(volts)
+    assert state == expected
+
+
+def test_battery_monitor_uses_the_median_so_load_sag_does_not_flip_the_state():
+    mon = BatteryMonitor(window=10)
+    for i in range(30):
+        state = mon.update(9.0 if i % 5 == 0 else 11.2)   # one sample in five sags
+    assert state == BATTERY_OK
+    assert mon.volts == pytest.approx(11.2)
+
+
+def test_battery_monitor_ignores_zero_readings_from_a_sensor_not_yet_answering():
+    mon = BatteryMonitor(window=3)
+    for _ in range(10):
+        assert mon.update(0.0) is None
+    for _ in range(3):
+        state = mon.update(11.0)
+    assert state == BATTERY_OK

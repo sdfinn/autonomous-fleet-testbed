@@ -146,8 +146,95 @@ class GyroBiasEstimator:
 
 def encode_velocity_cmd(linear_x, angular_z):
     """CMD_ROS_CTRL (T:13) — documented in-source as (m/s, rad/s), a direct Twist
-    mapping. The firmware does its own diff-drive -> L/R wheel-speed math."""
+    mapping. The firmware does its own diff-drive -> L/R wheel-speed math.
+
+    NOT used for driving any more (2026-11-18): it never re-arms the board's
+    stop-on-silence timer. See encode_wheel_speed_cmd. Kept because it documents the
+    protocol and the bench scripts' history."""
     return {"T": 13, "X": linear_x, "Z": angular_z}
+
+
+def encode_wheel_speed_cmd(left_mps, right_mps):
+    """CMD_SPEED_CTRL (T:1) — left/right wheel speeds in m/s. THE motion command to use.
+
+    Why not T:13 (encode_velocity_cmd), which this driver used until 2026-11-18: in the
+    firmware (waveshareteam/ugv_base_ros, ROS_Driver/uart_ctrl.h) only T:1 and T:11
+    refresh `lastCmdRecvTime` and clear `heartbeatStopFlag`. T:13 does neither. With
+    T:13 the board's stop-on-silence timer fires once, 3 s after power-on, and is then
+    disarmed for good: the motors hold the last command for as long as the board has
+    power. On 2026-11-18 the Jetson lost power mid-spin (flat battery) and the robot
+    spun until its power switch was thrown; nothing running on the Jetson could have
+    stopped it. T:1 re-arms the timer on every command.
+
+    Always sent as floats: the firmware checks `is<float>()` on both fields."""
+    return {"T": 1, "L": float(left_mps), "R": float(right_mps)}
+
+
+def twist_to_wheel_speeds(linear_x, angular_z, track_width):
+    """(left, right) wheel speeds for a body twist — the same arithmetic the firmware's
+    own rosCtrl() applies to a T:13 command (movtion_module.h), so switching commands
+    changes nothing about how the robot moves. track_width must be the firmware's
+    TRACK_WIDTH for the stored chassis type (0.172 m for main=2)."""
+    half = angular_z * track_width / 2.0
+    return linear_x - half, linear_x + half
+
+
+# --- Battery ---------------------------------------------------------------------------
+# The T:1001 status line carries the pack voltage as "v" in hundredths of a volt
+# (ugv_advance.h: `int v_int = (int)(loadVoltage_V * 100)`, from the board's INA219).
+# It was parsed and thrown away until 2026-11-18, when two sessions in a row had ended
+# on a flat pack that looked like a network failure. That night the idle robot read
+# 917 (9.17 V) minutes after the Jetson had lost power mid-run.
+#
+# Thresholds are for the 3-cell lithium pack this robot carries (12.6 V full) and are
+# first-cut values, not measured against this pack's discharge curve:
+BATTERY_LOW_V = 10.5        # 3.5 V/cell: finish what you are doing, do not start a mission
+BATTERY_CRITICAL_V = 9.9    # 3.3 V/cell: stop; the next heavy turn can brown the Jetson out
+# Motor current pulls the reading down for a moment (a spin on carpet most of all), so
+# the state comes from the median of the last few seconds, not from single samples.
+BATTERY_WINDOW_SAMPLES = 60     # ~3 s at the board's ~20 Hz status rate
+BATTERY_OK, BATTERY_LOW, BATTERY_CRITICAL = 'ok', 'low', 'critical'
+
+
+def battery_volts(raw):
+    """T:1001's "v" field -> volts."""
+    return float(raw) / 100.0
+
+
+class BatteryMonitor:
+    """Pack voltage -> ok / low / critical, smoothed against load sag. Pure logic.
+
+    update(volts) returns the state once a full window is in hand, None before that
+    (a state is never guessed from the first few samples). `volts` is the median the
+    state was decided on. A reading of exactly 0 means the board has no INA219 answer
+    yet and is ignored."""
+
+    def __init__(self, low_v=BATTERY_LOW_V, critical_v=BATTERY_CRITICAL_V,
+                 window=BATTERY_WINDOW_SAMPLES):
+        self._low_v = low_v
+        self._critical_v = critical_v
+        self._window = window
+        self._samples = []
+        self.volts = None
+        self.state = None
+
+    def update(self, volts):
+        if volts <= 0.0:
+            return self.state
+        self._samples.append(volts)
+        if len(self._samples) > self._window:
+            self._samples.pop(0)
+        if len(self._samples) < self._window:
+            return self.state
+        ordered = sorted(self._samples)
+        self.volts = ordered[len(ordered) // 2]
+        if self.volts < self._critical_v:
+            self.state = BATTERY_CRITICAL
+        elif self.volts < self._low_v:
+            self.state = BATTERY_LOW
+        else:
+            self.state = BATTERY_OK
+        return self.state
 
 
 def encode_boot_mission_info():
@@ -211,7 +298,10 @@ def encode_gimbal_cmd(pan_deg, tilt_deg):
 def encode_set_heartbeat_timeout(timeout_ms):
     """CMD_HEART_BEAT_SET (T:136) — the firmware's OWN watchdog: zeroes speed if no
     speed command arrives within this many ms (default 3000 on the board). Independent
-    of esp32_driver's own watchdog — protects against the Jetson process itself dying."""
+    of esp32_driver's own watchdog — protects against the Jetson process itself dying.
+
+    Only T:1 / T:11 speed commands count as "a speed command" for this timer (see
+    encode_wheel_speed_cmd). Not stored in flash: must be sent on every start-up."""
     return {"T": 136, "cmd": timeout_ms}
 
 
