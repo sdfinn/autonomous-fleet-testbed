@@ -18,6 +18,9 @@ closes with `docs/sessions/YYYY-MM-DD.md` — each item written as issue → how
 fix (code excerpt + file:line) → verified → lesson, plus an "Open at close" / "Next"
 list and a "Learning — guided reading" section (file + line ranges, what to notice, a
 small exercise). At the START of a session, offer to re-show the latest one.
+**At close, also PRINT it in the chat (Mike, 2026-11-18):** per problem — the problem,
+what was learned, and the code before/after (real lines, file:line). The file alone is
+not the close-out.
 
 **Releases relabeled 2026-07-17: numbers now = execution order.** The agentic &
 alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean today's
