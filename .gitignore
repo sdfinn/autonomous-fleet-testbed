@@ -71,7 +71,7 @@ maps/*.yaml
 planning/
 
 # IDE
-.vscode/settings.json
+.vscode/
 .idea/
 
 # Playwright MCP tool scratch output
@@ -86,3 +86,11 @@ Thumbs.db
 
 # git worktrees for isolated feature work (superpowers:using-git-worktrees)
 .worktrees/
+
+# Everything under reports/ is local evidence, never source: run bags, pulled logs,
+# analysis scratch, and photos of the inside of a real home (this repo is public).
+# Nothing under reports/ is tracked (checked 2026-11-18). The narrower reports/ rules
+# above are kept for their history. Side effect worth knowing: `git clean -fd` (which
+# hil_stage.sh sync runs on the Jetson) leaves ignored files alone.
+reports/
+*.mcap

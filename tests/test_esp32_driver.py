@@ -365,6 +365,43 @@ def test_publish_imu_subtracts_resting_gyro_offset_once_learned():
         driver.destroy_node()
 
 
+def test_gyro_offset_is_learned_while_zero_speed_commands_keep_arriving():
+    """Mapping drive, 2026-11-18: key_teleop publishes zero-speed commands at 20 Hz
+    while idle, so the watchdog never trips. The robot is just as still as when
+    nobody is publishing, and the offset must be learned then too."""
+    driver, _ = _make_driver()
+    try:
+        from nav_fleet.esp32_protocol import BaseInfo, scale_imu_raw
+        info = BaseInfo(speed_l=0, speed_r=0, ax=0, ay=0, az=8192, gx=-3, gy=16, gz=4,
+                        mx=0, my=0, mz=0, odl=0, odr=0, voltage=11.1)
+        raw_gz = scale_imu_raw(0, 0, 8192, -3, 16, 4)[5]
+        for _ in range(41):
+            driver._cmd_vel_cb(Twist())            # explicit "stand still", not silence
+            driver._publish_imu(info)
+        assert driver._stopped is False            # the watchdog never got a chance
+        assert driver._gyro_bias.bias[2] == pytest.approx(raw_gz)
+    finally:
+        driver.destroy_node()
+
+
+def test_gyro_offset_is_not_learned_while_a_move_is_commanded():
+    """Wheels can read zero for a moment while a real move is being commanded (pulling
+    away, stalled against something). That is not a resting robot."""
+    driver, _ = _make_driver()
+    try:
+        from nav_fleet.esp32_protocol import BaseInfo
+        info = BaseInfo(speed_l=0, speed_r=0, ax=0, ay=0, az=8192, gx=-3, gy=16, gz=4,
+                        mx=0, my=0, mz=0, odl=0, odr=0, voltage=11.1)
+        moving = Twist()
+        moving.linear.x = 0.15
+        for _ in range(41):
+            driver._cmd_vel_cb(moving)
+            driver._publish_imu(info)
+        assert driver._gyro_bias.bias == (0.0, 0.0, 0.0)
+    finally:
+        driver.destroy_node()
+
+
 def test_dispatch_line_real_hardware_base_info_publishes_odom_and_imu():
     # Byte-for-byte capture from the live root-cause probe against the real ESP32
     # over /dev/ttyTHS1, 2026-08-10 (same capture as

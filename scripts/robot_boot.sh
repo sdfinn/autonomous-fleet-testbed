@@ -57,6 +57,10 @@ set +u
 # ROBOT_BOOT_ROS_SETUP exists only so tests/test_robot_boot_script.py can run this
 # script on a machine with no ROS 2 installed (CI stage 1). Never set it on the robot.
 source "${ROBOT_BOOT_ROS_SETUP:-/opt/ros/jazzy/setup.bash}"
+set -u
+# A node added since the last colcon build here has no launcher yet (see the script).
+bash "$REPO/scripts/ensure_nav_fleet_built.sh" "$REPO"
+set +u
 source "$REPO/install/setup.bash"
 # ldlidar_ros2 lives in its own separate overlay (~/ros2_drivers_ws), normally
 # sourced by .bashrc -- which a non-interactive boot-time script never runs. Without
@@ -236,15 +240,30 @@ echo "=== [robot-boot] running ${IMAGE} (real-robot context, operator ball place
 # ROBOT_MODE=mission is hardcoded here, never a variable — standalone power-on can
 # never run a smoke test (design spec). skip_nav2 is NOT set here — its default
 # (false) means Nav2 runs exactly as it always has.
-# NAV2_MAP_FILE/HSV_CONFIG_FILE stand-ins, 2026-08-11: bedroom_real.yaml (A3, a real
-# SLAM map of this room) and hsv_realcam.yaml (A4, real-camera HSV calibration)
-# neither exist yet — both are still-open, tracked gaps, not decided permanently
-# here. living_room.yaml is confirmed the SAME physical room (Mike, live, this
-# session — likely an early naming mixup, not two different rooms) and is already
-# nav2_only_launch.py's own default map, so it's a real value, not a placeholder.
+# HSV_CONFIG_FILE stand-in, 2026-08-11: hsv_realcam.yaml (A4, real-camera HSV
+# calibration) does not exist yet. (The map is chosen just below.)
 # hsv_gazebo.yaml is a genuine stand-in — sim color thresholds, not calibrated
 # against this room's real camera/lighting — ball_detector will run without
 # crashing but its detection accuracy is unproven until A4 happens.
+#
+# Map selection (A3 done 2026-11-18). The robot's own map lives OUTSIDE git, in
+# ~/fleet-ci-data/maps/bedroom_real.{yaml,pgm}: it is a floor plan of a real home and
+# this repo is public. When both files are there they are mounted read-only over the
+# image's maps directory and used; otherwise the run falls back to living_room.yaml
+# with a loud warning. That fallback is NOT equivalent: its bedroom half is accurate
+# but its hallway is not, and its home pose is ~0.6 m from where the robot is really
+# put down -- the cause of the 2026-11-16 and 2026-11-18 home errors (see
+# docs/sessions/2026-11-18.md). Build the real map with scripts/build_map_from_bag.sh.
+REAL_MAP_DIR="$HOME/fleet-ci-data/maps"
+if [ -f "$REAL_MAP_DIR/bedroom_real.yaml" ] && [ -f "$REAL_MAP_DIR/bedroom_real.pgm" ]; then
+  echo "=== [robot-boot] map: the robot's own map, ${REAL_MAP_DIR}/bedroom_real.yaml ==="
+  MAP_ARGS=(-v "$REAL_MAP_DIR/bedroom_real.yaml:/ros2_ws/src/nav_fleet/maps/bedroom_real.yaml:ro"
+            -v "$REAL_MAP_DIR/bedroom_real.pgm:/ros2_ws/src/nav_fleet/maps/bedroom_real.pgm:ro"
+            -e NAV2_MAP_FILE=bedroom_real.yaml)
+else
+  echo "=== [robot-boot] WARNING: no real map at ${REAL_MAP_DIR}/bedroom_real.{yaml,pgm} -- falling back to the BORROWED living_room.yaml (hallway and home pose do not match this house; expect a home error) ===" >&2
+  MAP_ARGS=(-e NAV2_MAP_FILE=living_room.yaml)
+fi
 docker rm -f robot_mission 2>/dev/null || true
 mkdir -p "$REPO/reports"
 # Navigation-only diagnostic runs (2026-11-16): the container only sees env vars
@@ -264,7 +283,7 @@ set -m
   -v "$HOME/fleet-ci-data:/root/fleet-ci-data" \
   -e USE_SIM_TIME=false \
   -e HSV_CONFIG_FILE=hsv_gazebo.yaml \
-  -e NAV2_MAP_FILE=living_room.yaml \
+  "${MAP_ARGS[@]}" \
   -e MISSION2_SELF_REPORT=1 \
   -e RUNNER_TYPE=real_robot \
   -e ROBOT_MODE=mission \

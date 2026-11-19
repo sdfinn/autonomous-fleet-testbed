@@ -121,6 +121,16 @@ def generate_launch_description():
         output='screen',
     )
 
+    # slip_monitor (2026-11-18): compares wheel odometry with scan-to-scan motion and
+    # publishes /robot_001/slip/status. Observe-only -- it commands nothing. Lives
+    # here because scan, wheel odometry and IMU all originate in this driver layer.
+    slip_monitor = Node(
+        package='nav_fleet',
+        executable='slip_monitor',
+        name='slip_monitor',
+        output='screen',
+    )
+
     # camera_relay: closes the CAMERA half of the same topic-remapping gap
     # (2026-08-10) — depthai-ros's camera.launch.py has no remapping support of
     # its own, so a small relay node republishes its real image_rect topic as
@@ -150,4 +160,5 @@ def generate_launch_description():
         camera_launch_file_arg,
         robot_state_publisher,
         esp32_driver, lidar_include, camera_include, scan_masker, camera_relay,
+        slip_monitor,
     ])

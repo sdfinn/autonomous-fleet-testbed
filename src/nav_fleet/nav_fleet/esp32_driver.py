@@ -103,6 +103,9 @@ class Esp32Driver(Node):
         self._last_base_info_time = None
         self._last_cmd_time = time.time()
         self._stopped = False
+        # True while the most recent cmd_vel asked for no motion at all (see
+        # _publish_imu's "stationary" test for why this exists next to _stopped).
+        self._cmd_is_zero = False
         # Per-node stop signal for _read_loop — rclpy.ok() alone is process-global,
         # so it never stops this node's own reader thread on destroy_node() (only on
         # process exit, which happens to be the only case today since main() runs a
@@ -135,6 +138,7 @@ class Esp32Driver(Node):
     def _cmd_vel_cb(self, msg):
         self._last_cmd_time = time.time()
         self._stopped = False
+        self._cmd_is_zero = (msg.linear.x == 0.0 and msg.angular.z == 0.0)
         # Refuse to drive if the controller reported the wrong chassis type: in that
         # state it runs ~2.5x faster than commanded and possibly backwards.
         if self._chassis_ok is False:
@@ -287,10 +291,16 @@ class Esp32Driver(Node):
         msg.linear_acceleration.x = ax
         msg.linear_acceleration.y = ay
         msg.linear_acceleration.z = az
-        # Subtract the resting offset. "Stationary" = wheels report zero AND the
-        # watchdog has zeroed the command; the estimator itself rejects windows that
-        # still contain motion (robot carried or turned by hand).
-        stationary = (info.speed_l == 0 and info.speed_r == 0 and self._stopped)
+        # Subtract the resting offset. "Stationary" = wheels report zero AND nothing is
+        # asking the robot to move: either the watchdog has zeroed the command
+        # (nobody is publishing) or the latest command is itself zero. The second
+        # case was missing until 2026-11-18: key_teleop publishes zero-speed commands
+        # at 20 Hz while idle, so _stopped never became True, the offset was never
+        # learned, and a 4-minute mapping drive carried the full +0.27 deg/s (about
+        # 65 deg of false heading). The estimator itself rejects windows that still
+        # contain motion (robot carried or turned by hand).
+        commanded_still = self._stopped or self._cmd_is_zero
+        stationary = (info.speed_l == 0 and info.speed_r == 0 and commanded_still)
         bx, by, bz = self._gyro_bias.update(gx, gy, gz, stationary)
         msg.angular_velocity.x = gx - bx
         msg.angular_velocity.y = gy - by

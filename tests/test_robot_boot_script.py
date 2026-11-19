@@ -15,6 +15,7 @@ No ROS 2 needed (stage-1 safe): the script's ROS setup file is overridden throug
 ROBOT_BOOT_ROS_SETUP, and the fake workspace overlay puts the stubs on PATH.
 """
 import os
+import shutil
 import signal
 import stat
 import subprocess
@@ -54,6 +55,17 @@ case "$1" in
     fi
     while true; do sleep 0.2; done ;;
 esac
+"""
+
+# `colcon build`: records the call and creates a launcher for every node named in
+# FAKE_COLCON_BUILDS (space separated), like a real build of a newer setup.py would.
+FAKE_COLCON = """#!/bin/bash
+echo "colcon $*" >> "$EVENTS"
+for n in ${FAKE_COLCON_BUILDS:-}; do
+  printf '#!/bin/bash\n' > "$HOME/autonomous-fleet-testbed/install/nav_fleet/lib/nav_fleet/$n"
+  chmod +x "$HOME/autonomous-fleet-testbed/install/nav_fleet/lib/nav_fleet/$n"
+done
+exit "${FAKE_COLCON_RC:-0}"
 """
 
 FAKE_ROS2 = """#!/bin/bash
@@ -97,6 +109,14 @@ def boot_env(tmp_path):
         d.mkdir(parents=True)
     (repo / 'install' / 'setup.bash').write_text('')
     (repo / 'scripts' / 'regen_cyclonedds_config.sh').write_text('exit 0\n')
+    # The real launcher check, against a fake package with one node already built.
+    shutil.copy(SCRIPT.parent / 'ensure_nav_fleet_built.sh', repo / 'scripts')
+    (repo / 'src' / 'nav_fleet').mkdir(parents=True)
+    (repo / 'src' / 'nav_fleet' / 'setup.py').write_text(
+        "entry_points={'console_scripts': ['esp32_driver = nav_fleet.esp32_driver:main']}\n")
+    (repo / 'install' / 'nav_fleet' / 'lib' / 'nav_fleet').mkdir(parents=True)
+    _write_exec(repo / 'install' / 'nav_fleet' / 'lib' / 'nav_fleet' / 'esp32_driver', '')
+    _write_exec(stubs / 'colcon', FAKE_COLCON)
     ros_setup = tmp_path / 'ros_setup.bash'
     ros_setup.write_text('')
     _write_exec(stubs / 'git', FAKE_GIT)
@@ -239,3 +259,94 @@ def test_no_bag_opt_out_still_runs_the_mission(boot_env):
     ev = _events(events)
     assert proc.returncode == 0, out
     assert 'bag_start' not in ev and 'docker_run_finished' in ev
+
+
+def _docker_run_line(events):
+    return next(line for line in events.read_text().splitlines()
+                if line.startswith('docker_run '))
+
+
+def test_real_map_is_mounted_and_selected_when_present(boot_env):
+    """The robot's own map is kept out of git (a floor plan of a real home) in
+    ~/fleet-ci-data/maps; when it is there the container must use it."""
+    env, events, home = boot_env
+    maps = home / 'fleet-ci-data' / 'maps'
+    maps.mkdir(parents=True)
+    (maps / 'bedroom_real.yaml').write_text('image: bedroom_real.pgm\n')
+    (maps / 'bedroom_real.pgm').write_bytes(b'P5 1 1 255 \x00')
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+
+    line = _docker_run_line(events)
+    assert '-e NAV2_MAP_FILE=bedroom_real.yaml' in line
+    assert 'NAV2_MAP_FILE=living_room.yaml' not in line
+    for ext in ('yaml', 'pgm'):
+        assert (f'-v {maps}/bedroom_real.{ext}:'
+                f'/ros2_ws/src/nav_fleet/maps/bedroom_real.{ext}:ro') in line
+    assert "the robot's own map" in out
+    assert 'WARNING' not in out
+
+
+@pytest.mark.parametrize('present', [(), ('bedroom_real.yaml',), ('bedroom_real.pgm',)])
+def test_borrowed_map_fallback_is_loud_when_the_real_map_is_missing_or_incomplete(
+        boot_env, present):
+    env, events, home = boot_env
+    maps = home / 'fleet-ci-data' / 'maps'
+    maps.mkdir(parents=True)
+    for name in present:
+        (maps / name).write_text('x')
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+
+    line = _docker_run_line(events)
+    assert '-e NAV2_MAP_FILE=living_room.yaml' in line
+    assert 'bedroom_real' not in line            # half a map must never be mounted
+    assert 'WARNING: no real map' in out
+
+
+def _add_new_node_to_setup_py(home):
+    setup_py = home / 'autonomous-fleet-testbed' / 'src' / 'nav_fleet' / 'setup.py'
+    setup_py.write_text(
+        "entry_points={'console_scripts': ['esp32_driver = nav_fleet.esp32_driver:main',\n"
+        "    'slip_monitor = nav_fleet.slip_monitor:main']}\n")
+
+
+def test_no_rebuild_when_every_node_already_has_a_launcher(boot_env):
+    env, events, _home = boot_env
+    env['FAKE_MISSION_SECONDS'] = '1'
+    _finish(_start(env))
+    assert 'colcon' not in _events(events)
+
+
+def test_a_node_added_since_the_last_build_triggers_a_rebuild_before_the_drivers(boot_env):
+    """2026-11-18: the Jetson's install/ dated from August and sync no longer builds;
+    a new node in drivers_only_launch.py would have killed the driver layer."""
+    env, events, home = boot_env
+    _add_new_node_to_setup_py(home)
+    env['FAKE_COLCON_BUILDS'] = 'slip_monitor'
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+
+    lines = events.read_text().splitlines()
+    build = next(i for i, line in enumerate(lines) if line.startswith('colcon '))
+    assert 'build --symlink-install --packages-select nav_fleet' in lines[build]
+    assert build < _events(events).index('drivers_start')
+    assert 'no launcher for: slip_monitor' in out
+    assert 'docker_run' in _events(events)           # and the mission still runs
+
+
+@pytest.mark.parametrize('colcon_env', [
+    {'FAKE_COLCON_RC': '1'},                         # the build itself fails
+    {},                                              # build "succeeds", launcher still absent
+])
+def test_no_mission_when_the_rebuild_does_not_produce_the_launcher(boot_env, colcon_env):
+    env, events, home = boot_env
+    _add_new_node_to_setup_py(home)
+    env.update(colcon_env)
+    env['FAKE_MISSION_SECONDS'] = '1'
+    proc = _start(env)
+    out = _finish(proc)
+    assert proc.returncode == 1
+    assert 'FATAL' in out
+    assert 'drivers_start' not in _events(events)
+    assert 'docker_run' not in _events(events)
