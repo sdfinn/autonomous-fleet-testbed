@@ -21,8 +21,12 @@ small exercise). At the START of a session, offer to re-show the latest one.
 
 **Releases relabeled 2026-07-17: numbers now = execution order.** The agentic &
 alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean today's
-R2. Ladder: R1 Foundation → R2 Agentic & Alignment → R3 Fleet & Input Expansion → R4
-Autonomy & Perception → R5 Self-Testing Fleet; drone CUT (revivable with reason).
+R2. **Ladder cut from 5 releases to 3 on 2026-07-28** (source of truth:
+`planning/Releases2Plus.md`): R1 Foundation (ends at `r1-complete`) → R2 Agentic &
+Alignment Layer + Real Onboard Autonomy → R3 Fleet & Input Expansion, Real SLAM, and
+Autonomy & Perception. The former R4 (Autonomy & Perception) and R5 (Self-Testing
+Fleet) are no longer standalone releases — their content was folded into R3 and the
+long-range ideas doc. Drone CUT (revivable with a written reason).
 
 **Sister project:** `~/wayfarer` (private, sim-only, Isaac Sim, "Project Luna";
 named `synthetic-fleet` until 2026-11 — older docs/notes use that name)
@@ -37,7 +41,40 @@ First note (2026-11-15, doorway): this repo's `tools/mission2_day.py`
 `_judge_and_log_leg` ignores the mission's own `ok` flag, so a failed navigate leg
 can still be judged PASS (verified true here 2026-11-16; not fixed).
 
-## Current status — START HERE (last real work 2026-11-16)
+## Current status — START HERE (last real work 2026-11-17)
+
+**2026-11-17 session** (full notes: `docs/sessions/2026-11-17.md`).
+- **`robot_boot.sh` now records a bag on every run** (bare-metal, to
+  `~/fleet-ci-data/robot_boot_logs/bag_<ts>/`, all topics minus full camera frames,
+  ~0.5 MB/s; `ROBOT_BOOT_NO_BAG=1` skips) **and Ctrl+C / SIGTERM / SIGHUP stop the
+  mission**: container force-removed, then bag finalized, then drivers. Proven by
+  `tests/test_robot_boot_script.py` (stand-ins that ignore signals like the real
+  container) and on the robot with Ctrl+C before Nav2 was up. Not explicitly tested:
+  Ctrl+C mid-drive, SIGHUP on the robot.
+- **Second camera explored** — USB webcam on the pan-tilt mast, `/dev/video0`. Better
+  than the OAK for colour in room light (OAK exposure tuning does not fix its dark
+  image); the OAK is the one with depth. All facts, measurements and an ordered list of
+  ways to combine the two: `docs/cameras.md`.
+- **Attended nav-only run: wheel slip at the hallway runner's edge.** Wheels spun for
+  ~16 s, odometry counted ~1.1 m that did not happen, AMCL followed the odometry, the
+  robot turned for the bedroom door a metre early and drove into the hall-end corner.
+  Slip is invisible to the stack (EKF's only speed source is the wheel encoders; the
+  board reports one speed per side). Likely also behind the 2026-11-16 0.55 m home
+  error (hypothesis). Evidence: `reports/robot_boot_20261117_navonly/`.
+- Session ended on a flat robot battery (looked like WiFi trouble: the address kept
+  changing, then no route).
+
+**UNCOMMITTED at close (2026-11-17):** `scripts/robot_boot.sh`,
+`tests/test_robot_boot_script.py`, `RealRobotStartup.md`, `docs/cameras.md`,
+`docs/sessions/2026-11-17.md`, `CLAUDE.md`. The Jetson has an older hand copy of
+`robot_boot.sh` (no SIGHUP handling). Mike's rule: "commit and push everything" = all of it.
+
+**Next session, in order:** (1) charge; commit/push, CI green, Jetson checkout matches;
+(2) roll the hallway runner back, re-run nav-only (bag is automatic) and look at the
+home error; (3) lidar-based slip detection, developed offline against the 2026-11-17
+bag; (4) the robot's own SLAM map (A3); (5) collision avoidance/recovery; (6) turn gain
+while driving; (7) A4 colour calibration on the USB camera. Check the front-right tyre
+before runs. Intermittent stage-2 near-goal stall is still real and unfixed.
 
 **2026-11-16 session** (full notes: `docs/sessions/2026-11-16.md`; previous:
 `docs/sessions/2026-11-14.md`). Stage-4 CI hang fixed and pushed (`a6a5da6`, run
@@ -58,24 +95,14 @@ Result: run 2 made one trip to the marker and back but stopped ~0.55 m from home
 pose estimate jumped right after "Reached the goal"); the second attempt started from
 there and hit the dresser. No bag was recorded for run 2, so that is undiagnosed.
 
-**UNCOMMITTED at close:** everything after `a6a5da6` (driver, scan, `robot_boot.sh`,
-tests, `CLAUDE.md`, session notes). The Jetson has the code copied by hand; any CI
-sync wipes it unless pushed first. Mike's rule: "commit and push everything" = all of it.
-
-**Next session, in order:** (1) commit/push, CI green; (2) make the bag recording
-automatic in `robot_boot.sh` and make Ctrl+C actually stop the mission (today it does
-NOT — the only stop is `docker rm -f robot_mission`); (3) re-run nav-only with a bag
-and diagnose the home error; (4) build the robot's own SLAM map (A3); (5) collision
-avoidance/recovery; (6) turn gain while driving. Front-right tyre came partly off its
-rim in run 1 — on-the-spot spins load it; check it before runs. Intermittent stage-2
-near-goal stall is still real and unfixed.
+(Committed and pushed as `4022c64`, CI run `44003193932` green.)
 
 **Where things stand:** the real physical robot (Waveshare UGV + Jetson Orin Nano)
 is mid bring-up. Full sim + HIL CI pipeline is green. The real-robot production path
 (`scripts/robot_boot.sh`: driver layer bare-metal + Nav2/EKF/ball_detector/
 mission_runner in the arm64 container) now boots, localizes, and drives at true speed
 with real odometry and heading (since 2026-11-16) — but has no working collision
-avoidance or stuck recovery, and uses a borrowed map.
+avoidance or stuck recovery, no wheel-slip detection, and uses a borrowed map.
 
 **2026-08-12/13 session, in brief (several conclusions SUPERSEDED 2026-11-16 — see above)** (full detail: history, "first real
 `robot_boot.sh` production-path test"):
@@ -229,7 +256,10 @@ scripts/robot_boot.sh                # real production mission path
   occludes 46-123 deg raw; nothing occludes dead ahead. The OAK camera the stack uses
   is fixed to the chassis front (not on the pan-tilt). Vendor lidar frame `base_laser`
   is rewritten to `lidar_link` by `scan_masker`. Real footprint 0.253 x 0.231 m;
-  `robot_radius: 0.24`. Gimbal T:133: pan -=left/+=right, tilt -=down.
+  `robot_radius: 0.24`. Gimbal T:133: pan -=left/+=right, tilt -=down/+=up (seen
+  2026-11-17); the serial port is exclusive, so not while `esp32_driver` runs. Drive:
+  front and rear wheel pairs are motorized, the centre pair rolls free; the board
+  reports ONE speed per side. A second, USB camera sits on the pan-tilt (`docs/cameras.md`).
 - **Per-robot TF is namespaced:** subscribe to `/robot_001/tf`, not `/tf`.
 - `local_costmap.global_frame: "odom"` is explicit; `nav2_only_launch.py` uses an
   `OpaqueFunction` to inject `use_sim_time` into the params YAML because

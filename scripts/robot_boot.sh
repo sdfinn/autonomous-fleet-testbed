@@ -54,7 +54,9 @@ TS=$(date +%Y%m%dT%H%M%S)
 # --- Real-hardware driver layer, BARE-METAL (fixed 2026-08-10) ---
 echo "=== [robot-boot] starting the real driver layer bare-metal ==="
 set +u
-source /opt/ros/jazzy/setup.bash
+# ROBOT_BOOT_ROS_SETUP exists only so tests/test_robot_boot_script.py can run this
+# script on a machine with no ROS 2 installed (CI stage 1). Never set it on the robot.
+source "${ROBOT_BOOT_ROS_SETUP:-/opt/ros/jazzy/setup.bash}"
 source "$REPO/install/setup.bash"
 # ldlidar_ros2 lives in its own separate overlay (~/ros2_drivers_ws), normally
 # sourced by .bashrc -- which a non-interactive boot-time script never runs. Without
@@ -76,6 +78,102 @@ bash "$REPO/scripts/regen_cyclonedds_config.sh"
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 \
   CYCLONEDDS_URI="file://$HOME/cyclonedds-hil.xml"
 
+# --- Teardown, defined BEFORE anything is started (2026-11-17) ---
+# Three things get started below, each as a background job in its own process group
+# (`set -m` around each `&`): the bag recorder, the driver layer, the mission container.
+# Because none of them shares this script's process group, a Ctrl+C in the terminal
+# reaches ONLY this script, and this script decides the stop order:
+#   1. the mission container (the thing commanding the wheels) -- force-removed, because
+#      its PID 1 is a plain bash script and Linux drops SIGINT/SIGTERM for a container's
+#      PID 1 with no handler (found live 2026-11-16: Ctrl+C did nothing for 25 s). With
+#      it gone, esp32_driver's 200 ms watchdog zeroes the wheels.
+#   2. the bag recorder -- SIGINT, so the mcap is finalized, and AFTER the container so
+#      the recording still contains the wheels stopping.
+#   3. the driver layer -- SIGINT, so ros2 launch shuts its nodes down cleanly instead
+#      of leaving them orphaned to poison the next run.
+BAG_PID=""
+DRIVERS_PID=""
+MISSION_PID=""
+
+# SIGINT a background job, give it 15 s to exit by itself, then SIGKILL it.
+stop_job() {
+  local name=$1 pid=$2 waited=0
+  [ -n "$pid" ] || return 0
+  kill -0 "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null || true; return 0; }
+  echo "=== [robot-boot] stopping ${name} (pid ${pid}) ==="
+  kill -INT "$pid" 2>/dev/null || true
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge 150 ]; then
+      echo "WARN: ${name} still running 15s after SIGINT -- killing it" >&2
+      kill -KILL "$pid" 2>/dev/null || true
+      break
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  wait "$pid" 2>/dev/null || true
+}
+
+cleanup() {
+  # A second Ctrl+C must not cut the teardown short (an unfinalized bag is useless).
+  trap '' INT TERM HUP
+  if [ -n "$MISSION_PID" ]; then
+    echo "=== [robot-boot] removing the mission container ==="
+    docker rm -f robot_mission >/dev/null 2>&1 || true
+    wait "$MISSION_PID" 2>/dev/null || true
+  fi
+  stop_job "the bag recorder" "$BAG_PID"
+  stop_job "the bare-metal driver layer" "$DRIVERS_PID"
+}
+trap cleanup EXIT
+# `exit` inside a signal trap runs the EXIT trap above. 130/143 = the conventional
+# "killed by SIGINT/SIGTERM" exit codes (128 + signal number).
+trap 'echo "=== [robot-boot] Ctrl+C -- stopping the mission ===" >&2; exit 130' INT
+trap 'echo "=== [robot-boot] SIGTERM -- stopping the mission ===" >&2; exit 143' TERM
+# SIGHUP = the terminal went away (SSH session dropped, e.g. WiFi lost while the robot
+# is driving). Nobody can press Ctrl+C any more, so stop the same way.
+trap 'echo "=== [robot-boot] terminal lost (SIGHUP) -- stopping the mission ===" >&2; exit 129' HUP
+
+# --- Evidence bag, BARE-METAL, on every run (2026-11-17) ---
+# Run 2 on 2026-11-16 finished with a 0.55 m position error and no recording, so it
+# could not be diagnosed. The recorder runs out here, not in the container, so it
+# survives the container being force-removed, and it starts before the drivers so the
+# very first odometry/scan/TF messages are in it. Written under ~/fleet-ci-data, not
+# reports/: `hil_stage.sh sync` runs `git clean -fd` on this checkout.
+# --all-topics minus full camera frames: raw ones are megabytes each, and their
+# compressed/zstd copies are not much smaller (checked on the Jetson 2026-11-17: the
+# zstd topics alone wrote 5 MB/s). The small theora video streams stay, so the bag
+# still has pictures: about 0.5 MB/s in total (run 1's bag was 41 MB for 82 s).
+# --node-name: the default name, rosbag2_recorder, is also the name of the container's
+# failure-bag recorder (nav_fleet/failure_bag.py), whose /rosbag2_recorder/snapshot
+# service must be answered by that recorder only.
+# ROBOT_BOOT_NO_BAG=1 skips the recording (e.g. a full disk); otherwise no recorder
+# means no mission.
+BAG_DIR="$LOG_DIR/bag_${TS}"
+if [ -n "${ROBOT_BOOT_NO_BAG:-}" ]; then
+  echo "=== [robot-boot] ROBOT_BOOT_NO_BAG set -- NOT recording a bag for this run ==="
+else
+  echo "=== [robot-boot] recording a bag to ${BAG_DIR} ==="
+  BAG_LOG="$LOG_DIR/bag_${TS}.log"
+  set -m
+  ros2 bag record --all-topics \
+    --exclude-regex '.*/image_(raw|rect)(/compressed|/compressedDepth|/zstd)?$' \
+    --node-name robot_boot_recorder \
+    -o "$BAG_DIR" \
+    > "$BAG_LOG" 2>&1 < /dev/null &
+  BAG_PID=$!
+  set +m
+  bag_deadline=$((SECONDS + 15))
+  until [ -d "$BAG_DIR" ]; do
+    if ! kill -0 "$BAG_PID" 2>/dev/null || (( SECONDS >= bag_deadline )); then
+      echo "FATAL: the bag recorder did not start -- see $BAG_LOG (ROBOT_BOOT_NO_BAG=1 runs without one)" >&2
+      tail -n 20 "$BAG_LOG" >&2 || true
+      exit 1
+    fi
+    sleep 0.5
+  done
+fi
+
 DRIVERS_LOG="$LOG_DIR/drivers_${TS}.log"
 rm -f "$DRIVERS_LOG"
 # set -m (job control) bracketed around only the backgrounding itself: without it, bash
@@ -96,17 +194,7 @@ ros2 launch nav_fleet drivers_only_launch.py \
 DRIVERS_PID=$!
 set +m
 
-# Clean bare-metal teardown on ANY exit path (mission success, mission failure, this
-# script killed) — SIGINT (not SIGKILL) so ros2 launch propagates it to esp32_driver/
-# lidar/camera/scan_masker/camera_relay the same clean way Ctrl+C already does
-# (CLAUDE.md's own established teardown pattern), instead of leaving them orphaned to
-# poison the NEXT boot's driver layer.
-cleanup_drivers() {
-  echo "=== [robot-boot] stopping the bare-metal driver layer (pid ${DRIVERS_PID}) ==="
-  kill -INT "$DRIVERS_PID" 2>/dev/null || true
-  wait "$DRIVERS_PID" 2>/dev/null || true
-}
-trap cleanup_drivers EXIT
+# Teardown of the driver layer on ANY exit path is cleanup() above (EXIT trap).
 
 echo "=== [robot-boot] waiting up to 60s for the driver layer to report up ==="
 # I2 (2026-08-11): the old single 'camera_relay up' check could report the whole
@@ -166,7 +254,12 @@ mkdir -p "$REPO/reports"
 if [ -n "${MISSION2_IGNORE_REACTIONS:-}" ]; then
   echo "=== [robot-boot] MISSION2_IGNORE_REACTIONS set — ball reactions SUPPRESSED (navigation-only diagnostic run) ==="
 fi
-docker run --rm --name robot_mission --network host --ipc host \
+# Run in the BACKGROUND and `wait` for it: bash only runs a signal trap once the
+# foreground command returns, and `docker run` never returns on Ctrl+C (see the
+# teardown comment above) -- but `wait` is interrupted by a trapped signal at once.
+# The ( ) keeps `docker run | tee` one job whose exit status is docker's (pipefail).
+set -m
+(docker run --rm --name robot_mission --network host --ipc host \
   -v "$REPO/reports:/ros2_ws/reports" \
   -v "$HOME/fleet-ci-data:/root/fleet-ci-data" \
   -e USE_SIM_TIME=false \
@@ -177,4 +270,13 @@ docker run --rm --name robot_mission --network host --ipc host \
   -e ROBOT_MODE=mission \
   ${MISSION2_IGNORE_REACTIONS:+-e MISSION2_IGNORE_REACTIONS=1} \
   "$IMAGE" bash /ros2_ws/scripts/container_entrypoint.sh \
-  2>&1 | tee "$LOG_DIR/robot_boot_${TS}.log"
+  2>&1 < /dev/null | tee "$LOG_DIR/robot_boot_${TS}.log") &
+MISSION_PID=$!
+set +m
+MISSION_RC=0
+wait "$MISSION_PID" || MISSION_RC=$?
+MISSION_PID=""
+if [ -n "$BAG_PID" ]; then
+  echo "=== [robot-boot] mission exited with ${MISSION_RC}; bag: ${BAG_DIR} ==="
+fi
+exit "$MISSION_RC"

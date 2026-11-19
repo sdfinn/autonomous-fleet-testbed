@@ -876,6 +876,19 @@ explicitly R2 scope, not R1):
   — it's specifically wrong for this container-mode real-robot path.
 - [ ] A rosbag evidence bag auto-captures to `reports/failure_bags/` on any FAIL — pull
   it the same way if you want it (`scp`), not required.
+- [ ] **Every `robot_boot.sh` run records a full bag (2026-11-17)** to
+  `~/fleet-ci-data/robot_boot_logs/bag_<timestamp>/` on the Jetson — all topics except
+  full camera frames (the small theora video streams are kept), about 0.5 MB/s. The
+  recorder starts before the drivers and is finalized on every exit path. If it cannot
+  start, the mission does not run; `ROBOT_BOOT_NO_BAG=1 scripts/robot_boot.sh` skips it.
+- [ ] **Stopping a run by hand: Ctrl+C in the `robot_boot.sh` terminal (2026-11-17).**
+  It removes the mission container (the driver's 200 ms watchdog then zeroes the
+  wheels), finalizes the bag, and stops the driver layer, in that order.
+  `sudo systemctl stop robot-mission.service` does the same; `docker rm -f
+  robot_mission` from a second terminal still works. *Proven with stand-in commands in
+  `tests/test_robot_boot_script.py`, and on the robot 2026-11-17 with Ctrl+C sent
+  before Nav2 was up (exit 7 s later, bag finalized, nothing left running). Not yet
+  tried while the robot is actually driving.*
 
 ### B3. Code changed — getting back into HIL mode
 
