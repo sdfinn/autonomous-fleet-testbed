@@ -173,6 +173,16 @@ controller_server:
       # when uncertain" behavior (Mike, 2026-07-15). Sequenced after the EKF fix and measured
       # separately: EKF alone gave 0.14–0.15 m ground-truth misses; this held/improved them.
       rotate_to_heading_angular_vel: 0.5
+      # Final-heading overshoot (2026-11-19; was 16-37 deg at home). RPP clamps the spin
+      # command to MEASURED turn rate +/- max_angular_accel * dt (default 3.2 rad/s^2 at
+      # 20 Hz = +/-0.16 rad/s). On this skid-steer base the real rate runs above the
+      # command, so each tick the clamp dragged the command up to "measured - 0.16",
+      # which sped the robot up again: commands reached 1.15 rad/s and the gyro 1.4-1.6
+      # against the 0.5 asked for above (bags 2026-11-18/19). The base answers a command
+      # about 0.3 s late, so it swept ~25 deg past the goal heading before stopping.
+      # 10.0 widens the window to +/-0.5 rad/s, so the command can stay at 0.5 while the
+      # measured rate is anywhere up to 1.0.
+      max_angular_accel: 10.0
 
 planner_server:
   ros__parameters:
