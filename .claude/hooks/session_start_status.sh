@@ -18,15 +18,57 @@ COV_MSG="Coverage: local stage-1 subset — see CLAUDE.md Key Commands for the e
 
 FLEET_MSG=$(cd ~/autonomous-fleet-testbed && ~/fleet-env/bin/python -m tools.fleet_status 2>/dev/null || echo "Fleet status unavailable (DB not initialized yet?) — run manually: python -m tools.fleet_status")
 
+# --- Last session's recap (2026-11-19, Mike: "I always ask what did we do last time,
+# what were the issues and what is next") ---
+# Taken straight from the newest docs/sessions/YYYY-MM-DD.md, which every session ends
+# by writing (CLAUDE.md, "Session notes"): its Outcome paragraph, its "Open at close"
+# list and its "Next (in order)" list. Shown to the user here, and handed to Claude with
+# an instruction to read it back in its first reply. No notes file = no recap, silently.
+section() {    # section <file> <heading text>: the lines under "## <heading>" up to the next "## " or "---"
+  awk -v want="## $2" '
+    $0 == want {on = 1; next}
+    on && (/^## / || /^---[[:space:]]*$/) {exit}
+    on {print}' "$1" | sed -e '/./,$!d'
+}
+NOTES=$(ls "${CLAUDE_PROJECT_DIR:-$HOME/autonomous-fleet-testbed}"/docs/sessions/20??-??-??.md 2>/dev/null | sort | tail -n 1 || true)
+RECAP=""
+if [ -n "$NOTES" ] && [ -r "$NOTES" ]; then
+  outcome=$(awk '/^\*\*Outcome:\*\*/ {on = 1} on && /^[[:space:]]*$/ {exit} on {print}' "$NOTES")
+  RECAP="Last session: $(basename "$NOTES" .md) (full notes: docs/sessions/$(basename "$NOTES"))
+
+${outcome}
+
+Open at close:
+$(section "$NOTES" "Open at close")
+
+Next (in order):
+$(section "$NOTES" "Next (in order)")"
+fi
+
 FULL_MSG="${DASH_MSG}
 ${COV_MSG}
 
 ${FLEET_MSG}"
+USER_MSG="$FULL_MSG"
+CLAUDE_MSG="$FULL_MSG"
+if [ -n "$RECAP" ]; then
+  USER_MSG="${RECAP}
 
-jq -n --arg msg "$FULL_MSG" '{
-  systemMessage: $msg,
+${FULL_MSG}"
+  CLAUDE_MSG="${FULL_MSG}
+
+SESSION RECAP -- standing request from Mike (2026-11-19): begin your FIRST reply of this
+session by reading this back to him without being asked -- what we did last time, what
+the issues were, and what is next -- then answer whatever he asked. Read the full notes
+file first if he asks for detail.
+
+${RECAP}"
+fi
+
+jq -n --arg user "$USER_MSG" --arg claude "$CLAUDE_MSG" '{
+  systemMessage: $user,
   hookSpecificOutput: {
     hookEventName: "SessionStart",
-    additionalContext: $msg
+    additionalContext: $claude
   }
 }'

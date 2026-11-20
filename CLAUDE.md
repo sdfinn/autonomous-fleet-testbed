@@ -17,7 +17,11 @@ long version to the history file and leave a short summary here.
 closes with `docs/sessions/YYYY-MM-DD.md` — each item written as issue → how found →
 fix (code excerpt + file:line) → verified → lesson, plus an "Open at close" / "Next"
 list and a "Learning — guided reading" section (file + line ranges, what to notice, a
-small exercise). At the START of a session, offer to re-show the latest one.
+small exercise). **At the START of a session, read the latest one back without being
+asked (Mike, 2026-11-19):** what we did last time, what the issues were, what is next.
+The SessionStart hook (`.claude/hooks/session_start_status.sh`) shows him the notes'
+Outcome, "Open at close" and "Next (in order)" and hands them to Claude for that first
+reply, so keep those three headings exactly as they are in every notes file.
 **At close, also PRINT it in the chat (Mike, 2026-11-18):** per problem — the problem,
 what was learned, and the code before/after (real lines, file:line). The file alone is
 not the close-out.
