@@ -1,0 +1,38 @@
+# HSV detection profile for the REAL robot's front camera (OAK-D-Lite, fixed to the
+# chassis; image 1280x720 as republished by camera_relay). RealRobotStartup.md A4.
+#
+# Measured 2026-11-19, bedroom, evening room light (ceiling light on), croquet balls
+# 7.8 cm across, robot stationary: the balls at 0.50, 0.80, 1.05 and 1.55 m (lens to
+# the front of the ball), plus the 33 ball-free photos the robot took on its own
+# missions that day. Frames: reports/camera_cal_20261119/ on the workstation.
+#
+# NOT YET CHECKED: daylight, other rooms, a moving robot (motion blur), a ball partly
+# hidden. One lighting condition is one data point -- re-measure before trusting it
+# anywhere else.
+colors:
+  # Core of each ball in those frames: yellow hue 36-38, saturation 0.69-0.81,
+  # brightness 0.36-0.41; red hue 352-358, saturation 0.57-1.0, brightness 0.11-0.15.
+  # The camera's picture is dark in this light (frame mean ~80 of 255), which is why
+  # red's v_min is so low. Tighter bands than these LOST balls: holes open in the mask
+  # and it stops looking round.
+  #
+  # range_k per colour: at the same distance the red ball's dark rim falls out of the
+  # band, so it measures ~13% narrower than the yellow one. width_px * distance to the
+  # ball's centre, at the four distances: yellow 87.3 / 92.3 / 93.7 / 93.8, red
+  # 78.7 / 83.1 / 81.7 / 77.9.
+  yellow: {h: [28, 46], s_min: 0.45, v_min: 0.25, range_k: 91.8}
+  red:    {h: [340, 16], s_min: 0.45, v_min: 0.08, range_k: 80.3}   # wraps through 0
+min_pixels: 40
+range_k: 86.0           # fallback for a colour without its own (mean of the two above)
+# Only ball-shaped blobs count (hsv_detect.SHAPE_DEFAULTS explains each key). Without
+# this the wood floor, which is inside the yellow band, was one "yellow ball" as wide as
+# the picture: read as 4 cm away with no ball in the room.
+# With these values, on the 33 ball-free photos: small round false blobs remain in 18
+# (yellow) and 11 (red) of them, the widest 44 px and 26 px -- they read as 2.1 m and
+# 3.1 m away, against reaction distances of 0.8 m and 1.3 m.
+# max_aspect has little room to move: on the rug the pile hides the bottom of a ball
+# (yellow measured 110x85 px at 0.8 m = 1.29), and at 1.5 a 272 px strip of floor gets in.
+shape:
+  min_fill: 0.55
+  max_aspect: 1.35
+  min_width_px: 12
