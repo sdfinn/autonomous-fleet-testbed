@@ -34,9 +34,27 @@ SHAPE_DEFAULTS = {
     'min_fill': 0.55,       # blob pixels / bounding-box pixels
     'max_fill': 1.0,
     'max_aspect': 1.35,     # longer bounding-box side / shorter side
+    # Same limit for a blob that is WIDER than it is tall (None = use max_aspect). A ball
+    # lit from above or behind loses its top to glare, and what is left is the full
+    # width but only the lower half. Width is what range is read from, so with a
+    # `floor:` section doing the real checking this can be looser than max_aspect.
+    'max_flat_aspect': None,
     'min_width_px': 1,      # narrower blobs are speckle, whatever their pixel count
     'open_px': 3,           # erase specks and bridges thinner than this first (0 = off)
 }
+
+
+# Optional `floor:` section of a camera profile (2026-11-20). A ball rests on the floor
+# and the camera is at a fixed height, so a nearer ball is both wider in the picture and
+# lower in it: the bottom row of a real ball is a straight-line function of its width,
+#     bottom_row = row0 + slope * width_px
+# whatever the light is doing to its colour. Measured on the real front camera: 15 ball
+# sightings (lamp, daylight, curtain; 0.5-1.55 m; yellow and red) within 26 px of the
+# line; of 51 false blobs from ball-free photos, one within 30 px, and every one that
+# read close enough to cause a reaction 75-359 px off it. With this section a blob must
+# sit within `tolerance_px` of the line to count, and the largest blob that DOES is
+# taken, not the largest blob in the frame.
+FLOOR_KEYS = ('row0', 'slope', 'tolerance_px')
 
 
 def load_hsv_config(path):
@@ -51,6 +69,11 @@ def load_hsv_config(path):
         if unknown:
             raise ValueError(f'hsv config {path}: unknown shape key(s) {sorted(unknown)}')
         cfg['shape'] = {**SHAPE_DEFAULTS, **cfg['shape']}
+    if 'floor' in cfg:
+        if 'shape' not in cfg:
+            raise ValueError(f'hsv config {path}: a floor section needs a shape section')
+        if set(cfg['floor']) != set(FLOOR_KEYS):
+            raise ValueError(f'hsv config {path}: floor needs exactly {list(FLOOR_KEYS)}')
     return cfg
 
 
@@ -74,9 +97,10 @@ def detect_balls(rgb, cfg):
     """Detect configured ball colors in one RGB frame.
 
     Returns one dict per detected color: {'color', 'cx', 'cy', 'width_px', 'height_px',
-    'range_m', 'pixels', 'edge_clipped'}. One ball per color per frame by design (Mission
-    2 runs place a single ball; the bounding box of a multi-blob mask would simply be
-    wrong — accepted). 'range_m' is NaN when 'edge_clipped' is True (see EDGE_MARGIN_PX).
+    'bottom_px', 'range_m', 'pixels', 'edge_clipped'}. One ball per color per frame by
+    design (Mission 2 runs place a single ball; the bounding box of a multi-blob mask
+    would simply be wrong — accepted). 'range_m' is NaN when 'edge_clipped' is True
+    (see EDGE_MARGIN_PX).
     """
     h_img, w_img = rgb.shape[:2]
     h, s, v = rgb_to_hsv(rgb)
@@ -89,7 +113,8 @@ def detect_balls(rgb, cfg):
             mask = (h >= h_lo) | (h <= h_hi)
         mask &= (s >= band['s_min']) & (v >= band['v_min'])
         if 'shape' in cfg:
-            mask = _largest_ball_shaped_blob(mask, cfg['shape'], cfg['min_pixels'])
+            mask = _largest_ball_shaped_blob(mask, cfg['shape'], cfg['min_pixels'],
+                                             cfg.get('floor'))
             if mask is None:
                 continue
         pixels = int(mask.sum())
@@ -105,6 +130,7 @@ def detect_balls(rgb, cfg):
             'cy': float(ys.mean()),
             'width_px': width,
             'height_px': int(ys.max() - ys.min() + 1),
+            'bottom_px': int(ys.max()),       # lowest row of the ball (see FLOOR_KEYS)
             # A colour may carry its own range_k (see hsv_realcam.yaml for why).
             'range_m': (float('nan') if clipped
                         else band.get('range_k', cfg['range_k']) / width),
@@ -114,9 +140,10 @@ def detect_balls(rgb, cfg):
     return out
 
 
-def _largest_ball_shaped_blob(mask, shape, min_pixels):
+def _largest_ball_shaped_blob(mask, shape, min_pixels, floor=None):
     """The biggest connected blob in `mask` that could be a ball, as a mask of its own;
-    None if there is none. See SHAPE_DEFAULTS for what "could be a ball" means."""
+    None if there is none. See SHAPE_DEFAULTS for what "could be a ball" means, and
+    FLOOR_KEYS for the extra test a `floor` section adds."""
     from scipy import ndimage          # local: the simulator profile never needs it
     shape = {**SHAPE_DEFAULTS, **shape}
     original = mask
@@ -138,8 +165,16 @@ def _largest_ball_shaped_blob(mask, shape, min_pixels):
         width = box[1].stop - box[1].start
         if width < shape['min_width_px']:
             continue
-        if max(width, height) / min(width, height) > shape['max_aspect']:
+        flat_limit = shape['max_flat_aspect'] or shape['max_aspect']
+        if width >= height:
+            if width / height > flat_limit:
+                continue
+        elif height / width > shape['max_aspect']:
             continue
+        if floor is not None:
+            expected_bottom = floor['row0'] + floor['slope'] * width
+            if abs((box[0].stop - 1) - expected_bottom) > floor['tolerance_px']:
+                continue
         if not shape['min_fill'] <= area / (width * height) <= shape['max_fill']:
             continue
         if best is None or area > best[0]:

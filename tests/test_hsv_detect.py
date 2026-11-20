@@ -205,3 +205,80 @@ def test_real_camera_profile_loads_and_is_a_shape_profile():
     # would read every real ball at about half its distance.
     assert 75 < cfg['colors']['red']['range_k'] < 85
     assert 88 < cfg['colors']['yellow']['range_k'] < 96
+
+
+# --- `floor:` profiles: a ball rests on the floor, so its width fixes its row ---------
+@pytest.fixture
+def floor_cfg(real_cfg):
+    """A ball N px wide has its bottom edge on row 100 + N (tolerance 10)."""
+    real_cfg['floor'] = {'row0': 100, 'slope': 1.0, 'tolerance_px': 10}
+    return real_cfg
+
+
+def test_floor_rule_accepts_a_ball_that_sits_where_a_ball_of_its_size_must(floor_cfg):
+    from nav_fleet.hsv_detect import detect_balls
+    frame = _disc(_frame(w=320, h=240), 160, 120, 20, YELLOW)      # 41 wide, bottom row 140
+    (det,) = detect_balls(frame, floor_cfg)
+    assert det['width_px'] == 41 and det['bottom_px'] == 140
+
+
+@pytest.mark.parametrize('cy', [60, 200])
+def test_floor_rule_rejects_the_same_round_blob_at_the_wrong_height(floor_cfg, cy):
+    """2026-11-20: a round patch of floor by a white post read as a yellow ball 1.0 m
+    away, and patches of wall as red balls at 1.0-1.2 m. Right size and shape, wrong
+    row: a real ball that size could not be there."""
+    from nav_fleet.hsv_detect import detect_balls
+    frame = _disc(_frame(w=320, h=240), 160, cy, 20, YELLOW)
+    assert detect_balls(frame, floor_cfg) == []
+
+
+def test_floor_rule_takes_the_ball_on_the_floor_not_a_bigger_blob_off_it(floor_cfg):
+    from nav_fleet.hsv_detect import detect_balls
+    frame = _frame(w=320, h=240)
+    _disc(frame, 80, 60, 30, YELLOW)                   # bigger, but floating: not a ball
+    _disc(frame, 240, 125, 15, YELLOW)                 # 31 wide, bottom row 140: is one
+    (det,) = detect_balls(frame, floor_cfg)
+    assert det['cx'] == pytest.approx(240, abs=0.5) and det['width_px'] == 31
+
+
+def test_a_ball_with_its_top_lost_to_glare_counts_only_when_flat_blobs_are_allowed(floor_cfg):
+    """The red ball at 1.05 m with the window behind it: full width, lower half only."""
+    from nav_fleet.hsv_detect import detect_balls
+    frame = _disc(_frame(w=320, h=240), 160, 120, 20, YELLOW)
+    frame[:114] = 0                                    # the top of the ball is gone
+    assert detect_balls(frame, floor_cfg) == []        # 41 wide, 27 tall: 1.52 > 1.35
+    floor_cfg['shape']['max_flat_aspect'] = 1.8
+    (det,) = detect_balls(frame, floor_cfg)
+    assert det['width_px'] == 41 and det['bottom_px'] == 140
+
+
+def test_a_tall_thin_blob_is_never_excused_by_the_flat_allowance(floor_cfg):
+    from nav_fleet.hsv_detect import detect_balls
+    floor_cfg['shape']['max_flat_aspect'] = 1.8
+    frame = _frame(w=320, h=240)
+    _paint(frame, 150, 100, 170, 131, YELLOW)          # 20 wide, 31 tall, bottom row 130
+    floor_cfg['floor']['tolerance_px'] = 30
+    assert detect_balls(frame, floor_cfg) == []
+
+
+def test_floor_section_is_validated(tmp_path):
+    from nav_fleet.hsv_detect import load_hsv_config
+    head = 'colors: {}\nmin_pixels: 40\nrange_k: 80.0\n'
+    good = tmp_path / 'good.yaml'
+    good.write_text(head + 'shape: {}\nfloor: {row0: 325, slope: 1.32, tolerance_px: 40}\n')
+    assert load_hsv_config(str(good))['floor']['slope'] == 1.32
+    for name, body in (('no_shape', 'floor: {row0: 1, slope: 1, tolerance_px: 1}\n'),
+                       ('missing', 'shape: {}\nfloor: {row0: 1, slope: 1}\n'),
+                       ('extra', 'shape: {}\nfloor: {row0: 1, slope: 1, tolerance_px: 1, x: 2}\n')):
+        bad = tmp_path / f'{name}.yaml'
+        bad.write_text(head + body)
+        with pytest.raises(ValueError):
+            load_hsv_config(str(bad))
+
+
+def test_real_camera_profile_uses_the_floor_rule_and_the_simulator_does_not():
+    from nav_fleet.hsv_detect import load_hsv_config
+    real = load_hsv_config('src/nav_fleet/config/hsv_realcam.yaml')
+    assert real['floor'] == {'row0': 325, 'slope': 1.32, 'tolerance_px': 40}
+    assert real['shape']['max_flat_aspect'] == 1.8
+    assert 'floor' not in load_hsv_config('src/nav_fleet/config/hsv_gazebo.yaml')

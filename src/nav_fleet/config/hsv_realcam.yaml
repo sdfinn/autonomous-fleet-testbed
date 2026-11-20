@@ -21,7 +21,11 @@ colors:
   # ball's centre, at the four distances: yellow 87.3 / 92.3 / 93.7 / 93.8, red
   # 78.7 / 83.1 / 81.7 / 77.9.
   yellow: {h: [28, 46], s_min: 0.45, v_min: 0.25, range_k: 91.8}
-  red:    {h: [340, 16], s_min: 0.45, v_min: 0.08, range_k: 80.3}   # wraps through 0
+  # Red widened 2026-11-20 (was h [340, 16], s_min 0.45). In daylight with a window
+  # behind the ball the same red ball reads hue 320-350 and saturation 0.26-0.50, and
+  # the lamp-light band missed it at every distance. The wide band lets in more
+  # furniture and floor; the `floor:` section below is what makes that safe.
+  red:    {h: [315, 16], s_min: 0.26, v_min: 0.08, range_k: 80.3}   # wraps through 0
 min_pixels: 40
 range_k: 86.0           # fallback for a colour without its own (mean of the two above)
 # Only ball-shaped blobs count (hsv_detect.SHAPE_DEFAULTS explains each key). Without
@@ -36,3 +40,22 @@ shape:
   min_fill: 0.55
   max_aspect: 1.35
   min_width_px: 12
+  # A ball lit from behind loses its top to glare: the red ball at 1.05 m in daylight
+  # measured 70 px wide and 43 px tall (1.63). The width, which range is read from,
+  # was still right.
+  max_flat_aspect: 1.8
+# A ball on the floor: bottom_row = row0 + slope * width_px (hsv_detect.FLOOR_KEYS).
+# Fitted 2026-11-20 on 18 sightings of the yellow and red balls (lamp, daylight with
+# the window behind them, curtain closed; 0.50-1.55 m), robot standing still on rug
+# and wood floor. tolerance_px 40: the worst real ball was 50 px off under the
+# loosest colour settings and 26 px under these; a moving robot pitches, which is
+# NOT measured. Scored on every frame on disk (reports/camera_cal_20261120_day/
+# score.py), against the 2026-11-19 profile:
+#   yellow found 9 of 9 (was 8), red 8 of 9 (was 5; 0 of 4 in daylight before)
+#   nearest false yellow in 52 ball-free photos reads 3.06 m (was 1.00 m)
+#   nearest false red reads 1.46 m (was 3.09 m) -- KNOWN LIMIT, reaction is at 1.3 m
+#   red under lamp light reads near (0.80 m as 0.67) and is missed at 1.05 m
+floor:
+  row0: 325
+  slope: 1.32
+  tolerance_px: 40
