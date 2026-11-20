@@ -48,65 +48,96 @@ First note (2026-11-15, doorway): this repo's `tools/mission2_day.py`
 `_judge_and_log_leg` ignores the mission's own `ok` flag, so a failed navigate leg
 can still be judged PASS (verified true here 2026-11-16; not fixed).
 
-## Current status — START HERE (last real work 2026-11-19)
+## Current status — START HERE (last real work 2026-11-20)
 
 **The floor ban of 2026-11-18 is lifted.** The motor board's stop-on-silence is proven on
 the real robot, wheels up: `tools/bench_stop_on_silence.py` PASS (0.45 s), `--legacy-t13`
 FAIL as predicted, and `kill -9` on `esp32_driver` during a real mission stopped the
 wheels in 0.33 s. Repeat after any firmware update or change to how motion is sent.
 
-**2026-11-19 session** (full notes: `docs/sessions/2026-11-19.md`). Four full
-three-trip missions on the floor. Built, tested, pushed:
-- **Operator watch** (`operator_link.py`, `operator_watch` node): a run started over
-  SSH pings the operator five times a second. 2 s of silence PAUSES the robot (two
-  short beeps), a reply resumes it 1 s later (one long beep), 10 s more gives up (three
-  low beeps) and `robot_boot.sh` ends the mission (exit 131). Pause/resume proven on the
-  floor; give-up only in a no-motion dry run. Runs not started over SSH watch nobody.
-- **Holds live in `esp32_driver`** (`HoldInput`): `/robot_001/operator_hold` and
-  `/robot_001/obstacle_hold`. A fresh True holds the wheels; when the watcher is
-  mandatory (`operator_watch_required`, `obstacle_guard_required`) silence holds too.
-  Nav2 is never told and carries on when the hold is released.
-- **Final heading at home: 16-31 deg -> 5-16 deg** with `FollowPath.max_angular_accel:
-  10.0` (RPP clamps the spin command to measured rate +/- accel*dt; this base turns
-  faster than told, so the default dragged the command up). Still peaks at 1.3-1.5
-  rad/s for 0.5 commanded on 180 deg spins: needs closed-loop turn rate in the driver.
-- **Ball detection (A4):** the detector boxed every matching pixel, and the wood floor
-  is inside the yellow band ("yellow ball 4 cm away" with no ball). A camera profile
-  may now carry a `shape:` section: only the largest ball-shaped blob counts.
-  `hsv_realcam.yaml` is the OAK front camera, measured in evening room light at four
-  distances; `robot_boot.sh` uses it. `hsv_gazebo.yaml` has no `shape:`: sim unchanged.
-  **NOT yet run on the robot.**
-- **Obstacle guard (step 6a)** (`path_guard.py`, `obstacle_guard` node): holds the
-  wheels for 3+ lidar returns within 0.25 m of the bumper in the direction of travel,
-  releases after 1 s clear; one low beep. On for every mission. Replayed on recorded
-  runs: 16 clean trips, zero holds; the 2026-11-18 dresser run, held 2.7 s before
-  contact. **NOT yet run on the robot.** Does not go around, back away, or guard spins.
-- `ROBOT_BOOT_NAV2_PARAMS=<file>` mounts a Nav2 params file over the image's for one
-  run (tuning without a 20-minute image build).
-- **WiFi:** the Jetson's adapter (`rtl88x2ce`) hops between the router's three radios
-  by itself, about 2.4 s of silence each time; pinning the band in the NetworkManager
-  profile did not stop it. This is why the watch pauses instead of aborting.
-- **Battery:** start line stays 10.5 V (Mike). A 10.75 V start sagged to 9.63 V
-  (critical, motion refused, resumed 10 s later). Log: `~/fleet-ci-data/battery_log.csv`.
+**2026-11-20 session** (full notes: `docs/sessions/2026-11-20.md`). Five floor runs.
+- **Box in the path (step 1): PASSED.** Guard quiet on clear trips; held 0.22 m short of
+  the box, beeped (too quietly), drove on by itself when the box was lifted.
+- **Frozen IMU.** After one power-on the board's accel/gyro chip did not start and sent
+  one frozen sample (gz = 706 deg/s); the pose estimate left home and the robot spun on
+  the spot. A power-cycle clears it. Now: `ImuHealth` (`esp32_protocol.py`) judges the IMU
+  on raw counts, `esp32_driver` refuses motion and stops publishing on a bad one, and
+  `robot_boot.sh` will not start without `imu ok`. The frozen case was never seen live
+  on the new driver (unit tests on the captured values only).
+- **Dresser stall.** A hand-placed start took the robot at the dresser foot; the guard
+  held it 0.18 m short and then NOTHING happened (Nav2 pushed forward for 10 s) until
+  Mike turned it by hand. No back-away, no re-plan, no start-pose check.
+- **Ball detection (step 2): red reacted, yellow missed by one frame.** The lamp-light
+  profile lost red completely in daylight (hue 352-358 -> ~330) and lost yellow behind a
+  closed curtain. Fix: a camera profile may carry a `floor:` section -- a ball resting
+  on the floor has `bottom_row = row0 + slope * width_px` (325 + 1.32 w on this camera),
+  and only blobs on that line count; `max_flat_aspect` allows a ball with its top lost
+  to glare; red band widened. On the floor: both balls tracked continuously, first real
+  reaction (red; stopped 58 cm from the ball), yellow got two frames inside 0.8 m and
+  the rule needs three. Known limits are written in `hsv_realcam.yaml`.
+- **Simulated box test (step 3): built and in CI.** `sim_only_launch.py
+  obstacle_guard:=true` runs the real `obstacle_guard` on the sim scan plus
+  `sim_wheel_hold` (stand-in for the driver's hold, same `HoldInput` rule);
+  `tools/sim_box.py`; `tests/test_sim_box_guard.py`. CI stage 2 runs with the guard on.
+  14 of 15 local runs passed; the one failure (first goal on a fresh simulator, no
+  motion for 71 s after the box was removed) is unexplained and unreproduced.
+- **WiFi address change killed a mission.** About a minute after the Ethernet is
+  unplugged the Jetson's WiFi re-associates and gets a NEW address; every node's DDS
+  sockets die, the driver's watchdog stops the wheels, and shutdown leaves the driver
+  layer orphaned. Until fixed: after pulling the Ethernet, wait for the address to
+  settle (`hostname -I` twice, a minute apart) before starting a run.
+- `ROBOT_BOOT_DETECTOR=<folder>` mounts a trial `hsv_detect.py` + `hsv_realcam.yaml`
+  over the image's for one run. Mast camera recorder: `~/robot_boot_debug/mast_record.py`
+  on the Jetson only (plans: `docs/cameras.md` items 9-15).
 
-**Repo state at close (2026-11-19):** code is `d4ffd91`, pushed (CI run `44666459134`
-green, all stages incl. the Jetson); the Jetson's checkout and image match. The closing
-docs commit after it is LOCAL ONLY until Mike asks for a push. Robot on its charger, Ethernet in.
-Evidence under `reports/` (gitignored): `robot_boot_20261119_*`, `camera_cal_20261119/`.
+**Mike's direction (2026-11-20):** the practical target is "rove around the whole house
+and give me an inventory of where all the dog toys are"; ball-detection polish is
+timeboxed. And: "if this is supposed to be an autonomous vehicle, loss of wifi should
+not be fatal."
 
-**Next session, in order:** (1) nav-only run with a box >= 25 cm tall: trip 1 clear,
-trip 2 box ahead (stop, beep; remove, drive on); (2) first real ball reaction: reactions
-on, yellow then red near the marker; (3) **a simulated box test** (Mike moved it up):
-nothing in sim or CI puts anything in the robot's way, because the guard and the hold
-live in the real driver layer; add a box scenario to Gazebo, run `obstacle_guard` on
-the sim scan with a stand-in that applies its hold to sim commands; needs no robot and
-is the bench for 6c/6d; (4) step 6b, act on a slip verdict; then 6c back away, 6d go
-around (re-plan mid-leg), 6e guard spins; (5) operator-watch give-up in a real mission
-(do not time it from a piped log: `tr` buffers); (6) closed-loop turn rate.
-Also open: `robot_boot.sh` started with no terminal does not shut down cleanly (how
-`robot-mission.service` starts it) and exits 0 when every trip fails; battery "critical"
-does not latch; gyro vs lidar heading 9-13 deg apart after several spins. Before a floor
-run, ask Mike to leave Claude Code's auto mode (it refuses the launch).
+**Repo state at close (2026-11-20):** code is `e91f5b8`, pushed (CI run `44838564976`
+green, all nine stages incl. the Jetson and the new box test); the Jetson's checkout and
+image match. Robot on its charger, Ethernet in.
+Evidence under `reports/` (gitignored): `robot_boot_20261120_*`, `camera_cal_20261120_day/`,
+`sim_box_20261120/`. A lessons note for wayfarer is in
+`~/wayfarer/docs/transfer/2026-11-20-lessons-from-aft.md`.
+
+**Next session, in order (proposed to Mike at close, not yet confirmed):** (1) robot
+messaging on loopback and a link-loss policy per run (pause-and-resume / carry on /
+carry on then come home); a dry run with the WiFi down proves it; (2) set up the
+joystick that came with the robot (never used; ask Mike what it is), then a whole-house
+map with `scripts/robot_map_drive.sh`; (3) go around (6d, with 6c back away) in the
+simulator on the box bench, then the dresser; (4) one real-robot row per run in the
+telemetry DB (it has 603 local and 411 hil_jetson rows and ZERO real_robot rows, so the
+dashboard and drift detection are blind to the real robot and R1's last checkbox,
+`tools/sim_vs_real_comparison.py` then the `r1-complete` tag, has nothing to compare);
+(5) a pretrained YOLO on the saved frames plus dog-toy photos, on the workstation GPU;
+(6) start-pose check before the first goal; (7) reaction rule for the real camera's
+~3.6 frames a second so yellow fires, then one timeboxed floor run; (8) record the mast
+camera on every run, one run folder with a summary, later a debug switch. Automatic
+(frontier) exploration comes after the joystick map; the lidar cannot see a downward
+step. **US spelling in all new text (Mike, 2026-11-20).**
+Still owed: 6b act on a slip verdict, 6e guard spins, operator-watch give-up in a real
+mission, closed-loop turn rate.
+Also open: `robot_boot.sh` leaves the driver layer orphaned when DDS dies, exits 0 when
+every trip fails, and with no terminal does not shut down cleanly;
+`tests/test_esp32_driver.py` runs in no CI stage; battery "critical" does not latch;
+gyro vs lidar heading 9-13 deg apart after several spins. Before a floor run, ask Mike
+to leave Claude Code's auto mode if it refuses the launch.
+
+**2026-11-19 session, in brief** (`docs/sessions/2026-11-19.md`): stop-on-silence proven
+on the robot (see above); operator watch (`operator_link.py`, `operator_watch`): a run
+started over SSH pauses after 2 s without the operator and resumes when the link
+returns, gives up after 10 s more (never seen in a real mission); holds live in
+`esp32_driver` (`HoldInput`, now `hold_input.py`): `/robot_001/operator_hold` and
+`/robot_001/obstacle_hold`, and silence holds too when the watcher is mandatory;
+`FollowPath.max_angular_accel: 10.0` cut the final heading error at home to 5-16 deg
+(still peaks at 1.3-1.5 rad/s for 0.5 commanded: needs closed-loop turn rate);
+ball-shaped-blob detection and the first `hsv_realcam.yaml`; obstacle guard
+(`path_guard.py`, `obstacle_guard`): holds for 3+ lidar returns within 0.25 m of the
+bumper in the direction of travel, does not guard spins; `ROBOT_BOOT_NAV2_PARAMS=<file>`;
+the WiFi adapter (`rtl88x2ce`) roams between the router's radios by itself (~2.4 s of
+silence each time); battery start line 10.5 V, log `~/fleet-ci-data/battery_log.csv`.
 
 **2026-11-18 session, in brief** (`docs/sessions/2026-11-18.md`): the home error was
 the borrowed map (made-up hallway, home pose 0.6 m off); the robot's own map fixed it
@@ -315,6 +346,11 @@ scripts/robot_boot.sh                # real production mission path
   `waveshareteam/ugv_base_ros`, folder `ROS_Driver/`). The timer (T:136) is not kept
   in flash; the driver sets 500 ms at start-up. Pack voltage is `"v"` in T:1001, in
   hundredths of a volt (3-cell pack: 12.6 V full; 9.17 V read flat on 2026-11-18).
+  IMU: the board's accel/gyro chip can fail to start at power-on and repeat one
+  frozen sample (seen 2026-11-20; gravity read 3.87 g); the driver and `robot_boot.sh`
+  check for it; cure = power-cycle. OAK ball geometry: a croquet ball on the floor has
+  `bottom_row = 325 + 1.32 * width_px` (1280x720, robot still); the detector delivers
+  about 3.6 frames a second.
   Real map and home: `~/fleet-ci-data/maps/bedroom_real.yaml`, home spot = configured
   home pose (-1.276, 1.2, 90 deg); bedroom door 0.75 m wide, dresser just right of it.
 - **Per-robot TF is namespaced:** subscribe to `/robot_001/tf`, not `/tf`.
@@ -377,6 +413,13 @@ scripts/robot_boot.sh                # real production mission path
   which of the two is wrong (2026-11-19: one false stop was the watch, the next was a
   real 2.4 s WiFi outage). And check behaviour, not configuration: a stored setting is
   not an obeyed one.
+- **`pkill -f` / `pgrep -f` match the shell that runs them** when the pattern (or an
+  `echo` containing it) is in the same command line: four self-kills on 2026-11-20. Pick
+  the PID with `ps -eo pid,comm,args | awk` on the process NAME, then kill that PID.
+- **Create a log folder, check it exists, then launch.** A redirect into a missing
+  folder kills only the logging: the robot still starts, unlogged (2026-11-20).
+- **`cut` buffers like `tr`.** A live watcher ends in `grep --line-buffered`, nothing
+  after it.
 - **Prefer SIGINT teardown over `docker stop`** when a rosbag may be recording —
   `docker stop` leaves an empty, unfinalized mcap.
 - **`hil_stage.sh sync` self-heals** (`git reset --hard FETCH_HEAD && git clean -fd`)

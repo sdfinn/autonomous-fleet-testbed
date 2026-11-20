@@ -86,13 +86,48 @@ In suggested order. Items 1-2 need no robot motion to build.
 **When:** none of this comes before the SLAM map and collision avoidance. Items 1-2 are
 the natural content of A4; items 3-4 follow once A4 is done; 5-8 are R2/R3 material.
 
+### Mast camera enhancements (added 2026-11-20)
+
+On 2026-11-20 the mast camera was recorded during three floor runs with a throwaway
+script (640x480, 10 frames a second, wall-clock time stamped on each frame). It was
+used only as a witness, and it explained three things the bag could not:
+
+- the robot stalled nose-to the dresser foot and was then turned by hand (the gyro
+  showed a turn with the wheels at zero; the video showed why);
+- the balls were placed correctly, so the missing reaction was the detector's fault;
+- the yellow ball slid out of the front camera's narrow view about 5 cm before the
+  reaction distance, while staying in the mast camera's wide view throughout.
+
+| # | Enhancement | What it buys | Needs first |
+|---|---|---|---|
+| 9 | **Record the mast camera on every run**, started and stopped by `robot_boot.sh`, saved beside the bag and pulled back with the logs | An outside-style view of every run with no phone on a tripod; a time stamp in the picture to line it up with the bag | The recorder in the repo (today it is `~/robot_boot_debug/mast_record.py` on the Jetson only); a clean stop on Ctrl+C |
+| 10 | **Publish the mast image as a ROS topic** (small, compressed, a few frames a second) | The video is inside the bag, on the bag's clock, and available to every idea below | A small camera node; a CPU and USB budget check with the OAK running |
+| 11 | **Wide-view hand-off for ball tracking**: when a ball being tracked leaves the front camera's frame, the mast camera keeps its bearing | Reactions no longer depend on the ball staying inside a ~69 deg view while the robot passes it | Item 10; fisheye correction; a rough mapping between the two images (item 2) |
+| 12 | **Pan to follow** a tracked ball or a goal, instead of pointing fixed ahead | The ball stays centred in the wide view; later, look where the robot is about to turn | A gimbal command path inside `esp32_driver` (the serial port is exclusive); the pan angle published as a transform (item 4) |
+| 13 | **Pre-start scene check**: compare the mast view (and the first lidar scan) with a stored reference of the home spot before the first goal | Catches "robot not on the home spot", "door in a different state from the map" and a wrong starting pose before the robot moves | A stored reference per home spot; ties in with items 6 and 7 |
+| 14 | **Crops for the confidence cascade**: the wide view supplies the picture that the on-robot vision model (and, when unsure, a larger one) is asked about | A second opinion from a different lens and different lighting response than the front camera | The cascade itself (`docs/sessions/2026-11-20.md`); item 10 |
+| 15 | **Operator view during attended runs**: a low-rate picture over the same link the operator watch already uses | The operator sees what the robot faces without walking beside it | Item 10; a bandwidth check on the roaming WiFi link |
+
+**When:** item 9 is cheap and pays on every floor run; it comes first. Item 10 is the
+gate for everything else. Items 11-14 belong with the next version of ball detection
+(A4); item 15 is a convenience.
+
 ## 6. Open questions
 
 - Why does the OAK link at USB 2 speed (cable, port or hub)? At USB 3 the frame rate
   should rise from about 6 fps.
 - Can the USB camera's white balance and exposure be locked through OpenCV/V4L2?
 - How well does either camera do in daylight? Everything here is evening room light.
+  *Partly answered 2026-11-20 for the OAK:* with a bright window behind the balls the
+  red ball's hue moves from 352-358 to about 330 and its saturation halves, so the
+  lamp-light colour band misses it at every distance; yellow is still found but reads
+  10-30% too far. With the curtain closed it is the other way round (red found, yellow
+  merged with the wall). Locking the OAK's white balance made the swing larger, not
+  smaller. The mast camera has not been measured in daylight.
 - Does a second camera stream fit in the Jetson's CPU and USB budget during a mission?
+  *Partly answered 2026-11-20:* recording the mast camera at 640x480, 10 frames a
+  second, at low priority ran through three full three-trip missions with every leg
+  completing and no operator-watch pause. CPU load was not measured.
 
 ## 7. Pan-tilt test
 
