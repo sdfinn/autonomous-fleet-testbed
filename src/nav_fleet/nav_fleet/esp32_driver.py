@@ -54,8 +54,35 @@ BATTERY_REMIND_S = 60.0
 GYRO_VARIANCE_RAD2_S2 = 1.0e-4
 
 
-# /robot_001/operator_hold arrives at 10 Hz; older than this, it says nothing any more.
-OPERATOR_HOLD_STALE_S = 0.5
+# Hold topics arrive at 10 Hz; a value older than this says nothing any more.
+HOLD_STALE_S = 0.5
+
+
+class HoldInput:
+    """One "do not turn the wheels" input: a Bool topic published by a watcher.
+
+    A fresh True holds. If the watcher is `required` for this run, silence holds too --
+    a watcher that has died cannot say the way is safe. If it is not required, silence
+    means nothing (and an old True does not trap the robot for ever).
+    """
+
+    def __init__(self, topic, when_true, when_silent):
+        self.topic = topic
+        self.when_true = when_true          # log text, e.g. 'operator unreachable'
+        self.when_silent = when_silent      # log text, e.g. 'no operator watch running'
+        self.value = False
+        self.time = None                    # time.time() of the last message
+        self.held = False                   # last state reported, for one log line per change
+
+    def update(self, value, now):
+        self.value = bool(value)
+        self.time = now
+
+    def state(self, now, required):
+        """(holding, reason) right now."""
+        if self.time is not None and now - self.time < HOLD_STALE_S:
+            return self.value, self.when_true
+        return bool(required), self.when_silent
 
 
 class Esp32Driver(Node):
@@ -98,6 +125,10 @@ class Esp32Driver(Node):
         # every unattended run): the topic is obeyed if someone publishes it, and its
         # absence means nothing.
         self.declare_parameter('operator_watch_required', False)
+        # Same idea for obstacle_guard and /robot_001/obstacle_hold (True = the lidar
+        # sees something in the robot's path). Required on the real robot's missions:
+        # a dead lidar or a dead guard must stop the robot, not leave it blind.
+        self.declare_parameter('obstacle_guard_required', False)
 
         self._track_width = self.get_parameter('track_width').value
         self._angular_cmd_gain = self.get_parameter('angular_cmd_gain').value
@@ -147,16 +178,24 @@ class Esp32Driver(Node):
         # process exit, which happens to be the only case today since main() runs a
         # single node per process — see review finding, Task 2 fix round).
         self._stop_event = threading.Event()
-        # Last /robot_001/operator_hold value and when it arrived (None = never).
-        self._operator_hold = False
-        self._operator_hold_time = None
-        self._operator_held = False        # last state logged, for one line per change
+        # Everything that may hold the wheels, keyed by the parameter that makes it
+        # mandatory. See HoldInput.
+        self._holds = {
+            'operator_watch_required': HoldInput(
+                '/robot_001/operator_hold', 'operator unreachable',
+                'no operator watch running'),
+            'obstacle_guard_required': HoldInput(
+                '/robot_001/obstacle_hold', 'obstacle in the path',
+                'no obstacle guard running'),
+        }
 
         self.odom_pub = self.create_publisher(Odometry, '/robot_001/odom', 10)
         self.imu_pub = self.create_publisher(Imu, '/robot_001/imu/data', 10)
         self.battery_pub = self.create_publisher(Float32, '/robot_001/battery_voltage', 10)
         self.create_subscription(Twist, '/robot_001/cmd_vel', self._cmd_vel_cb, 10)
-        self.create_subscription(Bool, '/robot_001/operator_hold', self._operator_hold_cb, 10)
+        for param, hold in self._holds.items():
+            self.create_subscription(
+                Bool, hold.topic, lambda msg, param=param: self._hold_cb(param, msg), 10)
 
         self._send(encode_enable_feedback_flow(True))
         self._send(encode_boot_mission_info())
@@ -194,9 +233,10 @@ class Esp32Driver(Node):
         if self._battery_state == BATTERY_CRITICAL:
             self._send_motion(0.0, 0.0)
             return
-        # Hold while the operator of an attended run cannot be reached. Nav2 is not
-        # told: it keeps sending commands and carries on when the hold is released.
-        if self._operator_holding():
+        # Hold while a watcher says so: the operator of an attended run cannot be
+        # reached, or the lidar sees something in the path. Nav2 is not told: it keeps
+        # sending commands and carries on when the hold is released.
+        if self._holding():
             self._send_motion(0.0, 0.0)
             return
         # No sign flips. From 2026-08-11 to 2026-11-16 both linear.x and angular.z
@@ -208,31 +248,28 @@ class Esp32Driver(Node):
         # skid-steer tyre scrub (see the parameter's comment).
         self._send_motion(msg.linear.x, msg.angular.z * self._angular_cmd_gain)
 
-    def _operator_hold_cb(self, msg):
-        was_holding = self._operator_holding()
-        self._operator_hold = bool(msg.data)
-        self._operator_hold_time = time.time()
-        if msg.data and not was_holding:
+    def _hold_cb(self, param, msg):
+        was_holding = self._holding()
+        self._holds[param].update(msg.data, time.time())
+        if not was_holding and self._holding():
             # Do not wait for the next cmd_vel (up to 50 ms away) to stop the wheels.
             self._send_motion(0.0, 0.0)
-        self._operator_holding()               # logs the change, if there was one
 
-    def _operator_holding(self):
-        """True while the wheels must be held for want of an operator."""
-        fresh = (self._operator_hold_time is not None
-                 and time.time() - self._operator_hold_time < OPERATOR_HOLD_STALE_S)
-        if fresh:
-            held = self._operator_hold
-        else:
-            held = bool(self.get_parameter('operator_watch_required').value)
-        if held != self._operator_held:
-            self._operator_held = held
-            if held:
-                why = 'operator unreachable' if fresh else 'no operator watch running'
-                self.get_logger().warn(f'esp32_driver: wheels HELD — {why}')
-            else:
-                self.get_logger().info('esp32_driver: wheels released — operator reachable')
-        return held
+    def _holding(self):
+        """True while any watcher holds the wheels. Logs each watcher's changes."""
+        now = time.time()
+        any_held = False
+        for param, hold in self._holds.items():
+            held, reason = hold.state(now, self.get_parameter(param).value)
+            if held != hold.held:
+                hold.held = held
+                if held:
+                    self.get_logger().warn(f'esp32_driver: wheels HELD — {reason}')
+                else:
+                    self.get_logger().info(
+                        f'esp32_driver: hold released — not ({hold.when_true})')
+            any_held = any_held or held
+        return any_held
 
     def _send_motion(self, linear_x, angular_z):
         """Send a body twist as left/right wheel speeds (T:1), never as T:13: only T:1

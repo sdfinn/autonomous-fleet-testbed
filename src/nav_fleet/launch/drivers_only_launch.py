@@ -54,7 +54,21 @@ def generate_launch_description():
     # operator's machine is reachable. See esp32_driver's parameter of the same name.
     operator_watch_required_arg = DeclareLaunchArgument(
         'operator_watch_required', default_value='false',
-        description='true = hold the wheels while no operator_watch reports the operator reachable',
+        description='true = hold the wheels unless operator_watch reports the operator '
+                    'reachable',
+    )
+    # Missions only (scripts/robot_boot.sh sets it): start obstacle_guard, which holds
+    # the wheels while the lidar sees something in the robot's path, and make it
+    # mandatory for esp32_driver (no guard or no lidar = no motion). Off by default so
+    # the mapping drive can still be steered right up to a wall.
+    obstacle_guard_beep_arg = DeclareLaunchArgument(
+        'obstacle_guard_beep', default_value='true',
+        description='false = obstacle_guard makes no sound when it holds the robot',
+    )
+    obstacle_guard_arg = DeclareLaunchArgument(
+        'obstacle_guard', default_value='false',
+        description='true = run obstacle_guard and hold the wheels unless it reports the '
+                    'path clear',
     )
     lidar_launch_file_arg = DeclareLaunchArgument(
         'lidar_launch_file', default_value='',
@@ -113,7 +127,9 @@ def generate_launch_description():
         parameters=[{'serial_device': LaunchConfiguration('serial_device'),
                      'baud': LaunchConfiguration('serial_baud'),
                      'operator_watch_required': ParameterValue(
-                         LaunchConfiguration('operator_watch_required'), value_type=bool)}],
+                         LaunchConfiguration('operator_watch_required'), value_type=bool),
+                     'obstacle_guard_required': ParameterValue(
+                         LaunchConfiguration('obstacle_guard'), value_type=bool)}],
     )
 
     # scan_masker: subscribes to ldlidar_ros2's raw 'scan' topic, republishes
@@ -138,6 +154,16 @@ def generate_launch_description():
         executable='slip_monitor',
         name='slip_monitor',
         output='screen',
+    )
+
+    obstacle_guard = Node(
+        package='nav_fleet',
+        executable='obstacle_guard',
+        name='obstacle_guard',
+        output='screen',
+        parameters=[{'beep': ParameterValue(
+            LaunchConfiguration('obstacle_guard_beep'), value_type=bool)}],
+        condition=IfCondition(LaunchConfiguration('obstacle_guard')),
     )
 
     # camera_relay: closes the CAMERA half of the same topic-remapping gap
@@ -166,9 +192,10 @@ def generate_launch_description():
 
     return LaunchDescription([
         serial_device_arg, serial_baud_arg, operator_watch_required_arg,
+        obstacle_guard_arg, obstacle_guard_beep_arg,
         lidar_launch_file_arg,
         camera_launch_file_arg,
         robot_state_publisher,
         esp32_driver, lidar_include, camera_include, scan_masker, camera_relay,
-        slip_monitor,
+        slip_monitor, obstacle_guard,
     ])

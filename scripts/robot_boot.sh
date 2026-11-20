@@ -26,11 +26,6 @@
 # sensor data instead). Run this manually over SSH first and confirm a full mission2
 # day passes with your own eyes-on check before trusting the systemd unit
 # (scripts/robot-mission.service) that calls it automatically at boot.
-#
-# Known, separately-tracked gap this script still has (RealRobotStartup.md A4, not
-# part of the 2026-08-10 fix above): HSV_CONFIG_FILE below is hardcoded to
-# hsv_realcam.yaml, which doesn't exist until HSV calibration is done — a full run of
-# this script will still fail at the container step until then.
 set -euo pipefail
 
 REPO="$HOME/autonomous-fleet-testbed"
@@ -238,6 +233,21 @@ else
   done
 fi
 
+# Obstacle guard (2026-11-19): on every mission, hold the wheels while the lidar sees
+# something within 0.25 m of the bumper in the direction of travel, and (because the
+# driver is told the guard is mandatory) whenever the guard or the lidar goes silent.
+# One low beep when it holds. See nav_fleet/path_guard.py for what it does not cover.
+#   ROBOT_BOOT_NO_OBSTACLE_GUARD=1    run without it
+#   ROBOT_BOOT_NO_BEEP=1              no sounds (this and the operator watch)
+if [ -n "${ROBOT_BOOT_NO_OBSTACLE_GUARD:-}" ]; then
+  echo "=== [robot-boot] WARNING: ROBOT_BOOT_NO_OBSTACLE_GUARD set -- nothing stops this run driving into what the lidar sees ===" >&2
+  GUARD_ARGS=(obstacle_guard:=false)
+elif [ -n "${ROBOT_BOOT_NO_BEEP:-}" ]; then
+  GUARD_ARGS=(obstacle_guard:=true obstacle_guard_beep:=false)
+else
+  GUARD_ARGS=(obstacle_guard:=true)
+fi
+
 DRIVERS_LOG="$LOG_DIR/drivers_${TS}.log"
 rm -f "$DRIVERS_LOG"
 # set -m (job control) bracketed around only the backgrounding itself: without it, bash
@@ -255,6 +265,7 @@ ros2 launch nav_fleet drivers_only_launch.py \
   lidar_launch_file:="$HOME/ros2_drivers_ws/install/ldlidar_ros2/share/ldlidar_ros2/launch/ld19.launch.py" \
   camera_launch_file:=/opt/ros/jazzy/share/depthai_ros_driver/launch/camera.launch.py \
   ${OPERATOR_IP:+operator_watch_required:=true} \
+  "${GUARD_ARGS[@]}" \
   > "$DRIVERS_LOG" 2>&1 < /dev/null &
 DRIVERS_PID=$!
 set +m
@@ -361,11 +372,10 @@ echo "=== [robot-boot] running ${IMAGE} (real-robot context, operator ball place
 # ROBOT_MODE=mission is hardcoded here, never a variable — standalone power-on can
 # never run a smoke test (design spec). skip_nav2 is NOT set here — its default
 # (false) means Nav2 runs exactly as it always has.
-# HSV_CONFIG_FILE stand-in, 2026-08-11: hsv_realcam.yaml (A4, real-camera HSV
-# calibration) does not exist yet. (The map is chosen just below.)
-# hsv_gazebo.yaml is a genuine stand-in — sim color thresholds, not calibrated
-# against this room's real camera/lighting — ball_detector will run without
-# crashing but its detection accuracy is unproven until A4 happens.
+# HSV_CONFIG_FILE: hsv_realcam.yaml, measured on this robot's front camera 2026-11-19
+# (RealRobotStartup.md A4; the file says under which light and what is still unchecked).
+# Until then this was hsv_gazebo.yaml, the simulator's profile, which took the wood
+# floor for a yellow ball 4 cm away. (The map is chosen just below.)
 #
 # Map selection (A3 done 2026-11-18). The robot's own map lives OUTSIDE git, in
 # ~/fleet-ci-data/maps/bedroom_real.{yaml,pgm}: it is a floor plan of a real home and
@@ -418,7 +428,7 @@ set -m
   -v "$REPO/reports:/ros2_ws/reports" \
   -v "$HOME/fleet-ci-data:/root/fleet-ci-data" \
   -e USE_SIM_TIME=false \
-  -e HSV_CONFIG_FILE=hsv_gazebo.yaml \
+  -e HSV_CONFIG_FILE=hsv_realcam.yaml \
   "${MAP_ARGS[@]}" \
   ${PARAMS_ARGS[@]+"${PARAMS_ARGS[@]}"} \
   -e MISSION2_SELF_REPORT=1 \

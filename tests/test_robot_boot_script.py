@@ -562,3 +562,44 @@ def test_no_params_mount_without_the_override(boot_env):
     env['FAKE_MISSION_SECONDS'] = '1'
     _finish(_start(env))
     assert 'nav2_params.yaml' not in _docker_run_line(events)
+
+
+def test_the_real_robot_uses_the_real_camera_colour_profile(boot_env):
+    """Not the simulator's: that one took the bedroom's wood floor for a yellow ball."""
+    env, events, _home = boot_env
+    env['FAKE_MISSION_SECONDS'] = '1'
+    _finish(_start(env))
+    assert 'HSV_CONFIG_FILE=hsv_realcam.yaml' in _docker_run_line(events)
+
+
+# --- Obstacle guard: on for every mission, attended or not ---
+def _drivers_line(events):
+    return next(line for line in events.read_text().splitlines()
+                if line.startswith('drivers_start'))
+
+
+def test_every_mission_runs_the_obstacle_guard(boot_env):
+    """Unlike the operator watch this is not only for attended runs: a robot started
+    by the boot-time service drives into a dresser just as well."""
+    env, events, _home = boot_env
+    env['FAKE_MISSION_SECONDS'] = '1'
+    _finish(_start(env))
+    line = _drivers_line(events)
+    assert 'obstacle_guard:=true' in line and 'obstacle_guard_beep' not in line
+
+
+def test_obstacle_guard_can_be_switched_off_loudly(boot_env):
+    env, events, _home = boot_env
+    env['ROBOT_BOOT_NO_OBSTACLE_GUARD'] = '1'
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+    assert 'obstacle_guard:=false' in _drivers_line(events)
+    assert 'ROBOT_BOOT_NO_OBSTACLE_GUARD set' in out
+
+
+def test_no_beep_also_silences_the_obstacle_guard(boot_env):
+    env, events, _home = boot_env
+    env['ROBOT_BOOT_NO_BEEP'] = '1'
+    env['FAKE_MISSION_SECONDS'] = '1'
+    _finish(_start(env))
+    assert 'obstacle_guard_beep:=false' in _drivers_line(events)

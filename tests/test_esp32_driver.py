@@ -592,7 +592,7 @@ def test_operator_hold_stops_the_wheels_at_once_and_refuses_motion():
     driver, mock_ser = _make_driver()
     try:
         mock_ser.write.reset_mock()
-        driver._operator_hold_cb(Bool(data=True))
+        driver._hold_cb('operator_watch_required', Bool(data=True))
         # Stopped by the hold message itself, not by the next cmd_vel.
         assert _sent_commands(mock_ser) == [STOP]
         assert _drive(driver, mock_ser) == [STOP]
@@ -604,9 +604,9 @@ def test_releasing_the_hold_lets_the_same_commands_through_again():
     """Nav2 is never told about the pause: it keeps commanding and simply carries on."""
     driver, mock_ser = _make_driver()
     try:
-        driver._operator_hold_cb(Bool(data=True))
+        driver._hold_cb('operator_watch_required', Bool(data=True))
         assert _drive(driver, mock_ser) == [STOP]
-        driver._operator_hold_cb(Bool(data=False))
+        driver._hold_cb('operator_watch_required', Bool(data=False))
         (sent,) = _drive(driver, mock_ser)
         assert sent['L'] == pytest.approx(0.2)
     finally:
@@ -617,7 +617,7 @@ def test_an_attended_run_does_not_drive_before_the_watch_is_heard_from():
     driver, mock_ser = _make_driver(operator_watch_required=True)
     try:
         assert _drive(driver, mock_ser) == [STOP]
-        driver._operator_hold_cb(Bool(data=False))      # the watch: operator reachable
+        driver._hold_cb('operator_watch_required', Bool(data=False))      # the watch: operator reachable
         (sent,) = _drive(driver, mock_ser)
         assert sent['L'] == pytest.approx(0.2)
     finally:
@@ -629,8 +629,8 @@ def test_an_attended_run_holds_when_the_watch_goes_silent():
     evidence any more."""
     driver, mock_ser = _make_driver(operator_watch_required=True)
     try:
-        driver._operator_hold_cb(Bool(data=False))
-        driver._operator_hold_time -= 0.6
+        driver._hold_cb('operator_watch_required', Bool(data=False))
+        driver._holds['operator_watch_required'].time -= 0.6
         assert _drive(driver, mock_ser) == [STOP]
     finally:
         driver.destroy_node()
@@ -640,9 +640,63 @@ def test_a_stale_hold_does_not_trap_an_unattended_robot():
     """Not required + the publisher is gone = back to driving, not held for ever."""
     driver, mock_ser = _make_driver()
     try:
-        driver._operator_hold_cb(Bool(data=True))
-        driver._operator_hold_time -= 0.6
+        driver._hold_cb('operator_watch_required', Bool(data=True))
+        driver._holds['operator_watch_required'].time -= 0.6
         (sent,) = _drive(driver, mock_ser)
         assert sent['L'] == pytest.approx(0.2)
+    finally:
+        driver.destroy_node()
+
+
+# --- Obstacle hold: the lidar sees something in the path ---
+def test_obstacle_hold_stops_the_wheels_and_releasing_it_lets_nav2_carry_on():
+    driver, mock_ser = _make_driver()
+    try:
+        mock_ser.write.reset_mock()
+        driver._hold_cb('obstacle_guard_required', Bool(data=True))
+        assert _sent_commands(mock_ser) == [STOP]
+        assert _drive(driver, mock_ser) == [STOP]
+        driver._hold_cb('obstacle_guard_required', Bool(data=False))
+        (sent,) = _drive(driver, mock_ser)
+        assert sent['L'] == pytest.approx(0.2)
+    finally:
+        driver.destroy_node()
+
+
+def test_a_mission_does_not_drive_blind_when_the_guard_or_the_lidar_goes_silent():
+    """obstacle_guard publishes on every scan: no message = no lidar or no guard."""
+    driver, mock_ser = _make_driver(obstacle_guard_required=True)
+    try:
+        assert _drive(driver, mock_ser) == [STOP]              # never heard from
+        driver._hold_cb('obstacle_guard_required', Bool(data=False))
+        assert _drive(driver, mock_ser)[0]['L'] == pytest.approx(0.2)
+        driver._holds['obstacle_guard_required'].time -= 0.6   # then it goes quiet
+        assert _drive(driver, mock_ser) == [STOP]
+    finally:
+        driver.destroy_node()
+
+
+def test_either_watcher_alone_is_enough_to_hold():
+    driver, mock_ser = _make_driver()
+    try:
+        driver._hold_cb('operator_watch_required', Bool(data=False))
+        driver._hold_cb('obstacle_guard_required', Bool(data=True))
+        assert _drive(driver, mock_ser) == [STOP]
+        driver._hold_cb('obstacle_guard_required', Bool(data=False))
+        driver._hold_cb('operator_watch_required', Bool(data=True))
+        assert _drive(driver, mock_ser) == [STOP]
+        driver._hold_cb('operator_watch_required', Bool(data=False))
+        assert _drive(driver, mock_ser)[0]['L'] == pytest.approx(0.2)
+    finally:
+        driver.destroy_node()
+
+
+def test_a_second_hold_on_top_of_the_first_does_not_resend_the_stop():
+    driver, mock_ser = _make_driver()
+    try:
+        driver._hold_cb('operator_watch_required', Bool(data=True))
+        mock_ser.write.reset_mock()
+        driver._hold_cb('obstacle_guard_required', Bool(data=True))
+        assert _sent_commands(mock_ser) == []
     finally:
         driver.destroy_node()
