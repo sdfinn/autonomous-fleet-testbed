@@ -28,7 +28,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
-from std_msgs.msg import Float32
+from std_msgs.msg import Bool, Float32
 
 from nav_fleet.esp32_protocol import (BATTERY_CRITICAL, BATTERY_LOW, BatteryMonitor,
                                       GyroBiasEstimator, battery_volts,
@@ -52,6 +52,10 @@ BATTERY_REMIND_S = 60.0
 # treats 0 as a perfect measurement. Not corrected here: a resting z bias of
 # +0.0046 rad/s (0.26 deg/s), and the unverified 16 LSB/dps gyro scale.
 GYRO_VARIANCE_RAD2_S2 = 1.0e-4
+
+
+# /robot_001/operator_hold arrives at 10 Hz; older than this, it says nothing any more.
+OPERATOR_HOLD_STALE_S = 0.5
 
 
 class Esp32Driver(Node):
@@ -86,6 +90,14 @@ class Esp32Driver(Node):
         # the gap between commands (Nav2 and key_teleop both send at ~20 Hz = 50 ms)
         # and short enough to matter: at 0.3 m/s, 500 ms is 15 cm.
         self.declare_parameter('firmware_stop_ms', 500)
+        # Attended runs (2026-11-19): operator_watch publishes /robot_001/operator_hold
+        # (True = the operator's machine cannot be reached; hold the wheels). With this
+        # parameter True, a SILENT topic also holds -- nothing published for
+        # OPERATOR_HOLD_STALE_S means the watch is not running or has died, and a run
+        # that asked to be watched must not drive unwatched. False (the default, and
+        # every unattended run): the topic is obeyed if someone publishes it, and its
+        # absence means nothing.
+        self.declare_parameter('operator_watch_required', False)
 
         self._track_width = self.get_parameter('track_width').value
         self._angular_cmd_gain = self.get_parameter('angular_cmd_gain').value
@@ -135,11 +147,16 @@ class Esp32Driver(Node):
         # process exit, which happens to be the only case today since main() runs a
         # single node per process — see review finding, Task 2 fix round).
         self._stop_event = threading.Event()
+        # Last /robot_001/operator_hold value and when it arrived (None = never).
+        self._operator_hold = False
+        self._operator_hold_time = None
+        self._operator_held = False        # last state logged, for one line per change
 
         self.odom_pub = self.create_publisher(Odometry, '/robot_001/odom', 10)
         self.imu_pub = self.create_publisher(Imu, '/robot_001/imu/data', 10)
         self.battery_pub = self.create_publisher(Float32, '/robot_001/battery_voltage', 10)
         self.create_subscription(Twist, '/robot_001/cmd_vel', self._cmd_vel_cb, 10)
+        self.create_subscription(Bool, '/robot_001/operator_hold', self._operator_hold_cb, 10)
 
         self._send(encode_enable_feedback_flow(True))
         self._send(encode_boot_mission_info())
@@ -177,6 +194,11 @@ class Esp32Driver(Node):
         if self._battery_state == BATTERY_CRITICAL:
             self._send_motion(0.0, 0.0)
             return
+        # Hold while the operator of an attended run cannot be reached. Nav2 is not
+        # told: it keeps sending commands and carries on when the hold is released.
+        if self._operator_holding():
+            self._send_motion(0.0, 0.0)
+            return
         # No sign flips. From 2026-08-11 to 2026-11-16 both linear.x and angular.z
         # were negated here, on the belief that this unit was wired backwards. The
         # real cause was the firmware's stored chassis type (main=3, UGV Beast, which
@@ -185,6 +207,32 @@ class Esp32Driver(Node):
         # turns left (gyro positive). angular.z is scaled by angular_cmd_gain for
         # skid-steer tyre scrub (see the parameter's comment).
         self._send_motion(msg.linear.x, msg.angular.z * self._angular_cmd_gain)
+
+    def _operator_hold_cb(self, msg):
+        was_holding = self._operator_holding()
+        self._operator_hold = bool(msg.data)
+        self._operator_hold_time = time.time()
+        if msg.data and not was_holding:
+            # Do not wait for the next cmd_vel (up to 50 ms away) to stop the wheels.
+            self._send_motion(0.0, 0.0)
+        self._operator_holding()               # logs the change, if there was one
+
+    def _operator_holding(self):
+        """True while the wheels must be held for want of an operator."""
+        fresh = (self._operator_hold_time is not None
+                 and time.time() - self._operator_hold_time < OPERATOR_HOLD_STALE_S)
+        if fresh:
+            held = self._operator_hold
+        else:
+            held = bool(self.get_parameter('operator_watch_required').value)
+        if held != self._operator_held:
+            self._operator_held = held
+            if held:
+                why = 'operator unreachable' if fresh else 'no operator watch running'
+                self.get_logger().warn(f'esp32_driver: wheels HELD — {why}')
+            else:
+                self.get_logger().info('esp32_driver: wheels released — operator reachable')
+        return held
 
     def _send_motion(self, linear_x, angular_z):
         """Send a body twist as left/right wheel speeds (T:1), never as T:13: only T:1

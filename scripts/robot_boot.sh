@@ -98,6 +98,8 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 \
 BAG_PID=""
 DRIVERS_PID=""
 MISSION_PID=""
+WATCH_PID=""
+WATCH_WAITER_PID=""
 
 # SIGINT a background job, give it 15 s to exit by itself, then SIGKILL it.
 stop_job() {
@@ -120,12 +122,26 @@ stop_job() {
 
 cleanup() {
   # A second Ctrl+C must not cut the teardown short (an unfinalized bag is useless).
-  trap '' INT TERM HUP
+  trap '' INT TERM HUP USR1
+  # The waiter first: the watch node is about to be stopped on purpose, and its exit
+  # must not be reported as "the operator watch ended".
+  if [ -n "$WATCH_WAITER_PID" ]; then
+    kill "$WATCH_WAITER_PID" 2>/dev/null || true
+    wait "$WATCH_WAITER_PID" 2>/dev/null || true
+  fi
   if [ -n "$MISSION_PID" ]; then
     echo "=== [robot-boot] removing the mission container ==="
     docker rm -f robot_mission >/dev/null 2>&1 || true
     wait "$MISSION_PID" 2>/dev/null || true
   fi
+  # The operator watch goes AFTER the container: once it is gone esp32_driver holds the
+  # wheels anyway (operator_watch_required), and while the container is being removed
+  # the watch is still what holds them if the link is down.
+  # `ros2 run` does not pass a signal on to the node it started; it expects the
+  # terminal to have signalled both. The watch is its own process group (set -m), so
+  # signal the group.
+  if [ -n "$WATCH_PID" ]; then kill -INT -- "-$WATCH_PID" 2>/dev/null || true; fi
+  stop_job "the operator watch" "$WATCH_PID"
   stop_job "the bag recorder" "$BAG_PID"
   stop_job "the bare-metal driver layer" "$DRIVERS_PID"
 }
@@ -137,6 +153,50 @@ trap 'echo "=== [robot-boot] SIGTERM -- stopping the mission ===" >&2; exit 143'
 # SIGHUP = the terminal went away (SSH session dropped, e.g. WiFi lost while the robot
 # is driving). Nobody can press Ctrl+C any more, so stop the same way.
 trap 'echo "=== [robot-boot] terminal lost (SIGHUP) -- stopping the mission ===" >&2; exit 129' HUP
+# SIGUSR1 = the operator watch ended while the mission was running (sent by the waiter
+# started next to the mission, below): either it gave up -- the operator's machine did
+# not come back -- or it died. Either way nobody is watching an attended run any more.
+# 131 = 128 + 3, free among this script's exit codes.
+trap 'echo "=== [robot-boot] the operator watch ended -- stopping the mission ($(tail -n 1 "$WATCH_LOG" 2>/dev/null)) ===" >&2; exit 131' USR1
+
+# --- Operator watch (2026-11-19): pause, then stop, when an ATTENDED run loses its operator ---
+# A DROPPED link (WiFi lost, robot out of range) sends no SIGHUP -- the SSH session just
+# hangs open on this side -- so the mission carries on and Ctrl+C cannot reach it. A run
+# started over SSH has an operator, and SSH_CLIENT holds their address. For such a run:
+#   * the `operator_watch` node (bare-metal, next to the drivers) pings that address five
+#     times a second and publishes /robot_001/operator_hold;
+#   * esp32_driver is started with operator_watch_required:=true, so it holds the wheels
+#     whenever the watch says "unreachable" AND whenever the watch is not heard from;
+#   * no answer for ROBOT_BOOT_OPERATOR_TIMEOUT_S (default 2): the robot PAUSES, two
+#     short beeps. Nav2 is not told and carries on when the hold is released;
+#   * link back: one long beep, then the robot moves again a second later;
+#   * still silent ROBOT_BOOT_OPERATOR_GIVE_UP_S (default 10) after the pause: three low
+#     beeps, the watch exits, and this script shuts the mission down (exit 131).
+# Pause rather than stop, because this robot's WiFi adapter changes radio band by itself
+# while driving and each change is ~2.4 s of silence (measured 2026-11-19).
+# A run NOT started over SSH (robot-mission.service at boot) has no operator and none of
+# this: the deployed robot needs no network at all.
+#   ROBOT_BOOT_OPERATOR_IP=<addr>     watch this address instead of the SSH client's
+#   ROBOT_BOOT_NO_OPERATOR_WATCH=1    watch nobody (e.g. the operator's machine drops pings)
+#   ROBOT_BOOT_NO_BEEP=1              no sounds
+# This covers "WiFi gone, Jetson alive". "Jetson gone" is the motor board's own
+# stop-on-silence timer (esp32_driver, bench-proven 2026-11-19). Neither replaces a
+# physical stop button.
+OPERATOR_IP=""
+OPERATOR_TIMEOUT_S="${ROBOT_BOOT_OPERATOR_TIMEOUT_S:-2}"
+OPERATOR_GIVE_UP_S="${ROBOT_BOOT_OPERATOR_GIVE_UP_S:-10}"
+WATCH_LOG=""
+if [ -n "${ROBOT_BOOT_NO_OPERATOR_WATCH:-}" ]; then
+  echo "=== [robot-boot] WARNING: ROBOT_BOOT_NO_OPERATOR_WATCH set -- a lost link will NOT stop this run ===" >&2
+else
+  ssh_client="${SSH_CLIENT:-}"
+  OPERATOR_IP="${ROBOT_BOOT_OPERATOR_IP:-${ssh_client%% *}}"
+fi
+
+# Pre-flight: at least one of five pings answered.
+operator_reachable() {
+  ping -c 5 -i 0.2 -W 1 "$OPERATOR_IP" >/dev/null 2>&1
+}
 
 # --- Evidence bag, BARE-METAL, on every run (2026-11-17) ---
 # Run 2 on 2026-11-16 finished with a 0.55 m position error and no recording, so it
@@ -194,6 +254,7 @@ ros2 launch nav_fleet drivers_only_launch.py \
   serial_baud:=115200 \
   lidar_launch_file:="$HOME/ros2_drivers_ws/install/ldlidar_ros2/share/ldlidar_ros2/launch/ld19.launch.py" \
   camera_launch_file:=/opt/ros/jazzy/share/depthai_ros_driver/launch/camera.launch.py \
+  ${OPERATOR_IP:+operator_watch_required:=true} \
   > "$DRIVERS_LOG" 2>&1 < /dev/null &
 DRIVERS_PID=$!
 set +m
@@ -260,6 +321,37 @@ case "$battery_line" in
     fi ;;
 esac
 
+# --- Operator pre-flight and watch (2026-11-19) ---
+# A link that is already bad is no link to start a floor run on: check before anything
+# moves. Then start the watch, BEFORE the mission: until it reports the operator
+# reachable, esp32_driver holds the wheels.
+if [ -n "$OPERATOR_IP" ]; then
+  if ! operator_reachable; then
+    echo "FATAL: operator ${OPERATOR_IP} does not answer pings -- fix the link, or set ROBOT_BOOT_NO_OPERATOR_WATCH=1 to run with no remote stop" >&2
+    exit 1
+  fi
+  echo "=== [robot-boot] operator ${OPERATOR_IP} reachable -- the robot pauses after ${OPERATOR_TIMEOUT_S}s of silence and the run ends ${OPERATOR_GIVE_UP_S}s after that ==="
+  WATCH_LOG="$LOG_DIR/operator_watch_${TS}.log"
+  beep=true
+  if [ -n "${ROBOT_BOOT_NO_BEEP:-}" ]; then beep=false; fi
+  # ROS 2 parameters are typed: "2" would be an integer and the node declares floats.
+  set -m
+  ros2 run nav_fleet operator_watch --ros-args \
+    -p operator_ip:="$OPERATOR_IP" \
+    -p pause_after_s:="$(printf '%.1f' "$OPERATOR_TIMEOUT_S")" \
+    -p give_up_after_s:="$(printf '%.1f' "$OPERATOR_GIVE_UP_S")" \
+    -p beep:="$beep" \
+    > "$WATCH_LOG" 2>&1 < /dev/null &
+  WATCH_PID=$!
+  set +m
+  # The waiter: when the watch ends for ANY reason while this script is still running
+  # (it gave up, or it crashed), stop the mission. cleanup() kills this waiter before
+  # it stops the watch itself.
+  ( while kill -0 "$WATCH_PID" 2>/dev/null; do sleep 0.2; done
+    kill -USR1 $$ ) &
+  WATCH_WAITER_PID=$!
+fi
+
 # --- Nav2/EKF/ball_detector/mission_runner, containerized (unchanged) ---
 echo "=== [robot-boot] running ${IMAGE} (real-robot context, operator ball placement) ==="
 # RUNNER_TYPE=real_robot matches the convention every other real-robot telemetry row
@@ -293,6 +385,21 @@ else
   echo "=== [robot-boot] WARNING: no real map at ${REAL_MAP_DIR}/bedroom_real.{yaml,pgm} -- falling back to the BORROWED living_room.yaml (hallway and home pose do not match this house; expect a home error) ===" >&2
   MAP_ARGS=(-e NAV2_MAP_FILE=living_room.yaml)
 fi
+# Trying a Nav2 setting on the robot without a new image (2026-11-19): the container
+# runs the image's own copy of nav2_params.yaml, and a new image is a push plus a full
+# CI run. ROBOT_BOOT_NAV2_PARAMS=<file on the Jetson> mounts that file over both of the
+# image's copies for this run only. For tuning runs; the value that works still has to
+# be committed, or the next run without this variable silently goes back to the old one.
+PARAMS_ARGS=()
+if [ -n "${ROBOT_BOOT_NAV2_PARAMS:-}" ]; then
+  if [ ! -f "$ROBOT_BOOT_NAV2_PARAMS" ]; then
+    echo "FATAL: ROBOT_BOOT_NAV2_PARAMS=${ROBOT_BOOT_NAV2_PARAMS} is not a file" >&2
+    exit 1
+  fi
+  echo "=== [robot-boot] WARNING: Nav2 parameters come from ${ROBOT_BOOT_NAV2_PARAMS}, NOT from the image ===" >&2
+  PARAMS_ARGS=(-v "$ROBOT_BOOT_NAV2_PARAMS:/ros2_ws/install/nav_fleet/share/nav_fleet/config/nav2_params.yaml:ro"
+               -v "$ROBOT_BOOT_NAV2_PARAMS:/ros2_ws/src/nav_fleet/config/nav2_params.yaml:ro")
+fi
 docker rm -f robot_mission 2>/dev/null || true
 mkdir -p "$REPO/reports"
 # Navigation-only diagnostic runs (2026-11-16): the container only sees env vars
@@ -313,6 +420,7 @@ set -m
   -e USE_SIM_TIME=false \
   -e HSV_CONFIG_FILE=hsv_gazebo.yaml \
   "${MAP_ARGS[@]}" \
+  ${PARAMS_ARGS[@]+"${PARAMS_ARGS[@]}"} \
   -e MISSION2_SELF_REPORT=1 \
   -e RUNNER_TYPE=real_robot \
   -e ROBOT_MODE=mission \

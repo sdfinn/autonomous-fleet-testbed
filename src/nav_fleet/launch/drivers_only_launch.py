@@ -49,6 +49,13 @@ def generate_launch_description():
                     'firmware source (Serial.begin(115200)) — see '
                     'robot_profiles/jetson_ugv_pt.yaml',
     )
+    # Attended runs only (scripts/robot_boot.sh sets it when started over SSH):
+    # esp32_driver then holds the wheels unless operator_watch is running and says the
+    # operator's machine is reachable. See esp32_driver's parameter of the same name.
+    operator_watch_required_arg = DeclareLaunchArgument(
+        'operator_watch_required', default_value='false',
+        description='true = hold the wheels while no operator_watch reports the operator reachable',
+    )
     lidar_launch_file_arg = DeclareLaunchArgument(
         'lidar_launch_file', default_value='',
         description="Absolute path to ldlidar_ros2's own launch file for the "
@@ -104,7 +111,9 @@ def generate_launch_description():
         name='esp32_driver',
         output='screen',
         parameters=[{'serial_device': LaunchConfiguration('serial_device'),
-                     'baud': LaunchConfiguration('serial_baud')}],
+                     'baud': LaunchConfiguration('serial_baud'),
+                     'operator_watch_required': ParameterValue(
+                         LaunchConfiguration('operator_watch_required'), value_type=bool)}],
     )
 
     # scan_masker: subscribes to ldlidar_ros2's raw 'scan' topic, republishes
@@ -156,7 +165,8 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        serial_device_arg, serial_baud_arg, lidar_launch_file_arg,
+        serial_device_arg, serial_baud_arg, operator_watch_required_arg,
+        lidar_launch_file_arg,
         camera_launch_file_arg,
         robot_state_publisher,
         esp32_driver, lidar_include, camera_include, scan_masker, camera_relay,

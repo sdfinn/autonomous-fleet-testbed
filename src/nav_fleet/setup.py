@@ -38,6 +38,7 @@ setup(
             'scan_masker = nav_fleet.scan_masker:main',
             'slip_monitor = nav_fleet.slip_monitor:main',
             'key_teleop = nav_fleet.key_teleop:main',
+            'operator_watch = nav_fleet.operator_watch:main',
             'camera_relay = nav_fleet.camera_relay:main',
         ],
     },

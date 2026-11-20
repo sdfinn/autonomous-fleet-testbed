@@ -72,7 +72,7 @@ FAKE_ROS2 = """#!/bin/bash
 case "$1" in
   launch)
     trap 'echo drivers_sigint >> "$EVENTS"; exit 0' INT
-    echo "drivers_start" >> "$EVENTS"
+    echo "drivers_start $*" >> "$EVENTS"
     echo "esp32_driver up"
     echo "ldlidar communication is normal"
     echo "Camera with MXID 123 opened"
@@ -83,6 +83,20 @@ case "$1" in
       echo "[esp32_driver-2] [INFO] [1.0] [esp32_driver]: $line"
     fi
     while true; do sleep 0.2; done ;;
+  run)
+    # `ros2 run nav_fleet operator_watch ...`: "watches" while $STATE/operator_up
+    # exists, then gives up (exit 3) like the real node. FAKE_WATCH_CRASHES: dies.
+    trap 'echo watch_sigint >> "$EVENTS"; exit 0' INT
+    echo "watch_start $*" >> "$EVENTS"
+    echo "[INFO] [operator_watch]: operator_watch up"
+    if [ -n "${FAKE_WATCH_CRASHES:-}" ]; then
+      sleep 1
+      echo "Traceback (most recent call last): boom"
+      exit 1
+    fi
+    while [ -f "$STATE/operator_up" ]; do sleep 0.1; done
+    echo "[ERROR] [operator_watch]: operator_watch: operator still silent — GIVING UP"
+    exit 3 ;;
   bag)
     echo "bag_start $*" >> "$EVENTS"
     [ -n "${FAKE_BAG_DIES:-}" ] && exit 1
@@ -392,3 +406,159 @@ def test_battery_check_can_be_overridden_for_bench_work(boot_env):
     out = _finish(_start(env))
     assert 'ROBOT_BOOT_IGNORE_BATTERY set' in out
     assert 'docker_run' in _events(events)
+
+
+# --- Operator watch: an attended run pauses, then ends, when its operator goes away ---
+# The pause/resume decisions are tests/test_operator_link.py and the hold itself is
+# tests/test_esp32_driver.py; here: does the script start the watch for the right runs,
+# make it mandatory for the driver, and end the run when the watch ends?
+# `ping` here is only the pre-flight check (exit status).
+FAKE_PING = """#!/bin/bash
+echo "ping $*" >> "$EVENTS"
+[ -f "$STATE/operator_up" ]
+"""
+
+
+@pytest.fixture
+def attended_env(boot_env, tmp_path):
+    """boot_env as an operator's SSH session would see it, with a reachable operator."""
+    env, events, home = boot_env
+    _write_exec(tmp_path / 'stubs' / 'ping', FAKE_PING)
+    (tmp_path / 'state' / 'operator_up').write_text('')
+    env['SSH_CLIENT'] = '192.168.1.119 51234 22'
+    return env, events, home, tmp_path / 'state'
+
+
+def _event_line(events, name):
+    return next(line for line in events.read_text().splitlines() if line.startswith(name))
+
+
+def test_attended_run_starts_the_watch_and_makes_it_mandatory_for_the_driver(attended_env):
+    env, events, _home, _state = attended_env
+    env['FAKE_MISSION_SECONDS'] = '1'
+    proc = _start(env)
+    out = _finish(proc)
+    assert proc.returncode == 0, out
+    ev = _events(events)
+    # The driver holds the wheels unless the watch says the operator is reachable...
+    assert 'operator_watch_required:=true' in _event_line(events, 'drivers_start')
+    # ...and the watch is running before the mission can command anything.
+    assert ev.index('watch_start') < ev.index('docker_run')
+    watch = _event_line(events, 'watch_start')
+    assert 'operator_ip:=192.168.1.119' in watch
+    # Typed ROS parameters: floats, not the integers a bare "2" would be.
+    assert 'pause_after_s:=2.0' in watch and 'give_up_after_s:=10.0' in watch
+    assert 'beep:=true' in watch
+    # A normal finish stops the watch and is NOT reported as losing the operator.
+    assert 'watch_sigint' in ev
+    assert 'operator watch ended' not in out
+
+
+def test_attended_run_ends_when_the_watch_gives_up(attended_env):
+    """2026-11-18/19: a dropped WiFi link sends no SIGHUP -- the SSH session just hangs
+    open, the mission carries on and Ctrl+C cannot reach it."""
+    env, events, _home, state = attended_env
+    proc = _start(env)
+    _wait_for_event(events, 'docker_run')
+    assert proc.poll() is None
+
+    (state / 'operator_up').unlink()                  # the fake watch gives up
+    out = _finish(proc, timeout=20.0)
+
+    ev = _events(events)
+    assert proc.returncode == 131, out
+    assert 'the operator watch ended' in out and 'GIVING UP' in out
+    assert 'docker_rm' in ev[ev.index('docker_run'):], out
+    stop_order = [e for e in ev[ev.index('docker_run'):]
+                  if e in ('docker_rm', 'bag_sigint', 'drivers_sigint')]
+    assert stop_order == ['docker_rm', 'bag_sigint', 'drivers_sigint'], out
+
+
+def test_attended_run_ends_if_the_watch_itself_dies(attended_env):
+    """No watch = nobody would notice the operator going away: fail closed."""
+    env, events, _home, _state = attended_env
+    env['FAKE_WATCH_CRASHES'] = '1'
+    proc = _start(env)
+    out = _finish(proc, timeout=30.0)
+    assert proc.returncode == 131, out
+    assert 'the operator watch ended' in out
+    assert 'docker_run_finished' not in _events(events)
+
+
+def test_no_mission_when_the_operator_cannot_be_reached_at_the_start(attended_env):
+    env, events, _home, state = attended_env
+    (state / 'operator_up').unlink()
+    proc = _start(env)
+    out = _finish(proc, timeout=60.0)
+    assert proc.returncode == 1, out
+    assert 'FATAL: operator 192.168.1.119 does not answer' in out
+    assert 'docker_run' not in _events(events)
+    assert 'watch_start' not in _events(events)
+    assert 'drivers_sigint' in _events(events)
+
+
+def test_timings_and_beeps_are_switchable(attended_env):
+    env, events, _home, _state = attended_env
+    env.update(ROBOT_BOOT_OPERATOR_TIMEOUT_S='3', ROBOT_BOOT_OPERATOR_GIVE_UP_S='20',
+               ROBOT_BOOT_NO_BEEP='1', FAKE_MISSION_SECONDS='1')
+    _finish(_start(env))
+    watch = _event_line(events, 'watch_start')
+    assert 'pause_after_s:=3.0' in watch and 'give_up_after_s:=20.0' in watch
+    assert 'beep:=false' in watch
+
+
+def test_operator_watch_can_be_switched_off(attended_env):
+    env, events, _home, state = attended_env
+    (state / 'operator_up').unlink()                  # would be fatal if anyone looked
+    env['ROBOT_BOOT_NO_OPERATOR_WATCH'] = '1'
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+    assert 'ROBOT_BOOT_NO_OPERATOR_WATCH set' in out
+    assert 'docker_run_finished' in _events(events)
+    assert 'ping' not in _events(events) and 'watch_start' not in _events(events)
+    assert 'operator_watch_required' not in _event_line(events, 'drivers_start')
+
+
+def test_a_run_not_started_over_ssh_watches_nobody(attended_env):
+    """The boot-time service has no operator: a robot that works without WiFi must
+    keep working without WiFi."""
+    env, events, _home, state = attended_env
+    del env['SSH_CLIENT']
+    (state / 'operator_up').unlink()
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+    assert 'docker_run_finished' in _events(events), out
+    assert 'ping' not in _events(events) and 'watch_start' not in _events(events)
+    assert 'operator_watch_required' not in _event_line(events, 'drivers_start')
+
+
+# --- ROBOT_BOOT_NAV2_PARAMS: try a Nav2 setting on the robot without a new image ---
+def test_nav2_params_override_is_mounted_over_the_images_copies_and_is_loud(boot_env):
+    env, events, home = boot_env
+    params = home / 'tuning.yaml'
+    params.write_text('controller_server: {}\n')
+    env['ROBOT_BOOT_NAV2_PARAMS'] = str(params)
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+    line = _docker_run_line(events)
+    installed = '/ros2_ws/install/nav_fleet/share/nav_fleet/config/nav2_params.yaml'
+    assert f'{params}:{installed}:ro' in line
+    assert f'{params}:/ros2_ws/src/nav_fleet/config/nav2_params.yaml:ro' in line
+    assert 'NOT from the image' in out
+
+
+def test_no_mission_when_the_nav2_params_override_is_missing(boot_env):
+    env, events, home = boot_env
+    env['ROBOT_BOOT_NAV2_PARAMS'] = str(home / 'no_such.yaml')
+    proc = _start(env)
+    out = _finish(proc, timeout=60.0)
+    assert proc.returncode == 1, out
+    assert 'is not a file' in out
+    assert 'docker_run' not in _events(events)
+
+
+def test_no_params_mount_without_the_override(boot_env):
+    env, events, _home = boot_env
+    env['FAKE_MISSION_SECONDS'] = '1'
+    _finish(_start(env))
+    assert 'nav2_params.yaml' not in _docker_run_line(events)

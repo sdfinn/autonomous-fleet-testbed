@@ -22,7 +22,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.time import Time
 from sensor_msgs.msg import Imu
-from std_msgs.msg import Float32
+from std_msgs.msg import Bool, Float32
 
 from nav_fleet.esp32_driver import GYRO_VARIANCE_RAD2_S2, Esp32Driver
 
@@ -560,5 +560,89 @@ def test_dispatch_line_orientation_is_cached_not_published():
         from nav_fleet.esp32_protocol import OrientationData
         assert driver._last_orientation == OrientationData(
             roll=0.1, pitch=0.2, yaw=0.3, q0=1.0, q1=0.0, q2=0.0, q3=0.0)
+    finally:
+        driver.destroy_node()
+
+
+# --- Operator hold: attended runs pause while the operator cannot be reached ---
+def _drive(driver, mock_ser):
+    """Send one forward command; returns what reached the board for it."""
+    mock_ser.write.reset_mock()
+    msg = Twist()
+    msg.linear.x = 0.2
+    driver._cmd_vel_cb(msg)
+    return _sent_commands(mock_ser)
+
+
+STOP = {'T': 1, 'L': 0.0, 'R': 0.0}
+
+
+def test_an_unattended_run_drives_with_no_operator_watch_at_all():
+    """The deployed robot needs no network: no watch, no hold topic, no effect."""
+    driver, mock_ser = _make_driver()
+    try:
+        assert driver.get_parameter('operator_watch_required').value is False
+        (sent,) = _drive(driver, mock_ser)
+        assert sent['L'] == pytest.approx(0.2) and sent['R'] == pytest.approx(0.2)
+    finally:
+        driver.destroy_node()
+
+
+def test_operator_hold_stops_the_wheels_at_once_and_refuses_motion():
+    driver, mock_ser = _make_driver()
+    try:
+        mock_ser.write.reset_mock()
+        driver._operator_hold_cb(Bool(data=True))
+        # Stopped by the hold message itself, not by the next cmd_vel.
+        assert _sent_commands(mock_ser) == [STOP]
+        assert _drive(driver, mock_ser) == [STOP]
+    finally:
+        driver.destroy_node()
+
+
+def test_releasing_the_hold_lets_the_same_commands_through_again():
+    """Nav2 is never told about the pause: it keeps commanding and simply carries on."""
+    driver, mock_ser = _make_driver()
+    try:
+        driver._operator_hold_cb(Bool(data=True))
+        assert _drive(driver, mock_ser) == [STOP]
+        driver._operator_hold_cb(Bool(data=False))
+        (sent,) = _drive(driver, mock_ser)
+        assert sent['L'] == pytest.approx(0.2)
+    finally:
+        driver.destroy_node()
+
+
+def test_an_attended_run_does_not_drive_before_the_watch_is_heard_from():
+    driver, mock_ser = _make_driver(operator_watch_required=True)
+    try:
+        assert _drive(driver, mock_ser) == [STOP]
+        driver._operator_hold_cb(Bool(data=False))      # the watch: operator reachable
+        (sent,) = _drive(driver, mock_ser)
+        assert sent['L'] == pytest.approx(0.2)
+    finally:
+        driver.destroy_node()
+
+
+def test_an_attended_run_holds_when_the_watch_goes_silent():
+    """operator_watch crashed or was killed: 'reachable' said half a second ago is not
+    evidence any more."""
+    driver, mock_ser = _make_driver(operator_watch_required=True)
+    try:
+        driver._operator_hold_cb(Bool(data=False))
+        driver._operator_hold_time -= 0.6
+        assert _drive(driver, mock_ser) == [STOP]
+    finally:
+        driver.destroy_node()
+
+
+def test_a_stale_hold_does_not_trap_an_unattended_robot():
+    """Not required + the publisher is gone = back to driving, not held for ever."""
+    driver, mock_ser = _make_driver()
+    try:
+        driver._operator_hold_cb(Bool(data=True))
+        driver._operator_hold_time -= 0.6
+        (sent,) = _drive(driver, mock_ser)
+        assert sent['L'] == pytest.approx(0.2)
     finally:
         driver.destroy_node()
