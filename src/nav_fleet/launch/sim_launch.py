@@ -34,8 +34,15 @@ def generate_launch_description():
         description='Forwarded to nav2_only_launch.py (e.g. debug, for stall diagnosis)',
     )
 
+    obstacle_guard_arg = DeclareLaunchArgument(
+        'obstacle_guard', default_value='false',
+        description='Forwarded to sim_only_launch.py: true = the real robot\'s obstacle '
+                    'guard and a stand-in for the driver\'s wheel hold run in the sim',
+    )
+
     sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(LAUNCH_DIR / 'sim_only_launch.py')),
+        launch_arguments={'obstacle_guard': LaunchConfiguration('obstacle_guard')}.items(),
     )
     nav2 = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(LAUNCH_DIR / 'nav2_only_launch.py')),
@@ -44,6 +51,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         log_level_arg,
+        obstacle_guard_arg,
         sim,
         nav2,
     ])

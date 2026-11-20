@@ -41,6 +41,7 @@ setup(
             'key_teleop = nav_fleet.key_teleop:main',
             'operator_watch = nav_fleet.operator_watch:main',
             'obstacle_guard = nav_fleet.obstacle_guard:main',
+            'sim_wheel_hold = nav_fleet.sim_wheel_hold:main',
             'camera_relay = nav_fleet.camera_relay:main',
         ],
     },

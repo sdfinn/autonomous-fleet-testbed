@@ -25,8 +25,9 @@ not populated for workspace Python packages).
 import pathlib
 
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess, TimerAction
-from launch.substitutions import Command
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, TimerAction
+from launch.conditions import IfCondition
+from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -38,6 +39,22 @@ def generate_launch_description():
     world_path = str(PKG / 'worlds' / 'bedroom_simple.sdf')
 
     robot_desc = ParameterValue(Command(['xacro ', urdf_path]), value_type=str)
+
+    # obstacle_guard:=true puts the real robot's obstacle guard into the simulator.
+    # On the robot, obstacle_guard publishes /robot_001/obstacle_hold and esp32_driver
+    # holds the wheels for it. Gazebo replaces esp32_driver, so here a stand-in
+    # (sim_wheel_hold, same hold rule) sits between Nav2 and Gazebo:
+    #   Nav2 -> /robot_001/cmd_vel -> sim_wheel_hold -> /robot_001/cmd_vel_wheels -> Gazebo
+    # Off by default: the bridge then listens on /robot_001/cmd_vel as it always has.
+    obstacle_guard_arg = DeclareLaunchArgument(
+        'obstacle_guard', default_value='false',
+        description='true = run obstacle_guard on the simulated scan and hold the '
+                    'simulated wheels for it, as the real motor driver does',
+    )
+    guard_on = IfCondition(LaunchConfiguration('obstacle_guard'))
+    wheel_cmd_topic = PythonExpression([
+        "'/robot_001/cmd_vel_wheels' if '", LaunchConfiguration('obstacle_guard'),
+        "'.lower() == 'true' else '/robot_001/cmd_vel'"])
 
     robot_state_publisher = Node(
         package='robot_state_publisher',
@@ -103,6 +120,9 @@ def generate_launch_description():
                 '/robot_001/imu/data@sensor_msgs/msg/Imu[gz.msgs.IMU',
                 '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
             ],
+            # ROS side only: Gazebo's own topic keeps its name. With the guard off
+            # this remaps the topic to itself.
+            remappings=[('/robot_001/cmd_vel', wheel_cmd_topic)],
             output='screen',
         )],
     )
@@ -144,11 +164,32 @@ def generate_launch_description():
         ],
     )
 
+    # Wall-clock timing on purpose (no use_sim_time): both nodes time staleness with
+    # the system clock, as they do on the robot. No beep: there is no speaker to hear.
+    obstacle_guard = Node(
+        package='nav_fleet',
+        executable='obstacle_guard',
+        name='obstacle_guard',
+        output='screen',
+        parameters=[{'beep': False}],
+        condition=guard_on,
+    )
+    sim_wheel_hold = Node(
+        package='nav_fleet',
+        executable='sim_wheel_hold',
+        name='sim_wheel_hold',
+        output='screen',
+        condition=guard_on,
+    )
+
     return LaunchDescription([
+        obstacle_guard_arg,
         robot_state_publisher,
         gazebo,
         spawn_robot,
         bridge,
         lidar_frame_bridge,
         imu_frame_bridge,
+        obstacle_guard,
+        sim_wheel_hold,
     ])

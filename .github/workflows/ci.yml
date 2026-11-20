@@ -314,7 +314,11 @@ jobs:
           # lost once the step ends, so a failure window has zero Nav2 output to diagnose
           # (Session 16 — the first red run had no planner_server lines at all).
           : > /tmp/stage2_sim.log
-          ros2 launch src/nav_fleet/launch/sim_launch.py \
+          # obstacle_guard:=true (2026-11-20): the real robot's obstacle guard and a
+          # stand-in for the motor driver's wheel hold run in the simulator for this whole
+          # stage, as they do on every real mission. tests/test_sim_box_guard.py needs
+          # it; the other tests must keep passing with it watching (zero false holds).
+          ros2 launch src/nav_fleet/launch/sim_launch.py obstacle_guard:=true \
             > /tmp/stage2_sim.log 2>&1 &
           sleep 20
 
@@ -326,7 +330,8 @@ jobs:
                                              # .bashrc, so this runner falls back to apt's
                                              # pytest 7.4.4 (owned by colcon-core) otherwise
           python -m pytest tests/test_navigation.py tests/test_mission_run.py \
-            tests/test_nav_runner.py -v --timeout=300 \
+            tests/test_sim_box_guard.py tests/test_nav_runner.py \
+            tests/test_sim_wheel_hold.py -v --timeout=300 \
             --cov=tools --cov=src/nav_fleet/nav_fleet --cov-report=
 
       - name: Run Mission 2 day (in-process — VLM canary x86 coverage)
