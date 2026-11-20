@@ -332,6 +332,31 @@ case "$battery_line" in
     fi ;;
 esac
 
+# --- IMU pre-flight (2026-11-20) ---
+# After one power-on the motor board's IMU chip did not start: the board repeated the
+# same nine numbers, gyro z among them at 706 deg/s. The robot's position estimate left
+# the home spot before the first goal and the robot spun where it stood. esp32_driver
+# now judges the IMU on its first ~2 s of samples and logs one line:
+#   esp32_driver: imu ok|frozen|implausible (<why>)
+# No mission starts unless it says "ok"; a missing line counts as bad (fail closed).
+# There is no override: the driver itself refuses motion on a bad IMU.
+imu_line=""
+imu_deadline=$((SECONDS + 15))
+while [ -z "$imu_line" ] && (( SECONDS < imu_deadline )); do
+  imu_line=$(grep -oE 'esp32_driver: imu (ok|frozen|implausible) \([^)]*\)' "$DRIVERS_LOG" 2>/dev/null | tail -n 1 || true)
+  [ -n "$imu_line" ] || sleep 1
+done
+case "$imu_line" in
+  "esp32_driver: imu ok"*)
+    echo "=== [robot-boot] ${imu_line#esp32_driver: } ===" ;;
+  "")
+    echo "FATAL: no IMU verdict from esp32_driver within 15s -- not starting a mission" >&2
+    exit 1 ;;
+  *)
+    echo "FATAL: ${imu_line#esp32_driver: } -- the motor board's IMU is not working; switch the robot off and on again" >&2
+    exit 1 ;;
+esac
+
 # --- Operator pre-flight and watch (2026-11-19) ---
 # A link that is already bad is no link to start a floor run on: check before anything
 # moves. Then start the watch, BEFORE the mission: until it reports the operator
@@ -410,6 +435,27 @@ if [ -n "${ROBOT_BOOT_NAV2_PARAMS:-}" ]; then
   PARAMS_ARGS=(-v "$ROBOT_BOOT_NAV2_PARAMS:/ros2_ws/install/nav_fleet/share/nav_fleet/config/nav2_params.yaml:ro"
                -v "$ROBOT_BOOT_NAV2_PARAMS:/ros2_ws/src/nav_fleet/config/nav2_params.yaml:ro")
 fi
+# Trying a ball-detector change on the robot without a new image (2026-11-20), same
+# idea as ROBOT_BOOT_NAV2_PARAMS above. ROBOT_BOOT_DETECTOR=<folder on the Jetson> must
+# hold BOTH hsv_detect.py and hsv_realcam.yaml (code and profile change together: a
+# profile with a section the image's code does not know is refused at load). Each is
+# mounted over both of the image's copies for this run only. What works still has to
+# be committed.
+DETECTOR_ARGS=()
+if [ -n "${ROBOT_BOOT_DETECTOR:-}" ]; then
+  for f in hsv_detect.py hsv_realcam.yaml; do
+    if [ ! -f "$ROBOT_BOOT_DETECTOR/$f" ]; then
+      echo "FATAL: ROBOT_BOOT_DETECTOR=${ROBOT_BOOT_DETECTOR} has no $f" >&2
+      exit 1
+    fi
+  done
+  echo "=== [robot-boot] WARNING: ball detector code and colour profile come from ${ROBOT_BOOT_DETECTOR}, NOT from the image ===" >&2
+  DETECTOR_ARGS=(
+    -v "$ROBOT_BOOT_DETECTOR/hsv_detect.py:/ros2_ws/install/nav_fleet/lib/python3.12/site-packages/nav_fleet/hsv_detect.py:ro"
+    -v "$ROBOT_BOOT_DETECTOR/hsv_detect.py:/ros2_ws/src/nav_fleet/nav_fleet/hsv_detect.py:ro"
+    -v "$ROBOT_BOOT_DETECTOR/hsv_realcam.yaml:/ros2_ws/install/nav_fleet/share/nav_fleet/config/hsv_realcam.yaml:ro"
+    -v "$ROBOT_BOOT_DETECTOR/hsv_realcam.yaml:/ros2_ws/src/nav_fleet/config/hsv_realcam.yaml:ro")
+fi
 docker rm -f robot_mission 2>/dev/null || true
 mkdir -p "$REPO/reports"
 # Navigation-only diagnostic runs (2026-11-16): the container only sees env vars
@@ -431,6 +477,7 @@ set -m
   -e HSV_CONFIG_FILE=hsv_realcam.yaml \
   "${MAP_ARGS[@]}" \
   ${PARAMS_ARGS[@]+"${PARAMS_ARGS[@]}"} \
+  ${DETECTOR_ARGS[@]+"${DETECTOR_ARGS[@]}"} \
   -e MISSION2_SELF_REPORT=1 \
   -e RUNNER_TYPE=real_robot \
   -e ROBOT_MODE=mission \

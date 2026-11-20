@@ -339,3 +339,75 @@ def test_battery_monitor_ignores_zero_readings_from_a_sensor_not_yet_answering()
     for _ in range(3):
         state = mon.update(11.0)
     assert state == BATTERY_OK
+
+
+# --- IMU health (2026-11-20) -----------------------------------------------------------
+# The raw status line the board sent on 2026-11-20 with the robot standing still: every
+# axis stuck, gravity reading 3.9 g, gyro z reading 706 deg/s.
+FROZEN_20261120 = (308, 31265, -5042, -32253, 3840, 11305)
+
+
+def _live_sample(i):
+    """A still robot's raw counts: gravity on z, the lowest bits flickering."""
+    return (-36 + i % 3, 68 - i % 2, 8556 + i % 5, -8 + i % 2, 16 - i % 3, i % 4)
+
+
+def test_imu_health_gives_no_verdict_until_it_has_a_full_window():
+    from nav_fleet.esp32_protocol import ImuHealth
+    health = ImuHealth(window=5)
+    assert [health.update(*_live_sample(i)) for i in range(4)] == [None] * 4
+    assert health.update(*_live_sample(4)) == 'ok'
+
+
+def test_imu_health_calls_a_live_resting_sensor_ok():
+    from nav_fleet.esp32_protocol import IMU_OK, ImuHealth
+    health = ImuHealth()
+    for i in range(200):
+        state = health.update(*_live_sample(i))
+    assert state == IMU_OK
+
+
+def test_imu_health_catches_the_frozen_sensor_of_2026_11_20():
+    """The sensor chip did not start at power-on. The board went on sending the same
+    nine numbers 20 times a second; the driver published 12.33 rad/s of turn from a
+    robot standing still, and the position estimate left the home spot by 2.2 m
+    before the first goal."""
+    from nav_fleet.esp32_protocol import IMU_FROZEN, ImuHealth
+    health = ImuHealth()
+    for _ in range(40):
+        state = health.update(*FROZEN_20261120)
+    assert state == IMU_FROZEN
+    assert '11305' in health.detail                  # the log line names the stuck value
+
+
+def test_imu_health_catches_a_sensor_that_moves_but_does_not_feel_gravity():
+    from nav_fleet.esp32_protocol import IMU_IMPLAUSIBLE, ImuHealth
+    health = ImuHealth()
+    for i in range(40):
+        state = health.update(300 + i % 3, 31265, -5042, i % 2, 0, 0)     # 3.9 g
+    assert state == IMU_IMPLAUSIBLE
+    for i in range(40):
+        state = health.update(i % 3, i % 2, 40 + i % 4, 0, i % 2, 0)       # 0.005 g
+    assert state == IMU_IMPLAUSIBLE
+
+
+def test_imu_health_recovers_when_the_sensor_comes_back():
+    from nav_fleet.esp32_protocol import IMU_FROZEN, IMU_OK, ImuHealth
+    health = ImuHealth()
+    for _ in range(40):
+        health.update(*FROZEN_20261120)
+    assert health.state == IMU_FROZEN
+    for i in range(40):
+        health.update(*_live_sample(i))
+    assert health.state == IMU_OK
+
+
+def test_imu_health_is_not_fooled_by_hard_driving():
+    """Braking and turning swing single samples well away from 1 g; the middle sample
+    of two seconds does not move."""
+    from nav_fleet.esp32_protocol import IMU_OK, ImuHealth
+    health = ImuHealth()
+    for i in range(40):
+        jolt = 9000 if i % 7 == 0 else 0
+        state = health.update(jolt, -jolt // 2, 8556 + i % 5, 400 * (i % 3), i, -3000 + i)
+    assert state == IMU_OK

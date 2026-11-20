@@ -30,8 +30,10 @@ from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Bool, Float32
 
-from nav_fleet.esp32_protocol import (BATTERY_CRITICAL, BATTERY_LOW, BatteryMonitor,
-                                      GyroBiasEstimator, battery_volts,
+from nav_fleet.hold_input import HoldInput
+from nav_fleet.esp32_protocol import (BATTERY_CRITICAL, BATTERY_LOW, IMU_OK,
+                                      BatteryMonitor, GyroBiasEstimator, ImuHealth,
+                                      battery_volts,
                                       encode_boot_mission_info,
                                       encode_enable_feedback_flow, encode_get_imu_data,
                                       encode_set_heartbeat_timeout, encode_wheel_speed_cmd,
@@ -43,6 +45,8 @@ from nav_fleet.esp32_protocol import (BATTERY_CRITICAL, BATTERY_LOW, BatteryMoni
 BATTERY_PUBLISH_EVERY = 20
 # Repeat the low/critical log line this often while the state persists.
 BATTERY_REMIND_S = 60.0
+# Same for a frozen or implausible IMU.
+IMU_REMIND_S = 60.0
 
 # Variance published on the gyro's angular_velocity_covariance diagonal, (rad/s)^2.
 # Measured 2026-11-16 from 15 s of a stationary real robot: gyro z std = 0.0028 rad/s
@@ -52,37 +56,6 @@ BATTERY_REMIND_S = 60.0
 # treats 0 as a perfect measurement. Not corrected here: a resting z bias of
 # +0.0046 rad/s (0.26 deg/s), and the unverified 16 LSB/dps gyro scale.
 GYRO_VARIANCE_RAD2_S2 = 1.0e-4
-
-
-# Hold topics arrive at 10 Hz; a value older than this says nothing any more.
-HOLD_STALE_S = 0.5
-
-
-class HoldInput:
-    """One "do not turn the wheels" input: a Bool topic published by a watcher.
-
-    A fresh True holds. If the watcher is `required` for this run, silence holds too --
-    a watcher that has died cannot say the way is safe. If it is not required, silence
-    means nothing (and an old True does not trap the robot for ever).
-    """
-
-    def __init__(self, topic, when_true, when_silent):
-        self.topic = topic
-        self.when_true = when_true          # log text, e.g. 'operator unreachable'
-        self.when_silent = when_silent      # log text, e.g. 'no operator watch running'
-        self.value = False
-        self.time = None                    # time.time() of the last message
-        self.held = False                   # last state reported, for one log line per change
-
-    def update(self, value, now):
-        self.value = bool(value)
-        self.time = now
-
-    def state(self, now, required):
-        """(holding, reason) right now."""
-        if self.time is not None and now - self.time < HOLD_STALE_S:
-            return self.value, self.when_true
-        return bool(required), self.when_silent
 
 
 class Esp32Driver(Node):
@@ -138,6 +111,11 @@ class Esp32Driver(Node):
         # Resting gyro offset, re-learned every ~2 s the robot sits still (40 samples
         # at the ~20 Hz feedback rate). See GyroBiasEstimator.
         self._gyro_bias = GyroBiasEstimator(window=40)
+        # Is the IMU alive? See ImuHealth. _imu_state is the last state logged: None
+        # until the first ~2 s of samples, then 'ok' / 'frozen' / 'implausible'.
+        self._imu_health = ImuHealth()
+        self._imu_state = None
+        self._imu_last_log = 0.0
         # Pack voltage from the same status line; see BatteryMonitor. _battery_state is
         # the last state logged (None until the first full window of samples).
         self._battery = BatteryMonitor()
@@ -231,6 +209,12 @@ class Esp32Driver(Node):
         # Refuse to drive on a critically low pack: the next heavy turn can pull the
         # voltage low enough to switch the Jetson off mid-command (2026-11-18).
         if self._battery_state == BATTERY_CRITICAL:
+            self._send_motion(0.0, 0.0)
+            return
+        # Refuse to drive on an IMU that is frozen or not feeling gravity: the heading
+        # filter trusts the gyro, so Nav2 would be steering from a position the robot
+        # is not in (2026-11-20: it spun on the home spot).
+        if self._imu_bad():
             self._send_motion(0.0, 0.0)
             return
         # Hold while a watcher says so: the operator of an attended run cannot be
@@ -349,12 +333,44 @@ class Esp32Driver(Node):
             # 2026-08-10) — it carries wheel speeds (odom) plus raw accel/gyro (imu)
             # in one line, not two separate messages as originally assumed.
             self._publish_odom(base_info)
-            self._publish_imu(base_info)
+            self._on_imu_sample(base_info)
+            # A known-bad IMU is not published at all: silence makes the heading
+            # filter coast, garbage makes it spin.
+            if not self._imu_bad():
+                self._publish_imu(base_info)
             self._on_battery_sample(base_info.voltage)
             return
         orientation = parse_orientation(data)
         if orientation is not None:
             self._last_orientation = orientation
+
+    def _imu_bad(self):
+        """True once the IMU is KNOWN to be frozen or implausible (not before the
+        first verdict: same rule as the chassis-type check)."""
+        return self._imu_state is not None and self._imu_state != IMU_OK
+
+    def _on_imu_sample(self, info):
+        """Judge the IMU on its raw counts and log when the verdict changes."""
+        state = self._imu_health.update(info.ax, info.ay, info.az,
+                                        info.gx, info.gy, info.gz)
+        if state is None:
+            return
+        now = time.time()
+        changed = state != self._imu_state
+        remind = state != IMU_OK and now - self._imu_last_log >= IMU_REMIND_S
+        if not (changed or remind):
+            return
+        # One fixed, greppable shape: robot_boot.sh reads this line before a mission.
+        line = f'esp32_driver: imu {state} ({self._imu_health.detail})'
+        self._imu_state = state
+        self._imu_last_log = now
+        if state == IMU_OK:
+            self.get_logger().info(line)
+        else:
+            self.get_logger().error(
+                line + ' -- motion REFUSED; switch the robot off and on again')
+            if changed:
+                self._send_motion(0.0, 0.0)
 
     def _on_battery_sample(self, raw):
         """Publish the pack voltage (~1 Hz) and log when its state changes."""

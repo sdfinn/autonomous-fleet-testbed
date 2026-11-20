@@ -700,3 +700,80 @@ def test_a_second_hold_on_top_of_the_first_does_not_resend_the_stop():
         assert _sent_commands(mock_ser) == []
     finally:
         driver.destroy_node()
+
+
+# --- IMU health (2026-11-20) -----------------------------------------------------------
+
+def _imu_line(i, frozen=False):
+    """One T:1001 status line. frozen=True is the line the board repeated on
+    2026-11-20 after its IMU chip failed to start; otherwise a live resting sensor."""
+    if frozen:
+        imu = dict(ax=308, ay=31265, az=-5042, gx=-32253, gy=3840, gz=11305)
+    else:
+        imu = dict(ax=-36 + i % 3, ay=68 - i % 2, az=8556 + i % 5,
+                   gx=-8 + i % 2, gy=16 - i % 3, gz=i % 4)
+    return dict(T=1001, L=0, R=0, mx=1017, my=-10495, mz=-4659, odl=29, odr=127,
+                v=1188, **imu)
+
+
+def test_a_frozen_imu_stops_the_robot_refuses_motion_and_is_not_published():
+    driver, mock_ser = _make_driver()
+    received = []
+    sub = driver.create_subscription(Imu, '/robot_001/imu/data',
+                                     lambda m: received.append(m), 10)
+    try:
+        mock_ser.write.reset_mock()
+        for i in range(40):                              # 2 s: the verdict arrives
+            driver._dispatch_line(_imu_line(i, frozen=True))
+        assert driver._imu_state == 'frozen'
+        assert _sent_commands(mock_ser)[-1] == {'T': 1, 'L': 0.0, 'R': 0.0}
+        msg = Twist()
+        msg.linear.x = 0.2
+        driver._cmd_vel_cb(msg)
+        assert _sent_commands(mock_ser)[-1] == {'T': 1, 'L': 0.0, 'R': 0.0}
+        # Drain what was published before the verdict, then prove nothing follows it.
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            rclpy.spin_once(driver, timeout_sec=0.1)
+        before = len(received)
+        for i in range(20):
+            driver._dispatch_line(_imu_line(i, frozen=True))
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            rclpy.spin_once(driver, timeout_sec=0.1)
+        assert len(received) == before
+    finally:
+        driver.destroy_subscription(sub)
+        driver.destroy_node()
+
+
+def test_a_live_imu_allows_motion():
+    driver, mock_ser = _make_driver()
+    try:
+        for i in range(80):
+            driver._dispatch_line(_imu_line(i))
+        assert driver._imu_state == 'ok'
+        mock_ser.write.reset_mock()
+        msg = Twist()
+        msg.linear.x = 0.2
+        driver._cmd_vel_cb(msg)
+        assert _sent_commands(mock_ser)[-1] == {'T': 1, 'L': 0.2, 'R': 0.2}
+    finally:
+        driver.destroy_node()
+
+
+def test_an_imu_that_comes_back_is_believed_again():
+    driver, mock_ser = _make_driver()
+    try:
+        for i in range(40):
+            driver._dispatch_line(_imu_line(i, frozen=True))
+        assert driver._imu_state == 'frozen'
+        for i in range(40):
+            driver._dispatch_line(_imu_line(i))
+        assert driver._imu_state == 'ok'
+        msg = Twist()
+        msg.linear.x = 0.2
+        driver._cmd_vel_cb(msg)
+        assert _sent_commands(mock_ser)[-1] == {'T': 1, 'L': 0.2, 'R': 0.2}
+    finally:
+        driver.destroy_node()

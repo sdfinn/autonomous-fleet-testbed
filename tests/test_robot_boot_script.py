@@ -82,6 +82,11 @@ case "$1" in
       line="${FAKE_BATTERY_LINE:-esp32_driver: battery 11.82 V (ok)}"
       echo "[esp32_driver-2] [INFO] [1.0] [esp32_driver]: $line"
     fi
+    # FAKE_IMU_LINE: what esp32_driver logs about its IMU ("none" = nothing).
+    if [ "${FAKE_IMU_LINE:-}" != "none" ]; then
+      line="${FAKE_IMU_LINE:-esp32_driver: imu ok (gravity reads 1.04 g)}"
+      echo "[esp32_driver-2] [INFO] [1.0] [esp32_driver]: $line"
+    fi
     while true; do sleep 0.2; done ;;
   run)
     # `ros2 run nav_fleet operator_watch ...`: "watches" while $STATE/operator_up
@@ -564,6 +569,48 @@ def test_no_params_mount_without_the_override(boot_env):
     assert 'nav2_params.yaml' not in _docker_run_line(events)
 
 
+# --- ROBOT_BOOT_DETECTOR: try a ball-detector change on the robot without a new image ---
+def test_detector_override_mounts_code_and_profile_over_the_images_copies(boot_env):
+    env, events, home = boot_env
+    trial = home / 'detector_trial'
+    trial.mkdir()
+    (trial / 'hsv_detect.py').write_text('# trial\n')
+    (trial / 'hsv_realcam.yaml').write_text('colors: {}\n')
+    env['ROBOT_BOOT_DETECTOR'] = str(trial)
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+    line = _docker_run_line(events)
+    site = '/ros2_ws/install/nav_fleet/lib/python3.12/site-packages/nav_fleet'
+    assert f'{trial}/hsv_detect.py:{site}/hsv_detect.py:ro' in line
+    assert f'{trial}/hsv_detect.py:/ros2_ws/src/nav_fleet/nav_fleet/hsv_detect.py:ro' in line
+    # The entrypoint reads the profile from src/; the installed copy is covered too.
+    assert f'{trial}/hsv_realcam.yaml:/ros2_ws/src/nav_fleet/config/hsv_realcam.yaml:ro' in line
+    assert (f'{trial}/hsv_realcam.yaml:/ros2_ws/install/nav_fleet/share/nav_fleet/config/'
+            'hsv_realcam.yaml:ro') in line
+    assert 'NOT from the image' in out
+
+
+def test_no_mission_when_the_detector_override_is_incomplete(boot_env):
+    """Code and profile change together: a new profile section crashes old code."""
+    env, events, home = boot_env
+    trial = home / 'detector_trial'
+    trial.mkdir()
+    (trial / 'hsv_realcam.yaml').write_text('colors: {}\n')
+    env['ROBOT_BOOT_DETECTOR'] = str(trial)
+    proc = _start(env)
+    out = _finish(proc, timeout=60.0)
+    assert proc.returncode == 1, out
+    assert 'has no hsv_detect.py' in out
+    assert 'docker_run' not in _events(events)
+
+
+def test_no_detector_mount_without_the_override(boot_env):
+    env, events, _home = boot_env
+    env['FAKE_MISSION_SECONDS'] = '1'
+    _finish(_start(env))
+    assert 'hsv_detect.py' not in _docker_run_line(events)
+
+
 def test_the_real_robot_uses_the_real_camera_colour_profile(boot_env):
     """Not the simulator's: that one took the bedroom's wood floor for a yellow ball."""
     env, events, _home = boot_env
@@ -603,3 +650,34 @@ def test_no_beep_also_silences_the_obstacle_guard(boot_env):
     env['FAKE_MISSION_SECONDS'] = '1'
     _finish(_start(env))
     assert 'obstacle_guard_beep:=false' in _drivers_line(events)
+
+
+def test_healthy_imu_is_reported_and_the_mission_runs(boot_env):
+    env, events, _home = boot_env
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+    assert 'imu ok (gravity reads 1.04 g)' in out
+    assert 'docker_run' in _events(events)
+
+
+@pytest.mark.parametrize('line, says', [
+    ('esp32_driver: imu frozen (no accel or gyro axis changed in 40 samples; raw gz '
+     'stuck at 11305) -- motion REFUSED; switch the robot off and on again',
+     'FATAL: imu frozen'),
+    ('esp32_driver: imu implausible (gravity reads 3.87 g, expected about 1)',
+     'FATAL: imu implausible'),
+    ('none', 'FATAL: no IMU verdict'),             # no verdict at all: fail closed
+])
+def test_no_mission_on_a_frozen_implausible_or_unjudged_imu(boot_env, line, says):
+    """2026-11-20: the board's IMU chip did not start at power-on and reported 706
+    deg/s from a robot standing still. Nav2 came up believing the robot was 2.2 m from
+    where it stood, and the robot spun on the home spot."""
+    env, events, _home = boot_env
+    env['FAKE_IMU_LINE'] = line
+    env['FAKE_MISSION_SECONDS'] = '1'
+    proc = _start(env)
+    out = _finish(proc, timeout=60.0)
+    assert proc.returncode == 1
+    assert says in out
+    assert 'docker_run' not in _events(events)
+    assert 'drivers_sigint' in _events(events)       # and the drivers were shut down

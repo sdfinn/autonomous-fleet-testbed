@@ -144,6 +144,62 @@ class GyroBiasEstimator:
         return self.bias
 
 
+# --- IMU health ------------------------------------------------------------------------
+# 2026-11-20: after a power-on the board's IMU chip did not start. The status line kept
+# arriving at 20 Hz with the same nine numbers in it every time:
+#   ax 308  ay 31265  az -5042   gx -32253  gy 3840  gz 11305
+# gz 11305 is 706 deg/s. The driver published that as the turn rate of a robot that was
+# standing still, the heading filter integrated it, and the position estimate walked
+# 2.2 m off the home spot in the 30 s before the first goal. The robot then spun on the
+# spot. Wheels, voltage and odometry on the same line were all correct.
+#
+# Two tests, both on raw counts, each decided on a full window (~2 s):
+#   frozen       no accel or gyro axis changed at all. A live sensor's lowest bits
+#                flicker even at rest (gyro z noise measured 2026-11-16: 0.0028 rad/s,
+#                about 2.6 counts).
+#   implausible  the middle sample's total acceleration is not near 1 g. The middle
+#                sample, because braking and bumps move single samples a long way.
+IMU_OK, IMU_FROZEN, IMU_IMPLAUSIBLE = 'ok', 'frozen', 'implausible'
+IMU_HEALTH_WINDOW_SAMPLES = 40      # ~2 s at the board's ~20 Hz status rate
+IMU_GRAVITY_MIN_G = 0.5
+IMU_GRAVITY_MAX_G = 1.5
+
+
+class ImuHealth:
+    """Is the board's IMU alive and believable? Pure logic, no ROS.
+
+    update() takes one RAW sample (counts, as the board sends them) and returns the
+    state: None until the first full window, then IMU_OK / IMU_FROZEN /
+    IMU_IMPLAUSIBLE, re-decided once per window so a sensor that comes back is
+    believed again. `detail` says why, in words fit for a log line."""
+
+    def __init__(self, window=IMU_HEALTH_WINDOW_SAMPLES):
+        self._window = window
+        self._samples = []
+        self.state = None
+        self.detail = ''
+
+    def update(self, ax, ay, az, gx, gy, gz):
+        self._samples.append((ax, ay, az, gx, gy, gz))
+        if len(self._samples) < self._window:
+            return self.state
+        samples, self._samples = self._samples, []
+        if len(set(samples)) == 1:
+            self.state = IMU_FROZEN
+            self.detail = ('no accel or gyro axis changed in %d samples; raw gz stuck '
+                           'at %d' % (len(samples), samples[0][5]))
+            return self.state
+        gravity = sorted(math.sqrt(s[0] ** 2 + s[1] ** 2 + s[2] ** 2) for s in samples)
+        g = gravity[len(gravity) // 2] / ACCEL_SENSITIVITY_LSB_PER_G
+        if IMU_GRAVITY_MIN_G <= g <= IMU_GRAVITY_MAX_G:
+            self.state = IMU_OK
+            self.detail = 'gravity reads %.2f g' % g
+        else:
+            self.state = IMU_IMPLAUSIBLE
+            self.detail = 'gravity reads %.2f g, expected about 1' % g
+        return self.state
+
+
 def encode_velocity_cmd(linear_x, angular_z):
     """CMD_ROS_CTRL (T:13) — documented in-source as (m/s, rad/s), a direct Twist
     mapping. The firmware does its own diff-drive -> L/R wheel-speed math.
