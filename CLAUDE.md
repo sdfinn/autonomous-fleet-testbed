@@ -102,19 +102,24 @@ Evidence under `reports/` (gitignored): `robot_boot_20261120_*`, `camera_cal_202
 `sim_box_20261120/`. A lessons note for wayfarer is in
 `~/wayfarer/docs/transfer/2026-11-20-lessons-from-aft.md`.
 
-**Next session, in order (proposed to Mike at close, not yet confirmed):** (1) robot
+**Mike expects the NEXT session to be on wayfarer** (he alternates: the real robot for
+a while, then the simulator). The list below is for the next session back here.
+
+**To finish Release 1, in order (order proposed at close, not confirmed):** (1) robot
 messaging on loopback and a link-loss policy per run (pause-and-resume / carry on /
-carry on then come home); a dry run with the WiFi down proves it; (2) set up the
-joystick that came with the robot (never used; ask Mike what it is), then a whole-house
-map with `scripts/robot_map_drive.sh`; (3) go around (6d, with 6c back away) in the
-simulator on the box bench, then the dresser; (4) one real-robot row per run in the
-telemetry DB (it has 603 local and 411 hil_jetson rows and ZERO real_robot rows, so the
-dashboard and drift detection are blind to the real robot and R1's last checkbox,
-`tools/sim_vs_real_comparison.py` then the `r1-complete` tag, has nothing to compare);
-(5) a pretrained YOLO on the saved frames plus dog-toy photos, on the workstation GPU;
-(6) start-pose check before the first goal; (7) reaction rule for the real camera's
-~3.6 frames a second so yellow fires, then one timeboxed floor run; (8) record the mast
-camera on every run, one run folder with a summary, later a debug switch. Automatic
+carry on then come home); a dry run with the WiFi down proves it; (2) one real-robot
+row per run in the telemetry DB (it has 603 local and 411 hil_jetson rows and ZERO
+real_robot rows, so the dashboard and drift detection are blind to the real robot and
+R1's last checkbox, `tools/sim_vs_real_comparison.py` then the `r1-complete` tag, has
+nothing to compare); (3) go around (6d, with 6c back away) in the simulator on the box
+bench, then the dresser; (4) start-pose check before the first goal; (5) reaction rule
+for the real camera's ~3.6 frames a second so yellow fires, then one timeboxed floor
+run; (6) record the mast camera on every run, one run folder with a summary, later a
+debug switch on `robot_boot.sh`.
+**First items of Release 2 (Mike's decision, 2026-11-20):** the joystick that came with
+the robot (never set up; ask him what it is), a whole-house map driven with it, and
+YOLO: first the experiment in `docs/detection-history.md` (that file is the story of
+the hand-built detector and why a trained one is next; keep it current). Automatic
 (frontier) exploration comes after the joystick map; the lidar cannot see a downward
 step. **US spelling in all new text (Mike, 2026-11-20).**
 Still owed: 6b act on a slip verdict, 6e guard spins, operator-watch give-up in a real
@@ -366,6 +371,7 @@ scripts/robot_boot.sh                # real production mission path
   `regen_cyclonedds_config.sh`, install scripts, Isaac Sim scripts
   (`scripts/CLAUDE.md`).
 - `requirements/` — traceability matrix and specs. `docs/` — architecture notes,
+  `detection-history.md` (ball detection: what broke, what fixed it, why YOLO is next),
   `claude-history.md`, runbooks, plans/specs under `docs/superpowers/`.
 - `.github/workflows/ci.yml` — stages: 0 traceability, 1 quality, 2 gazebo, 3 arm64,
   4 hil (Jetson), 5 reports, coverage-report. (`stage-4-isaac` retired Session 16;

@@ -81,7 +81,7 @@ In suggested order. Items 1-2 need no robot motion to build.
 | 5 | **See what the lidar cannot**: the lidar sees one flat slice; a camera sees rug edges, cables, low feet of furniture, overhangs | Collisions with things outside the lidar's slice | Collision avoidance working at all (the current real priority) |
 | 6 | **Position check from a landmark** (a printed marker or a doorway) | Position-estimate jumps like the 0.55 m one on 2026-11-16 | The robot's own SLAM map (A3); fisheye correction |
 | 7 | **Scene description** with the vision model already on the Jetson (moondream) on the wide view | "Door is closed", "something is in the hall" before a leg starts | R2 scope |
-| 8 | **Try the OAK's built-in detections** (`/oak/nn/spatial_detections`) | Possibly free object detection with distance | Finding out what the default network actually recognises — *not looked at* |
+| 8 | **Try the OAK's built-in detections** (`/oak/nn/spatial_detections`) | Possibly free object detection with distance | Finding out what the default network actually recognizes. *Partly looked at 2026-11-20:* the driver's log reports "NN Family: mobilenet", 300x300 input, running on the camera's own chip, and the topic publishes during every run; which classes it knows, and whether a ball or a dog toy is among them, is still unchecked. The planned replacement is a YOLO-class model on the same chip: `docs/detection-history.md`, "The first experiment" |
 
 **When:** none of this comes before the SLAM map and collision avoidance. Items 1-2 are
 the natural content of A4; items 3-4 follow once A4 is done; 5-8 are R2/R3 material.
@@ -103,7 +103,7 @@ used only as a witness, and it explained three things the bag could not:
 | 9 | **Record the mast camera on every run**, started and stopped by `robot_boot.sh`, saved beside the bag and pulled back with the logs | An outside-style view of every run with no phone on a tripod; a time stamp in the picture to line it up with the bag | The recorder in the repo (today it is `~/robot_boot_debug/mast_record.py` on the Jetson only); a clean stop on Ctrl+C |
 | 10 | **Publish the mast image as a ROS topic** (small, compressed, a few frames a second) | The video is inside the bag, on the bag's clock, and available to every idea below | A small camera node; a CPU and USB budget check with the OAK running |
 | 11 | **Wide-view hand-off for ball tracking**: when a ball being tracked leaves the front camera's frame, the mast camera keeps its bearing | Reactions no longer depend on the ball staying inside a ~69 deg view while the robot passes it | Item 10; fisheye correction; a rough mapping between the two images (item 2) |
-| 12 | **Pan to follow** a tracked ball or a goal, instead of pointing fixed ahead | The ball stays centred in the wide view; later, look where the robot is about to turn | A gimbal command path inside `esp32_driver` (the serial port is exclusive); the pan angle published as a transform (item 4) |
+| 12 | **Pan to follow** a tracked ball or a goal, instead of pointing fixed ahead | The ball stays centered in the wide view; later, look where the robot is about to turn | A gimbal command path inside `esp32_driver` (the serial port is exclusive); the pan angle published as a transform (item 4) |
 | 13 | **Pre-start scene check**: compare the mast view (and the first lidar scan) with a stored reference of the home spot before the first goal | Catches "robot not on the home spot", "door in a different state from the map" and a wrong starting pose before the robot moves | A stored reference per home spot; ties in with items 6 and 7 |
 | 14 | **Crops for the confidence cascade**: the wide view supplies the picture that the on-robot vision model (and, when unsure, a larger one) is asked about | A second opinion from a different lens and different lighting response than the front camera | The cascade itself (`docs/sessions/2026-11-20.md`); item 10 |
 | 15 | **Operator view during attended runs**: a low-rate picture over the same link the operator watch already uses | The operator sees what the robot faces without walking beside it | Item 10; a bandwidth check on the roaming WiFi link |
@@ -120,7 +120,7 @@ gate for everything else. Items 11-14 belong with the next version of ball detec
 - How well does either camera do in daylight? Everything here is evening room light.
   *Partly answered 2026-11-20 for the OAK:* with a bright window behind the balls the
   red ball's hue moves from 352-358 to about 330 and its saturation halves, so the
-  lamp-light colour band misses it at every distance; yellow is still found but reads
+  lamp-light color band misses it at every distance; yellow is still found but reads
   10-30% too far. With the curtain closed it is the other way round (red found, yellow
   merged with the wall). Locking the OAK's white balance made the swing larger, not
   smaller. The mast camera has not been measured in daylight.
