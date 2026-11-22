@@ -298,9 +298,9 @@ jobs:
         # 2026-07-15 red run had 8,716 "jump back in time" warnings from exactly this,
         # presenting as "Goal rejected after all retries". Sweep before launch.
         run: |
-          pkill -9 -f "parameter_bridge|component_container_isolated|ekf_node|ball_detector" || true
-          pkill -9 -f "static_transform_publisher|robot_state_publisher" || true
-          pkill -f "gz sim" || true
+          python3 -m tools.proc_sweep "parameter_bridge|component_container_isolated|ekf_node|ball_detector" || true
+          python3 -m tools.proc_sweep "static_transform_publisher|robot_state_publisher" || true
+          python3 -m tools.proc_sweep --signal TERM "gz sim" || true
           sleep 3
 
       - name: Record start time
@@ -384,9 +384,9 @@ jobs:
       # sensors_only_launch.py's own design intent.
       - name: Sweep stale sim processes before smoke-test regression
         run: |
-          pkill -9 -f "parameter_bridge|component_container_isolated|ekf_node|ball_detector" || true
-          pkill -9 -f "static_transform_publisher|robot_state_publisher" || true
-          pkill -f "gz sim" || true
+          python3 -m tools.proc_sweep "parameter_bridge|component_container_isolated|ekf_node|ball_detector" || true
+          python3 -m tools.proc_sweep "static_transform_publisher|robot_state_publisher" || true
+          python3 -m tools.proc_sweep --signal TERM "gz sim" || true
           sleep 3
 
       - name: Bring up sim + sensors-only stack (smoke-test regression, sim)
@@ -503,9 +503,9 @@ jobs:
       - name: Shutdown sim (full pattern — a bare "gz sim" pkill leaves bridge/TF orphans)
         if: always()
         run: |
-          pkill -9 -f "parameter_bridge|component_container_isolated|ekf_node|ball_detector" || true
-          pkill -9 -f "static_transform_publisher|robot_state_publisher" || true
-          pkill -f "gz sim" || true
+          python3 -m tools.proc_sweep "parameter_bridge|component_container_isolated|ekf_node|ball_detector" || true
+          python3 -m tools.proc_sweep "static_transform_publisher|robot_state_publisher" || true
+          python3 -m tools.proc_sweep --signal TERM "gz sim" || true
 
   coverage-report:
     name: "Combined coverage (stage-1 unit + stage-2 integration)"

@@ -512,18 +512,16 @@ teardown() {
   fi
   # Unconditional -9 fallback (design doc §3): SIGINT teardown was unreliable in 2 of 3
   # Session-15 manual teardowns; leftovers poison the next run's DDS state.
-  pkill -9 -f '[g]z sim' || true
-  pkill -9 -f '[p]arameter_bridge' || true
-  pkill -9 -f '[c]omponent_container' || true
-  pkill -9 -f '[r]obot_state_publisher' || true
-  pkill -9 -f '[s]im_only_launch' || true
-  # static_transform_publisher added 2026-07-26 (Session 17 Piece 2 perf pass) — same gap as
-  # the ekf_node one above, on the workstation side of the same pattern.
-  pkill -9 -f '[s]tatic_transform_publisher' || true
-  # ball_detector added 2026-07-26 (second-round code review) — same reasoning as the
-  # Jetson-side pattern above, for a local single-machine (non-HIL) sim_launch.py run
-  # where nav2_only_launch.py, and therefore ball_detector, runs on this same box.
-  pkill -9 -f '[b]all_detector' || true
+  # 2026-11-22: only THIS project's processes. The sister project (wayfarer) runs Nav2 on
+  # this workstation under the same process names on another ROS domain; a plain pkill by
+  # name killed it too. tools/proc_sweep.py signals only matches started on our domain
+  # (ROS_DOMAIN_ID, 0 when unset) and never this shell. Patterns as before:
+  # static_transform_publisher added 2026-07-26 (Session 17 Piece 2 perf pass); ball_detector
+  # added 2026-07-26 (second-round code review) for a local single-machine sim_launch.py
+  # run, where nav2_only_launch.py, and therefore ball_detector, runs on this same box.
+  ( cd "$REPO_DIR" && python3 -m tools.proc_sweep \
+      'gz sim' 'parameter_bridge' 'component_container' 'robot_state_publisher' \
+      'sim_only_launch' 'static_transform_publisher' 'ball_detector' ) || true
   echo '=== [teardown] done ==='
   return 0
 }

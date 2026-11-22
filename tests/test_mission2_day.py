@@ -19,6 +19,7 @@ import threading
 import pytest
 
 import re
+import signal
 
 import tools.mission2_day as mission2_day_module
 from tools.mission2_day import (GroundTruthLog, InProcessExecutor, JetsonExecutor,
@@ -696,13 +697,21 @@ def test_sweep_orphans_never_matches_the_gui_viewer_only_process(monkeypatch):
     within seconds of every mission2_day run starting, since launch_stack() sweeps before
     it launches. None of the patterns swept may match a viewer-only cmdline; at least one
     must still match the real server cmdline."""
-    patterns = []
-    monkeypatch.setattr(
-        mission2_day_module.subprocess, 'run',
-        lambda cmd, **kw: patterns.append(cmd[cmd.index('-f') + 1]))
+    patterns, signals = [], []
+
+    def fake_sweep(pats, sig):
+        patterns.extend(pats)
+        signals.append(sig)
+        return mission2_day_module.proc_sweep.Found([], [])
+
+    monkeypatch.setattr(mission2_day_module.proc_sweep, 'sweep', fake_sweep)
 
     sweep_orphans()
 
+    # 2026-11-22: the sweep goes through tools/proc_sweep.py, which only signals processes
+    # of this run's own ROS domain (tests/test_proc_sweep.py); the Gazebo server still gets
+    # a plain TERM, everything else a KILL.
+    assert signals == [signal.SIGKILL, signal.SIGTERM]
     viewer_cmdline = 'gz sim -g'
     server_cmdline = 'gz sim -s -r /home/mike/autonomous-fleet-testbed/worlds/bedroom_simple.sdf'
     assert not any(re.search(p, viewer_cmdline) for p in patterns)

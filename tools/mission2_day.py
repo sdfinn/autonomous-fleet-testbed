@@ -57,6 +57,7 @@ import time
 
 from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.missions import MISSIONS
+from tools import proc_sweep
 from tools.log_setup import build_env_manifest, configure, get_logger, git_sha
 from tools.mission2_harness import (BALL_AT_SPHERE_XY, BALL_REMOVAL_SETTLE_S,
                                     home_pair_similarity, judge_no_ball, judge_red,
@@ -398,23 +399,28 @@ class JetsonExecutor(MissionExecutor):
 
 
 # ── Stack lifecycle (sim mode only; HIL's stack is owned by scripts/hil_stage.sh) ───────────
-def _pkill(pattern):
-    subprocess.run(['pkill', '-9', '-f', pattern], check=False)
+_GZ_SERVER_PATTERN = 'gz sim -s'
+_LEFTOVER_PATTERN = ('gz sim|component_container|robot_state_publisher|ros2 launch|'
+                     'parameter_bridge|static_transform|ekf_node|ball_detector')
 
 
 def sweep_orphans():
-    """Kill any Gazebo/Nav2/bridge/TF/ekf orphans (best-effort). The orchestrator's own
-    cmdline ('python -m tools.mission2_day') matches none of these patterns, so there is no
-    self-match to bracket-trick around here.
+    """Kill this project's own Gazebo/Nav2/bridge/TF/ekf orphans (best-effort).
+
+    Only processes started on this run's ROS domain are signalled (tools/proc_sweep.py,
+    2026-11-22): the sister project's Nav2 runs on this same workstation under the same
+    process names, on another domain, and a plain `pkill -f` killed it too. The sweep
+    also never matches this process or its parents.
 
     Scoped to 'gz sim -s' (the headless SERVER, always launched with -s -r) — NOT a bare
     'gz sim', which also matches the separate GUI viewer ('gz sim -g', no -s). A live
     2026-07-22 GUI-watched run found the old bare pattern killing an observer's viewer
     within seconds of every run starting, since this sweep runs before the stack even
     launches (Piece 7)."""
-    for pat in _SWEEP_PATTERNS:
-        _pkill(pat)
-    subprocess.run(['pkill', '-f', 'gz sim -s'], check=False)
+    spared = proc_sweep.sweep(_SWEEP_PATTERNS, sig=signal.SIGKILL).others
+    spared += proc_sweep.sweep([_GZ_SERVER_PATTERN], sig=signal.SIGTERM).others
+    for proc in spared:
+        log.info('sweep left another ROS domain alone: ' + proc_sweep.describe(proc))
 
 
 def launch_stack(log_path):
@@ -460,14 +466,12 @@ def shutdown_stack(proc):
             pass
     sweep_orphans()
     time.sleep(2)
-    leftovers = subprocess.run(
-        ['pgrep', '-af', 'gz sim|component_container|robot_state_publisher|ros2 launch|'
-         'parameter_bridge|static_transform|ekf_node|ball_detector'],
-        capture_output=True, text=True).stdout.strip()
+    leftovers = proc_sweep.find([_LEFTOVER_PATTERN]).ours
     if leftovers:
-        log.warning('orphans still present after sweep:\n' + leftovers)
+        log.warning('orphans still present after sweep:\n'
+                    + '\n'.join(proc_sweep.describe(p) for p in leftovers))
     else:
-        log.info('clean — no orphans remain')
+        log.info('clean — no orphans of this ROS domain remain')
 
 
 # ── The day sequence (SAME for sim and HIL — only executor + ball_ops differ) ───────────────
