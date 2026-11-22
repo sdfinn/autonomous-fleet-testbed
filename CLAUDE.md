@@ -48,7 +48,28 @@ First note (2026-11-15, doorway): this repo's `tools/mission2_day.py`
 `_judge_and_log_leg` ignores the mission's own `ok` flag, so a failed navigate leg
 can still be judged PASS (verified true here 2026-11-16; not fixed).
 
-## Current status — START HERE (last real work 2026-11-20)
+## Current status — START HERE (last real work 2026-11-22)
+
+**2026-11-22 session (planning and workstation only; no robot, no simulator).**
+- **Detector decided (Mike): RF-DETR for production, YOLO for comparison only, no
+  training for now.** RF-DETR is Apache-2.0 like this repo; Ultralytics YOLO26/YOLOE are
+  AGPL-3.0 (workstation use only). First experiment, pretrained weights on the saved
+  real-camera frames: every model boxed nearly every ball (incl. a third ball with no
+  hand-built rule), but small YOLO models named the yellow ball "orange" at up to 0.92:
+  **a detector's confidence is not correctness, and it never says "unknown object"**.
+  Box width gives distance at 6-8% error (hand-built: 12%); the floor-line rule holds
+  for every box; `moondream` describes 22 of 25 ball crops as a ball with "Describe
+  this image." and answers NOTHING to a yes/no prompt. Results, decisions and the
+  agreed next steps: `docs/detection-history.md`. Scripts: `reports/detect_exp_20261122/`;
+  environment `~/detect-exp-env` (not `fleet-env`). Untested: dog toys, the Jetson.
+- **Ollama today:** CI only (`tools/vlm_canary.py`, log-only, 83 of 83 simulator photos
+  described as "red ball"); never called in a real-robot mission.
+- **Wayfarer relationship (Mike):** wayfarer builds brain releases (a release may carry
+  a "limited on this Jetson because..." caveat); this repo's robot receives them. The
+  detector stays a separate node; the brain gets detections plus an "unknown object"
+  kind. Two transfer notes written 2026-11-22 (ROS domain; detector and brain).
+- New rule: existing-solution check (Gotchas, Process). New tool: `tools/proc_sweep.py`
+  (see "Two projects, one workstation" below).
 
 **The floor ban of 2026-11-18 is lifted.** The motor board's stop-on-silence is proven on
 the real robot, wheels up: `tools/bench_stop_on_silence.py` PASS (0.45 s), `--legacy-t13`
@@ -127,7 +148,18 @@ mission, closed-loop turn rate.
 Also open: `robot_boot.sh` leaves the driver layer orphaned when DDS dies, exits 0 when
 every trip fails, and with no terminal does not shut down cleanly;
 `tests/test_esp32_driver.py` runs in no CI stage; battery "critical" does not latch;
-gyro vs lidar heading 9-13 deg apart after several spins. Before a floor run, ask Mike
+gyro vs lidar heading 9-13 deg apart after several spins.
+**Two projects, one workstation (2026-11-22).** This repo runs on ROS domain 0;
+wayfarer is moving to 42 (its own session's job: `~/wayfarer/docs/transfer/
+2026-11-22-ros-domain-id-from-aft.md`). Every sweep on the workstation (`ci.yml` x3,
+`hil_stage.sh` teardown, `mission2_day.sweep_orphans`) now goes through
+`tools/proc_sweep.py`, which signals only processes started on our own domain (read
+from `/proc/<pid>/environ`; unset counts as 0) and never its own shell. Use it instead
+of `pkill -f` for anything by name on the workstation. Not yet protected: wayfarer's
+processes until it actually sets 42 (unset looks like ours), and this repo from
+wayfarer's own CI sweep until wayfarer scopes it. Until both are done: no push here
+while wayfarer has a sim or CI run in flight, and the reverse. Not exercised in a real
+CI run when this was written. Before a floor run, ask Mike
 to leave Claude Code's auto mode if it refuses the launch.
 
 **2026-11-19 session, in brief** (`docs/sessions/2026-11-19.md`): stop-on-silence proven
@@ -387,6 +419,16 @@ scripts/robot_boot.sh                # real production mission path
 ## Gotchas (rules; evidence and full stories in `docs/claude-history.md`)
 
 **Process / workflow**
+- **Existing-solution check before designing our own (Mike, 2026-11-22).** Before
+  building or hand-fixing a capability (perception, recovery, localization, a tool),
+  spend ~15 minutes and tell Mike: (1) what the standard solution is and who maintains
+  it; (2) whether it fits this hardware and license (repo is Apache-2.0); (3) the
+  cheapest experiment that would show it working here; (4) what we would learn or lose
+  by building our own instead. Then he chooses. Also applies when a standard component
+  FAILS here: root-cause it or ask upstream before building around it. Two cases behind
+  the rule: the hand-built HSV ball detector (three sessions of fixes before a trained
+  detector was tried) and Nav2's `collision_monitor` / `behavior_server`, switched off
+  after deadlocks and replaced by a hand-built guard instead of being root-caused.
 - **Shared machine.** This workstation is the self-hosted CI runner AND a dev box
   that may run `wayfarer`'s Gazebo on the same `/robot_001` namespace. Before
   any local Gazebo/Nav2 run: `gh run list` (a push auto-starts CI here, whose sweep

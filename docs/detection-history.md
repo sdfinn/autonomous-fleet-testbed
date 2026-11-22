@@ -123,7 +123,7 @@ Stated plainly, because these are the reasons to move on:
 | Changing light | A rule per condition | Learned from many conditions |
 | Many kinds of object (dog toys) | One shape rule per kind | Classes, or fine-tuning on our own photos |
 | Distance | From picture width, 10-30% off when the rim washes out | From the front camera's stereo depth, on the same chip |
-| Frame rate | 3.6 a second on the Jetson's CPU | Runs on the camera's own vision chip |
+| Frame rate | 3.6 a second on the Jetson's CPU | The Jetson's GPU first (not yet timed); the camera's own vision chip later, if a current model converts to it |
 | Why it decided something | Fully inspectable: a mask, a blob, a line | Much less so. This is the real cost |
 
 Two facts already in hand: the front camera is running a small built-in network today
@@ -151,6 +151,9 @@ The hand-built work is not thrown away:
 
 ## The first experiment (Release 2)
 
+*Run on 2026-11-22 for questions 1 and 2; results are in the next section. Questions 3
+and 4 are still open.*
+
 Run a pretrained detector on the workstation's GPU against the saved frames plus photos
 of the real dog toys. No robot needed. The questions, in order:
 
@@ -162,6 +165,140 @@ of the real dog toys. No robot needed. The questions, in order:
 
 The answer to 3 decides whether pretrained classes are enough or whether we collect and
 label our own photos.
+
+## First experiment results (2026-11-22, workstation only)
+
+Pretrained detectors, no training, on the same frames that scored the hand-built
+detector: 9 front-camera frames with a yellow, a dark and a red croquet ball at 0.5 to
+1.55 m in three kinds of light, and 52 ball-free photos. A ball's true place in each
+frame is taken from the hand-built detector (one red frame has no reference). A box
+counts at confidence 0.25 or more. Scripts and saved detections are in
+`reports/detect_exp_20261122/` (outside git): `exp.py`, `analyze.py`,
+`second_opinion.py`.
+
+| Detector | License | Yellow: boxed / named a ball (of 9) | Red: boxed / named (of 8) | Dark ball, no hand-built rule: boxed / named (of 8) |
+|---|---|---|---|---|
+| Hand-built | ours | 9 | 8 of 9 | has no rule for it |
+| YOLO26 nano | AGPL-3.0 | 9 / 0 | 8 / 2 | 7 / 1 |
+| YOLO26 small | AGPL-3.0 | 9 / 2 | 8 / 5 | 7 / 4 |
+| YOLO26 medium | AGPL-3.0 | 9 / 5 | 8 / 8 | 7 / 7 |
+| RF-DETR nano | Apache-2.0 | 9 / 8 | 8 / 7 | 8 / 8 |
+| RF-DETR small | Apache-2.0 | 9 / 8 | 8 / 8 | 7 / 7 |
+| YOLOE 26 small, prompted with words | AGPL-3.0 | 7 / 7 | 8 / 8 | 7 / 7 |
+| YOLOE 11 small, prompted with words | AGPL-3.0 | 9 / 9 | 8 / 8 | 7 / 7 |
+
+No detector reported a ball in any of the 52 ball-free photos. (The hand-built one has
+false blobs there that read far away: nearest yellow 3.06 m, one red at 1.46 m.)
+
+What we learned, in order of importance:
+
+1. **Finding and naming are two different results.** Every model put a tight box on
+   almost every ball. The models differ only in what they called it. The yellow ball
+   was "orange" 26 times across the runs, the red one "apple" 11 times, with
+   confidence up to 0.92. A pretrained detector must choose among its fixed classes; a
+   croquet ball is not one of them.
+2. **Confidence is not "how sure it is right".** It is "this class rather than my
+   other classes". A white furniture foot seen close up was a "toilet" at 0.87. So a
+   high score cannot be the signal for "known object", and a detector never says
+   "unknown object": that has to come from geometry (something solid is there and no
+   trustworthy name covers it).
+3. **A new object needed no new rule.** The dark ball, which the hand-built detector
+   cannot see at all, was boxed in 7 of 8 frames by every model.
+4. **Distance from the box is better than from the color blob.** With the same
+   `range_k / width` formula: mean error 6-8% and worst 12-15%, against 12% and 29% for
+   the hand-built detector, because the box is tighter than a blob whose rim washes
+   out.
+5. **The floor-line rule carries over.** Every ball box sat within 27 pixels of
+   `bottom_row = 325 + 1.32 * width`; of the other boxes (44 to 130 a model) only 3 to
+   9 did. It stays useful as a check on any detector.
+6. **A larger picture is not better.** At 640 pixels wide (what a Jetson would likely
+   run) the YOLO26 models named the balls correctly more often than at 1280: nano 0
+   to 3 yellow and 2 to 5 red; small 2 to 6 and 5 to 8; medium 5 to 8 and 8 to 8. The
+   models were trained at 640, so objects then appear at the size they learned.
+7. **It sees the room.** In the ball-free photos the models boxed the bed, chairs, and
+   a real person sitting at a desk seen through the doorway (0.68-0.88). Also things
+   that are not there: "toilet", "cake".
+8. **The small vision model can repair a wrong name.** Crops of 25 balls and 17
+   non-balls given to `moondream:1.8b` with "Describe this image.": 22 of 25 balls
+   described as a ball, 17 of 17 others not, 0.2 s a crop on the workstation. With
+   "Is this a ball? Answer yes or no." it returned an EMPTY answer for all 42: the
+   prompt quirk recorded in `tools/vlm_canary.py` is real. So the second-opinion idea
+   works, and its answer has to be read out of a description, not a yes or no.
+
+Limits. Nine frames in one room. Round balls only: **no dog toy has been tested**,
+because there are no photos of one. Times (5-12 ms a frame on an RTX 5080) say nothing
+about the Jetson; nothing was run there. No model was trained or fine-tuned. The true
+ball positions come from the hand-built detector, so a frame it gets wrong would
+mislead the count.
+
+What it means for the choice:
+
+- A trained detector does replace the hand-built one for finding objects, and the two
+  fixes that cost the most (shape, light) are not needed. The floor rule is kept.
+- For naming, pretrained classes are not enough even for a ball. The route is a small
+  model fine-tuned on our own photos (balls, dog toys), with a prompted model such as
+  YOLOE used on the workstation to label those photos.
+- RF-DETR did as well as anything and is Apache-2.0, the same as this repo. The YOLO
+  models are AGPL-3.0. Decided the same day: see "Decisions" below.
+- Still owed: dog-toy photos from the robot's front camera; one model timed on the
+  Jetson; a check of the maintained ROS detector packages before writing a node.
+
+## Decisions (Mike, 2026-11-22)
+
+1. **RF-DETR is the detector for production; YOLO is for comparison.** "Production"
+   means anything that ships in this repo, in the robot's image, or in a wayfarer brain
+   release. The YOLO models (YOLO26, YOLOE) stay on the workstation for comparison and,
+   later, for labeling photos.
+2. **No model training for now.** Pretrained weights only, until the dog-toy photos
+   show whether that is enough.
+
+**Why RF-DETR, in short.** It named the balls as well as anything tested, and its
+license matches this repo's.
+
+| | Apache-2.0 (this repo, RF-DETR nano to large) | AGPL-3.0 (Ultralytics YOLO26, YOLOE) |
+|---|---|---|
+| Use it privately, experiment, label photos | Free | Free |
+| Build it into your own software and share that | Allowed under any license, with attribution | Only if the whole combined work is released under AGPL too |
+| A company reusing the project | No obstacle | Must open its own code under AGPL or buy a commercial license |
+
+This is the practical reading, not legal advice. Ultralytics states that its terms also
+cover the pretrained weights and models trained with its code.
+
+**The two designs, for the record.** YOLO26 (Ultralytics, January 2026) is a
+convolutional network, the long-standing YOLO family, built small and fast for edge
+hardware, with the largest set of tools and guides. RF-DETR (Roboflow) is a
+transformer-based detector that starts from a large vision model pretrained on a very
+large set of pictures; that broad pretraining is the likely reason it named a croquet
+ball better without training (not verified). It is also the larger model: its smallest
+size has roughly ten times the parameters of YOLO26 nano (from memory, not checked), so
+its speed and memory on the Jetson are the first thing to measure. YOLOE is an
+"open-vocabulary" YOLO: the list of things to look for is given as words at run time
+("ball", "dog toy") instead of being fixed at training. It could never answer "orange"
+because that word was not on its list, so part of its score comes from being told what
+to look for.
+
+**Next steps agreed in outline (order to be confirmed):**
+
+*Workstation and real robot*
+1. A 15-minute check of the maintained ROS detector packages before writing a node
+   (the "existing-solution check" rule in `CLAUDE.md`).
+2. Dog-toy photos from the robot's front camera (Jetson on its charger and Ethernet, no
+   driving), scored with the same scripts.
+3. One RF-DETR and one YOLO26 model timed on the Jetson with the navigation container
+   running; memory recorded. Any install on the Jetson is Mike's to run.
+4. A detector node in shadow mode on a floor run: it publishes and is logged while the
+   hand-built detector still drives the reactions. Compare, then switch.
+5. The reaction rule in seconds, not frames.
+
+*Simulator*
+1. The same models on the saved simulator photos: does a detector recognize a rendered
+   ball at all?
+2. The CI vision-model check stepped up, log-only at first: detector box, crop,
+   "Describe this image.", compared with what the simulator knows is there.
+3. The detection message agreed with wayfarer, including an "unknown object" kind
+   (`~/wayfarer/docs/transfer/2026-11-22-detector-and-brain-from-aft.md`).
+
+*Not yet:* training a model; running on the camera's own chip.
 
 ## Where the detail is
 
