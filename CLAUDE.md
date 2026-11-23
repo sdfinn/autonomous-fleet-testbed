@@ -106,12 +106,23 @@ run.** Detail: `docs/sessions/2026-11-23.md`, `docs/detection-history.md`.
   known distance minus the lidar's forward position minus the ball's radius, both
   modes). Simulator reads 0.656 m against an expected 0.657. The bench prompt now gives
   the distance from the robot's FRONT EDGE (24.5 inches). Bench mode not re-run.
-- **Item B started: Nav2's `BackUp` and `Spin` SUCCEED in the simulator** when called
-  directly (2026-11-23). "Pose Goes Off Grid" has one source in Nav2 (a pose outside the
-  behavior server's copy of a costmap); the likely old cause was the local costmap in
-  `map` while the server works in `odom`, fixed 2026-08-12 and never re-tested. There
-  is no `behavior_server` section in `nav2_params.yaml` (all defaults). Not shown yet:
-  after a drive, after a costmap clear, under a hold, on the real robot.
+- **Item B: cause found, fix on a BRANCH (`item-b-go-around`, draft PR #6), not on
+  `main`.** The robot never went around anything for two reasons, both standard Nav2
+  settings: (1) the global costmap's lidar source had no `max_obstacle_height` (Nav2's
+  default 0.0 discards every point above the floor), so the planner only knew the saved
+  map; (2) the one-shot tree planned once per goal. `BackUp`/`Spin` SUCCEED in the
+  simulator (spawn pose, after a drive, after a costmap clear): "Pose Goes Off Grid" is
+  a pose outside the behavior server's copy of the local costmap, very likely the local
+  costmap's old `map` frame (fixed 2026-08-12, never re-tested). On the branch: lidar
+  marking in the planner's costmap, `navigate_to_pose_recovery.xml` (re-plan every
+  second; back up, wait, spin; 6 tries), 10 s stand-still limit with
+  `PoseProgressChecker`, an explicit `behavior_server` section. Simulator: a box in
+  open floor is driven around in 19 s; a box with no way through ends the goal in
+  40-113 s with the robot clear. It changes how the REAL robot plans and has not run
+  on the floor: Mike decides the merge (questions in the PR).
+- **Our obstacle guard and Nav2's recoveries do not deadlock:** the guard is
+  directional (ahead when driving forward, behind when reversing, nothing during a
+  turn on the spot, release 1 s after the checked side is empty).
 - **Removed switches:** `ROBOT_BOOT_SHADOW_DETECTOR`, `ROBOT_BOOT_DETECTOR`,
   `HSV_CONFIG_FILE`, `BALL_DETECTOR`, launch arguments `hsv_config` / `ball_detector`.
   `ROBOT_BOOT_RFDETR=<file>` now only names another model file.
@@ -129,13 +140,15 @@ run.** Detail: `docs/sessions/2026-11-23.md`, `docs/detection-history.md`.
   8 runs under load before, 16 of 16 after. The give-up path is still unseen in a real
   mission. Stage 1 now has `--timeout=180` per test and `timeout-minutes: 20`.
 
-**NEXT (order agreed with Mike 2026-11-23):** (B) something to do after an obstacle hold, starting
-with the existing-solution check: root-cause Nav2's `BackUp`/`Spin` failure on the
-real robot ("Pose Goes Off Grid"), then back away and re-plan in the simulator on the
-box bench, then the door frame and the dresser on the floor; (C) reaction distances
-with the fresher detections, the remaining 0.9 s delay, M2/M3 (`docs/goals-and-events.md`),
-CI's simulator stage (below). Class names stay the model's own labels ("sports
-ball"); our own `yellow_ball`/`red_ball` keep the underscore.
+**NEXT (recommended at close, 2026-11-23; `docs/sessions/2026-11-23.md` "Next"):**
+(1) Mike decides draft PR #6 (item B). (2) ONE FLOOR SESSION proves today's work,
+nothing of which has run on the real robot: `tools/bench_stop_on_silence.py`, then
+`robot_boot.sh` with its new default and a deliberate operator-watch give-up; a
+Mission 2 day on `main` (RF-DETR by default, `FollowPath.stateful: false`); on the
+branch `BackUp`/`Spin` in open floor, a box in the path, then the door frame and the
+dresser. (3) Reaction distances with the fresher detections, the remaining 0.9 s
+delay, M2/M3 (`docs/goals-and-events.md`). Class names stay the model's own labels
+("sports ball"); our own `yellow_ball`/`red_ball` keep the underscore.
 
 **2026-11-22 session** (`docs/sessions/2026-11-22.md`, `docs/detection-history.md`; the
 full paragraph is in `docs/claude-history.md`, "Moved from CLAUDE.md 2026-11-23"):
