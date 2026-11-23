@@ -6,9 +6,22 @@ Session plans and the release roadmap are tracked in internal planning docs
 (`planning/`, gitignored — not part of this public snapshot); this file captures the
 durable technical context and gotchas that survive across sessions.
 
+**Goal and vocabulary (Mike, 2026-11-22): `docs/terminology.md`, used in both projects,
+in full, no short forms.** Goal: the robot boots and loads everything, can then carry
+out any mission, given as a mission script or (preferred) as a request in plain
+English to the brain; the robot makes the judgment. Terms: reflexes; state estimation
+(EKF, AMCL); navigation; **Nav2's behavior tree** (both projects); detector; describer
+(`moondream` on Ollama); **skills** (hard-coded abilities) and the **plan** (which
+skill next); mission logic = a **mission script** (here) or **the mission's behavior
+tree** (wayfarer only); **brain = a language model on Ollama that chooses the plan and
+makes judgments, built in neither project yet**. Never bare "model", "decision tree",
+"the tree" or "mission tree"; never "brain" for hard-coded mission logic. Goals go
+down, events come up (`docs/goals-and-events.md`, milestones M1-M6).
+
 **History lives in `docs/claude-history.md`** — a verbatim snapshot of this file as of
 2026-11-14 (full session narratives, superseded "NEXT SESSION" blocks, long-form gotcha
-write-ups with the evidence behind them). This file keeps only the current status and
+write-ups with the evidence behind them), plus a section "Moved from CLAUDE.md
+2026-11-22" (older session paragraphs). This file keeps only the current status and
 the durable rules. When a rule below says "see history," grep that file for its
 keyword. Keep this file under ~40k chars: when a session's write-up is done, append the
 long version to the history file and leave a short summary here.
@@ -26,14 +39,10 @@ reply, so keep those three headings exactly as they are in every notes file.
 what was learned, and the code before/after (real lines, file:line). The file alone is
 not the close-out.
 
-**Releases relabeled 2026-07-17: numbers now = execution order.** The agentic &
-alignment layer is **R2** — docs/notes older than 2026-07-17 saying "R4" mean today's
-R2. **Ladder cut from 5 releases to 3 on 2026-07-28** (source of truth:
-`planning/Releases2Plus.md`): R1 Foundation (ends at `r1-complete`) → R2 Agentic &
-Alignment Layer + Real Onboard Autonomy → R3 Fleet & Input Expansion, Real SLAM, and
-Autonomy & Perception. The former R4 (Autonomy & Perception) and R5 (Self-Testing
-Fleet) are no longer standalone releases — their content was folded into R3 and the
-long-range ideas doc. Drone CUT (revivable with a written reason).
+**Releases** (source of truth: `planning/Releases2Plus.md`): R1 Foundation (ends at
+`r1-complete`) -> R2 Agentic & Alignment Layer + Real Onboard Autonomy -> R3 Fleet &
+Input Expansion, Real SLAM, Autonomy & Perception. Docs older than 2026-07-17 saying
+"R4" mean today's R2. Drone CUT (revivable with a written reason).
 
 **Sister project:** `~/wayfarer` (private, sim-only, Isaac Sim, "Project Luna";
 named `synthetic-fleet` until 2026-11 — older docs/notes use that name)
@@ -50,81 +59,64 @@ can still be judged PASS (verified true here 2026-11-16; not fixed).
 
 ## Current status — START HERE (last real work 2026-11-22)
 
-**2026-11-22 session (planning and workstation only; no robot, no simulator).**
-- **Detector decided (Mike): RF-DETR for production, YOLO for comparison only, no
-  training for now.** RF-DETR is Apache-2.0 like this repo; Ultralytics YOLO26/YOLOE are
-  AGPL-3.0 (workstation use only). First experiment, pretrained weights on the saved
-  real-camera frames: every model boxed nearly every ball (incl. a third ball with no
-  hand-built rule), but small YOLO models named the yellow ball "orange" at up to 0.92:
-  **a detector's confidence is not correctness, and it never says "unknown object"**.
-  Box width gives distance at 6-8% error (hand-built: 12%); the floor-line rule holds
-  for every box; `moondream` describes 22 of 25 ball crops as a ball with "Describe
-  this image." and answers NOTHING to a yes/no prompt. Results, decisions and the
-  agreed next steps: `docs/detection-history.md`. Scripts: `reports/detect_exp_20261122/`;
-  environment `~/detect-exp-env` (not `fleet-env`). Untested: dog toys, the Jetson.
-- **Ollama today:** CI only (`tools/vlm_canary.py`, log-only, 83 of 83 simulator photos
-  described as "red ball"); never called in a real-robot mission.
-- **Wayfarer relationship (Mike):** wayfarer builds brain releases (a release may carry
-  a "limited on this Jetson because..." caveat); this repo's robot receives them. The
-  detector stays a separate node; the brain gets detections plus an "unknown object"
-  kind. Two transfer notes written 2026-11-22 (ROS domain; detector and brain).
-- New rule: existing-solution check (Gotchas, Process). New tool: `tools/proc_sweep.py`
-  (see "Two projects, one workstation" below).
+**2026-11-22 session (workstation, the camera, the Jetson's GPU; no driving).** Detail:
+`docs/detection-history.md` (results, decisions, next steps), `docs/sessions/2026-11-22.md`.
+- **Detector decided (Mike): RF-DETR small for production, YOLO for comparison only, no
+  training for now.** RF-DETR is Apache-2.0 like this repo; Ultralytics YOLO26/YOLOE
+  are AGPL-3.0: keep them out of tracked code, the image and CI (`~/detect-exp-env`).
+- **What the experiments showed:** pretrained detectors box nearly every ball and plush
+  toy ("teddy bear") and most clutter, but names are unreliable (yellow ball =
+  "orange" at 0.92): **confidence is not correctness, and a detector never says
+  "unknown object"**. Flat, dark or shadowed things are missed. The floor-line rule
+  still holds for every box. `moondream` works as a second opinion with "Describe this
+  image." and answers NOTHING to a yes/no prompt.
+- **On the Jetson** (TensorRT `trtexec`, already installed): RF-DETR small 96 pictures
+  a second, 0.2 GB, fine beside the describer. The camera's 10 pictures a
+  second is now the limit. An engine is built on the Jetson (about 3 min), from ONNX.
+- **Detector node built, bench-tested, not yet on the floor:** `object_detector`
+  (`rfdetr_detect.py`, `rfdetr_backends.py`), shadow mode on
+  `/robot_001/detections_shadow`; `ROBOT_BOOT_SHADOW_DETECTOR=1` starts it from
+  `robot_boot.sh`. Matches the reference implementation; 10 pictures a second live on
+  the Jetson (camera-limited), pictures about 0.35 s old at publish. Model files:
+  `~/fleet-ci-data/models/` on the Jetson. `tests/test_object_detector.py` needs ROS and
+  runs in no CI stage. Untested: rope/rubber toys, with Nav2 running, a moving robot.
+- **Ollama today:** CI only (`tools/vlm_canary.py`, log-only); never in a real mission.
+- **Wayfarer (Mike):** wayfarer builds brain releases (a release may carry a "limited
+  on this Jetson because..." caveat); this robot receives them. Both projects are about
+  the brain more than the hardware: a cheap robot feeds a "mother ship". The detector
+  stays a separate node. Plan in order: RF-DETR under the mission script; the
+  describer proven in a real run; untrusted boxes to the describer, log-only; then
+  wayfarer's mission's behavior tree and brain installed here (in one step or two: not
+  decided). The list of goals (down) and events (up) is drafted:
+  `docs/goals-and-events.md`, with milestones M1-M6. It shows the install is blocked
+  by Nav2's `Spin`/`BackUp` failing on the real robot and by holds nobody listens to.
 
 **The floor ban of 2026-11-18 is lifted.** The motor board's stop-on-silence is proven on
 the real robot, wheels up: `tools/bench_stop_on_silence.py` PASS (0.45 s), `--legacy-t13`
 FAIL as predicted, and `kill -9` on `esp32_driver` during a real mission stopped the
 wheels in 0.33 s. Repeat after any firmware update or change to how motion is sent.
 
-**2026-11-20 session** (full notes: `docs/sessions/2026-11-20.md`). Five floor runs.
-- **Box in the path (step 1): PASSED.** Guard quiet on clear trips; held 0.22 m short of
-  the box, beeped (too quietly), drove on by itself when the box was lifted.
-- **Frozen IMU.** After one power-on the board's accel/gyro chip did not start and sent
-  one frozen sample (gz = 706 deg/s); the pose estimate left home and the robot spun on
-  the spot. A power-cycle clears it. Now: `ImuHealth` (`esp32_protocol.py`) judges the IMU
-  on raw counts, `esp32_driver` refuses motion and stops publishing on a bad one, and
-  `robot_boot.sh` will not start without `imu ok`. The frozen case was never seen live
-  on the new driver (unit tests on the captured values only).
-- **Dresser stall.** A hand-placed start took the robot at the dresser foot; the guard
-  held it 0.18 m short and then NOTHING happened (Nav2 pushed forward for 10 s) until
-  Mike turned it by hand. No back-away, no re-plan, no start-pose check.
-- **Ball detection (step 2): red reacted, yellow missed by one frame.** The lamp-light
-  profile lost red completely in daylight (hue 352-358 -> ~330) and lost yellow behind a
-  closed curtain. Fix: a camera profile may carry a `floor:` section -- a ball resting
-  on the floor has `bottom_row = row0 + slope * width_px` (325 + 1.32 w on this camera),
-  and only blobs on that line count; `max_flat_aspect` allows a ball with its top lost
-  to glare; red band widened. On the floor: both balls tracked continuously, first real
-  reaction (red; stopped 58 cm from the ball), yellow got two frames inside 0.8 m and
-  the rule needs three. Known limits are written in `hsv_realcam.yaml`.
-- **Simulated box test (step 3): built and in CI.** `sim_only_launch.py
-  obstacle_guard:=true` runs the real `obstacle_guard` on the sim scan plus
-  `sim_wheel_hold` (stand-in for the driver's hold, same `HoldInput` rule);
-  `tools/sim_box.py`; `tests/test_sim_box_guard.py`. CI stage 2 runs with the guard on.
-  14 of 15 local runs passed; the one failure (first goal on a fresh simulator, no
-  motion for 71 s after the box was removed) is unexplained and unreproduced.
-- **WiFi address change killed a mission.** About a minute after the Ethernet is
-  unplugged the Jetson's WiFi re-associates and gets a NEW address; every node's DDS
-  sockets die, the driver's watchdog stops the wheels, and shutdown leaves the driver
-  layer orphaned. Until fixed: after pulling the Ethernet, wait for the address to
-  settle (`hostname -I` twice, a minute apart) before starting a run.
-- `ROBOT_BOOT_DETECTOR=<folder>` mounts a trial `hsv_detect.py` + `hsv_realcam.yaml`
-  over the image's for one run. Mast camera recorder: `~/robot_boot_debug/mast_record.py`
-  on the Jetson only (plans: `docs/cameras.md` items 9-15).
+**2026-11-20 session** (`docs/sessions/2026-11-20.md`), five floor runs:
+- **Box in the path: PASSED** (held 0.22 m short, drove on when the box was lifted; the
+  beep is too quiet). **Simulated box test** is in CI (`sim_only_launch.py
+  obstacle_guard:=true`, `sim_wheel_hold`, `tools/sim_box.py`,
+  `tests/test_sim_box_guard.py`); 14 of 15 local runs passed, one failure unexplained.
+- **Frozen IMU:** `ImuHealth` (`esp32_protocol.py`); the driver refuses motion and
+  `robot_boot.sh` will not start without `imu ok`. Never seen to trip on the real robot.
+- **Dresser stall:** the guard held the robot and then NOTHING happened. No back-away,
+  no re-plan, no start-pose check.
+- **Ball detection:** the floor rule (`floor:` section in a camera profile) fixed
+  daylight; red reacted on the robot, yellow missed by one frame (two inside 0.8 m,
+  three needed). Limits are written in `hsv_realcam.yaml`.
+- **WiFi address change killed a mission.** After unplugging the Ethernet, wait for the
+  address to settle (`hostname -I` twice, a minute apart) before starting a run.
+- `ROBOT_BOOT_DETECTOR=<folder>` mounts a trial detector for one run. Mast camera
+  recorder: `~/robot_boot_debug/mast_record.py` on the Jetson (`docs/cameras.md` 9-15).
 
 **Mike's direction (2026-11-20):** the practical target is "rove around the whole house
 and give me an inventory of where all the dog toys are"; ball-detection polish is
 timeboxed. And: "if this is supposed to be an autonomous vehicle, loss of wifi should
 not be fatal."
-
-**Repo state at close (2026-11-20):** code is `e91f5b8`, pushed (CI run `44838564976`
-green, all nine stages incl. the Jetson and the new box test); the Jetson's checkout and
-image match. Robot on its charger, Ethernet in.
-Evidence under `reports/` (gitignored): `robot_boot_20261120_*`, `camera_cal_20261120_day/`,
-`sim_box_20261120/`. A lessons note for wayfarer is in
-`~/wayfarer/docs/transfer/2026-11-20-lessons-from-aft.md`.
-
-**Mike expects the NEXT session to be on wayfarer** (he alternates: the real robot for
-a while, then the simulator). The list below is for the next session back here.
 
 **To finish Release 1, in order (order proposed at close, not confirmed):** (1) robot
 messaging on loopback and a link-loss policy per run (pause-and-resume / carry on /
@@ -134,13 +126,11 @@ real_robot rows, so the dashboard and drift detection are blind to the real robo
 R1's last checkbox, `tools/sim_vs_real_comparison.py` then the `r1-complete` tag, has
 nothing to compare); (3) go around (6d, with 6c back away) in the simulator on the box
 bench, then the dresser; (4) start-pose check before the first goal; (5) reaction rule
-for the real camera's ~3.6 frames a second so yellow fires, then one timeboxed floor
-run; (6) record the mast camera on every run, one run folder with a summary, later a
+in seconds, not frames, so yellow fires, then one timeboxed floor run; (6) record the mast camera on every run, one run folder with a summary, later a
 debug switch on `robot_boot.sh`.
 **First items of Release 2 (Mike's decision, 2026-11-20):** the joystick that came with
-the robot (never set up; ask him what it is), a whole-house map driven with it, and
-YOLO: first the experiment in `docs/detection-history.md` (that file is the story of
-the hand-built detector and why a trained one is next; keep it current). Automatic
+the robot (never set up; ask him what it is), a whole-house map driven with it, and a
+trained detector (decided 2026-11-22, above; keep `docs/detection-history.md` current). Automatic
 (frontier) exploration comes after the joystick map; the lidar cannot see a downward
 step. **US spelling in all new text (Mike, 2026-11-20).**
 Still owed: 6b act on a slip verdict, 6e guard spins, operator-watch give-up in a real
@@ -149,137 +139,60 @@ Also open: `robot_boot.sh` leaves the driver layer orphaned when DDS dies, exits
 every trip fails, and with no terminal does not shut down cleanly;
 `tests/test_esp32_driver.py` runs in no CI stage; battery "critical" does not latch;
 gyro vs lidar heading 9-13 deg apart after several spins.
-**Two projects, one workstation (2026-11-22).** This repo runs on ROS domain 0;
-wayfarer is moving to 42 (its own session's job: `~/wayfarer/docs/transfer/
-2026-11-22-ros-domain-id-from-aft.md`). Every sweep on the workstation (`ci.yml` x3,
-`hil_stage.sh` teardown, `mission2_day.sweep_orphans`) now goes through
-`tools/proc_sweep.py`, which signals only processes started on our own domain (read
-from `/proc/<pid>/environ`; unset counts as 0) and never its own shell. Use it instead
-of `pkill -f` for anything by name on the workstation. Not yet protected: wayfarer's
-processes until it actually sets 42 (unset looks like ours), and this repo from
-wayfarer's own CI sweep until wayfarer scopes it. Until both are done: no push here
-while wayfarer has a sim or CI run in flight, and the reverse. Not exercised in a real
-CI run when this was written. Before a floor run, ask Mike
+**Two projects, one workstation (2026-11-22).** This repo runs on ROS domain 0,
+wayfarer on 42. Every by-name kill on the workstation goes through
+`tools/proc_sweep.py` (`ci.yml` x3, `hil_stage.sh` teardown,
+`mission2_day.sweep_orphans`): it signals only processes started on our own domain
+(`/proc/<pid>/environ`; unset counts as 0) and never its own shell. Use it instead of
+`pkill -f`. Wayfarer scoped its sweeps the same day; both pipelines ran at the same
+time and both were green (runs `45060191707` here, `45060634456` there).
+Before a floor run, ask Mike
 to leave Claude Code's auto mode if it refuses the launch.
 
-**2026-11-19 session, in brief** (`docs/sessions/2026-11-19.md`): stop-on-silence proven
-on the robot (see above); operator watch (`operator_link.py`, `operator_watch`): a run
-started over SSH pauses after 2 s without the operator and resumes when the link
-returns, gives up after 10 s more (never seen in a real mission); holds live in
-`esp32_driver` (`HoldInput`, now `hold_input.py`): `/robot_001/operator_hold` and
-`/robot_001/obstacle_hold`, and silence holds too when the watcher is mandatory;
-`FollowPath.max_angular_accel: 10.0` cut the final heading error at home to 5-16 deg
-(still peaks at 1.3-1.5 rad/s for 0.5 commanded: needs closed-loop turn rate);
-ball-shaped-blob detection and the first `hsv_realcam.yaml`; obstacle guard
-(`path_guard.py`, `obstacle_guard`): holds for 3+ lidar returns within 0.25 m of the
-bumper in the direction of travel, does not guard spins; `ROBOT_BOOT_NAV2_PARAMS=<file>`;
-the WiFi adapter (`rtl88x2ce`) roams between the router's radios by itself (~2.4 s of
-silence each time); battery start line 10.5 V, log `~/fleet-ci-data/battery_log.csv`.
+**Earlier sessions (one line each; the full "in brief" paragraphs were moved verbatim
+to `docs/claude-history.md` on 2026-11-22, section "Moved from CLAUDE.md 2026-11-22";
+per-session detail is in `docs/sessions/`):**
+- **2026-11-19:** stop-on-silence proven on the robot; operator watch (pause after 2 s
+  without the operator, give up after 10 s more: never seen in a real mission); holds
+  live in `esp32_driver` (`hold_input.py`: `/robot_001/operator_hold`,
+  `/robot_001/obstacle_hold`); obstacle guard (`path_guard.py`, `obstacle_guard`: 3+
+  lidar returns within 0.25 m of the bumper in the direction of travel, not spins);
+  `FollowPath.max_angular_accel: 10.0` (still peaks 1.3-1.5 rad/s for 0.5 commanded);
+  first `hsv_realcam.yaml`; `ROBOT_BOOT_NAV2_PARAMS=<file>`; the WiFi adapter roams by
+  itself (~2.4 s of silence); battery start line 10.5 V, `~/fleet-ci-data/battery_log.csv`.
+- **2026-11-18:** the robot's own map fixed the home error (2-11 cm). Mapping drive =
+  `scripts/robot_map_drive.sh`, built offline with `scripts/build_map_from_bag.sh`; the
+  map is NOT in git (`~/fleet-ci-data/maps/bedroom_real.{yaml,pgm}` on the Jetson, copy
+  in `reports/maps/`). Wheel-slip detection, observe-only (`scan_motion.py`,
+  `slip_monitor`, `tools/slip_replay.py`). Battery read and enforced. The Jetson lost
+  power mid-spin and the robot could not be stopped (T:13 never re-armed the timer).
+- **2026-11-17:** `robot_boot.sh` records a bag on every run
+  (`~/fleet-ci-data/robot_boot_logs/bag_<ts>/`; `ROBOT_BOOT_NO_BAG=1` skips) and stops
+  on Ctrl+C / SIGTERM / SIGHUP; a DROPPED link sends no SIGHUP, the session just hangs.
+- **2026-11-16:** four real-hardware causes behind "drives into a wall, then circles":
+  wrong chassis type on the motor board, EKF ignoring the gyro, lidar scan unrotated,
+  `MISSION2_IGNORE_REACTIONS` not reaching the container. All fixed (`4022c64`); the
+  resulting facts are in "Physical calibration facts" below.
+- **2026-08-12/13:** first `robot_boot.sh` production-path test; IMU scaling fix
+  (`scale_imu_raw()`); several conclusions superseded 2026-11-16. Design facts that
+  still hold: `FollowPath.use_collision_detection: false`; BT is `navigate_simple.xml`
+  (no recoveries) because `behavior_server` spin/backup fails ("Pose Goes Off Grid");
+  `collision_monitor`'s polygon is a deliberate 2 cm no-op. Each, when enabled, caused
+  a permanent deadlock; root-cause before re-enabling, one capability at a time.
 
-**2026-11-18 session, in brief** (`docs/sessions/2026-11-18.md`): the home error was
-the borrowed map (made-up hallway, home pose 0.6 m off); the robot's own map fixed it
-(home error 2-11 cm). Mapping drive = `scripts/robot_map_drive.sh`, built offline with
-`scripts/build_map_from_bag.sh`; the map is NOT in git (a floor plan of a real home):
-`~/fleet-ci-data/maps/bedroom_real.{yaml,pgm}` on the Jetson, copy in `reports/maps/`.
-Wheel-slip detection (`scan_motion.py`, `slip_monitor`, `tools/slip_replay.py`),
-observe-only. Battery read and enforced. Then the Jetson lost power mid-spin on a flat
-pack and the robot could not be stopped: T:13 never re-armed the board's timer.
+**Where things stand:** the real robot (Waveshare UGV + Jetson Orin Nano) is mid
+bring-up. Sim + HIL CI is green. The production path (`scripts/robot_boot.sh`: driver
+layer bare-metal + Nav2/EKF/ball_detector/mission_runner in the arm64 container)
+boots, localizes on its own map, completes the nav-only mission with a home error of a
+few centimeters, holds for an obstacle, and has a proven stop when the Jetson dies. It
+has no go-around or stuck recovery, and only observes wheel slip.
 
-**2026-11-17 session, in brief** (`docs/sessions/2026-11-17.md`): `robot_boot.sh`
-records a bag on every run (`~/fleet-ci-data/robot_boot_logs/bag_<ts>/`;
-`ROBOT_BOOT_NO_BAG=1` skips) and stops on Ctrl+C / SIGTERM / SIGHUP (container, then
-bag, then drivers) — but note a DROPPED link sends no SIGHUP, the session just hangs
-open. USB webcam on the mast explored (`docs/cameras.md`). Wheel slip at the runner's
-edge found (the reason slip detection exists).
-
-**2026-11-16 session** (full notes: `docs/sessions/2026-11-16.md`; previous:
-`docs/sessions/2026-11-14.md`). Stage-4 CI hang fixed and pushed (`a6a5da6`, run
-`43990188953` fully green). Then two real `robot_boot.sh` runs and a long bench session
-found four real-hardware causes behind "drives into a wall, then circles":
-1. **Motor controller had the wrong chassis type stored** (`{"T":900,"main":3}` = UGV
-   Beast on a 6-wheel UGV Rover): real speed 2.5x the command, odometry echoing the
-   command, motor direction reversed. Now `main:2` (saved on the ESP32; firmware is
-   `ugv_base_ros` 0.96, NOT `ugv_base_general`). The August driver sign flips were a
-   compensation for this and are removed.
-2. **EKF ignored the gyro** (`angular_velocity_covariance[0] = -1` means "ignore" to
-   `robot_localization`). Now 1e-4; resting gyro offset is learned and subtracted.
-3. **Lidar scan was published unrotated** (true front = raw 269 deg, not 285).
-   `scan_masker` now rotates it; the stale 268-277 "antenna" mask (dead ahead) is gone.
-4. **`MISSION2_IGNORE_REACTIONS` never reached the container** (`robot_boot.sh` now
-   passes it).
-Result: run 2 made one trip to the marker and back but stopped ~0.55 m from home (the
-pose estimate jumped right after "Reached the goal"); the second attempt started from
-there and hit the dresser. No bag was recorded for run 2, so that is undiagnosed.
-
-(Committed and pushed as `4022c64`, CI run `44003193932` green.)
-
-**Where things stand:** the real physical robot (Waveshare UGV + Jetson Orin Nano)
-is mid bring-up. Full sim + HIL CI pipeline is green. The real-robot production path
-(`scripts/robot_boot.sh`: driver layer bare-metal + Nav2/EKF/ball_detector/
-mission_runner in the arm64 container) boots, localizes on its own map and completes
-the nav-only mission with a home error of a few centimetres (2026-11-18) — but has no
-proven stop when the Jetson dies (fix written, bench test owed), no collision avoidance
-or stuck recovery, and only observes wheel slip.
-
-**2026-08-12/13 session, in brief (several conclusions SUPERSEDED 2026-11-16 — see above)** (full detail: history, "first real
-`robot_boot.sh` production-path test"):
-- **AMCL localization bug — FIXED, live-confirmed.** `esp32_driver` was publishing raw
-  QMI8658 LSB counts as if SI units; garbage gyro `vyaw` scrambled EKF yaw (X/Y were
-  fine — `config/ekf.yaml` fuses only wheel `vx` + gyro `vyaw`). New
-  `scale_imu_raw()` in `esp32_protocol.py`. `ACCEL_SENSITIVITY_LSB_PER_G = 8192`
-  (high confidence, cross-checked against gravity — vendor doc's ±16g default is
-  wrong at runtime); `GYRO_SENSITIVITY_LSB_PER_DPS = 16` (vendor default, NOT
-  verified — needs a hand-rotated calibration). IMU covariances now `-1` (REP-145
-  "not populated") instead of all-zero. No bias/offset correction yet.
-- **`MISSION2_IGNORE_REACTIONS` env var** (`mission_runner._detection_cb`) suppresses
-  ball reactions so navigation can be tested in isolation from the HSV false-positive
-  bug.
-- **2026-08-12 stage-4-hil "regression" (CI run `31558423291`, frozen TF / "Initial
-  robot pose is not available")** did NOT reproduce on two controlled clean-Jetson
-  runs (DEBUG and info level). Best-evidenced cause: orphaned process/DDS state from
-  hours of live debugging, not code. Treat as functionally resolved; re-add
-  `log_level:=debug` in `container_entrypoint.sh`'s `mission` branch if it recurs.
-- **Real gap exposed: NO working collision-avoidance or stuck-recovery on the real
-  robot, by design.** `FollowPath.use_collision_detection: false`; BT is
-  `navigate_simple.xml` (no recoveries) because `behavior_server` spin/backup fails
-  100% ("Pose Goes Off Grid"); `collision_monitor`'s polygon is a deliberate 2cm no-op
-  (a real-sized one silently self-locked). Each, when enabled, caused a permanent
-  deadlock worse than the collision it prevented. Robot drove into a wall, then
-  circled; Nav2 progress checker aborted legs at ~60-74s. The map is NOT the suspect
-  (same map passes in sim/HIL — Mike's correction).
-- **Scan mask edge leak:** closest-obstacle readings clustered at 45.7-46.0° and
-  123.3-124.1° — right at the mast mask edges (`scan_masker.py`; the 268-277 sector
-  was removed 2026-11-16). Edge leak itself not re-checked.
-
-**Repo state:** the August IMU fix / `MISSION2_IGNORE_REACTIONS` commits were pushed
-2026-11-14; the Jetson's checkout was reset to `15f9371` by that day's CI sync. Ad-hoc diagnostic scripts
-(`robot_boot_debug.sh`, `odom_isolation_test.sh`, `amcl_tf_test.sh` + `tf_watch.py`,
-`raw_imu_test.sh`) live only in `~/robot_boot_debug/` on the Jetson. Failure bags +
-photos are in `reports/` on the workstation (untracked).
-
-**Older punch list (August; items 1 and 5 updated 2026-11-16 — the order above takes precedence):**
-1. **Mast/mask: mostly resolved 2026-11-16** — true front re-measured (269 deg raw),
-   scan rotated, stale antenna sector removed. Still open: whether to restrict to the
-   forward 180 deg at all, and the mast-edge leak.
-2. **Collision avoidance + recovery (the real priority).** Root-cause
-   `behavior_server`'s "Pose Goes Off Grid" (or replace recovery), THEN re-enable
-   collision detection — one capability at a time, real test at each step. Don't just
-   flip `use_collision_detection: true` (known deadlock). Check `planning/
-   Release1Todo.md` and wayfarer's 2026-09-09 recovery commits first.
-3. **Live pre-motion lidar readout** — prominent forward-arc nearest-obstacle range
-   before a goal is dispatched (human or automated pre-flight check), not forensic bag
-   analysis after. Plus an open question: does sim's turn segment also pass close to
-   a wall, and if so why does sim cope? Compare directly.
-4. Decide whether the Jetson's ad-hoc diagnostic scripts belong in `scripts/`.
-5. ~~Gyro scale calibration~~ DONE 2026-11-16 (verified by a 360 deg hand turn).
-6. Push timing: CI's `stage-4-hil` runs `use_sim_time=true` and never exercises the
-   bare-metal driver path, so a push proves nothing about the IMU fix — only a real
-   `robot_boot.sh` run does.
-7. **A4** real-camera HSV calibration (`hsv_realcam.yaml` doesn't exist;
-   `hsv_gazebo.yaml` stand-in false-positives on the red desk — reproduced twice;
-   before-photos in `reports/robot_boot_20260813_postfix/`).
-8. **A3** real SLAM map (`living_room.yaml` is the right room but not this robot's own
-   SLAM output; not ruled out as a contributor).
+**Still open from the August punch list** (the Release 1 order above takes precedence):
+whether to restrict the lidar to the forward 180 deg, and the mast-edge leak (returns
+clustering at 45.7-46.0 and 123.3-124.1 deg raw); a live pre-motion lidar readout
+before a goal is dispatched; whether the Jetson's ad-hoc diagnostic scripts
+(`~/robot_boot_debug/`) belong in `scripts/`; CI's `stage-4-hil` runs
+`use_sim_time=true`, so a push proves nothing about the bare-metal driver path.
 
 **Older open items (still true):** driver-readiness 60s timeout never timed on a real
 cold boot under `robot-mission.service`; BR-03 (recovery) has no test, so stage-0's
@@ -376,7 +289,7 @@ scripts/robot_boot.sh                # real production mission path
   is rewritten to `lidar_link` by `scan_masker`. Real footprint 0.253 x 0.231 m;
   `robot_radius: 0.24`. Gimbal T:133: pan -=left/+=right, tilt -=down/+=up (seen
   2026-11-17); the serial port is exclusive, so not while `esp32_driver` runs. Drive:
-  front and rear wheel pairs are motorized, the centre pair rolls free; the board
+  front and rear wheel pairs are motorized, the center pair rolls free; the board
   reports ONE speed per side. A second, USB camera sits on the pan-tilt (`docs/cameras.md`).
   Motion commands MUST be T:1 (left/right wheel speeds), never T:13: only T:1/T:11
   re-arm the firmware's stop-on-silence timer (`uart_ctrl.h`; source at
@@ -459,7 +372,7 @@ scripts/robot_boot.sh                # real production mission path
   deliberate ping cut missed its leg). Use `stdbuf -oL` or no filter.
 - **When a watchdog trips, run an independent observer beside it** before deciding
   which of the two is wrong (2026-11-19: one false stop was the watch, the next was a
-  real 2.4 s WiFi outage). And check behaviour, not configuration: a stored setting is
+  real 2.4 s WiFi outage). And check behavior, not configuration: a stored setting is
   not an obeyed one.
 - **`pkill -f` / `pgrep -f` match the shell that runs them** when the pattern (or an
   `echo` containing it) is in the same command line: four self-kills on 2026-11-20. Pick
