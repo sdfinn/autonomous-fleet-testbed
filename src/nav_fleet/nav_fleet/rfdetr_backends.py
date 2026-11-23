@@ -41,13 +41,35 @@ def _split_outputs(arrays):
                        % (first.shape, second.shape))
 
 
+# How many processor threads the network may use, and no spinning while they wait.
+# Measured 2026-11-23 on the 32-thread workstation at the camera's 10 pictures a second:
+#   ONNX Runtime's defaults   66 ms a picture, about 16 cores' worth of processor time
+#   8 threads, spinning       74 ms, 7.8 cores
+#   8 threads, no spinning    80 ms (worst 93 ms), 5.1 cores     <- this
+#   4 threads, no spinning   117 ms: slower than the camera
+# The defaults buy 14 ms for 11 cores, and in CI's simulator stage those cores are the
+# ones Gazebo renders its camera and lidar on (no display there, so no graphics card).
+ONNX_THREADS = 8
+
+
+def onnx_session_options(onnxruntime, threads=ONNX_THREADS):
+    """Session options with the thread cap above (never more threads than the machine
+    has) and waiting threads that sleep instead of spinning."""
+    import os
+    options = onnxruntime.SessionOptions()
+    options.intra_op_num_threads = max(1, min(int(threads), os.cpu_count() or 1))
+    options.add_session_config_entry('session.intra_op.allow_spinning', '0')
+    return options
+
+
 class OnnxRuntimeBackend:
     """Run the portable `.onnx` file with ONNX Runtime."""
 
-    def __init__(self, model_path, providers=None):
+    def __init__(self, model_path, providers=None, threads=ONNX_THREADS):
         import onnxruntime                     # not needed on the Jetson
         self._session = onnxruntime.InferenceSession(
-            model_path, providers=providers or ['CPUExecutionProvider'])
+            model_path, sess_options=onnx_session_options(onnxruntime, threads),
+            providers=providers or ['CPUExecutionProvider'])
         net_in = self._session.get_inputs()[0]
         self._input_name = net_in.name
         self.input_hw = (int(net_in.shape[2]), int(net_in.shape[3]))

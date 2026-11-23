@@ -325,3 +325,24 @@ def test_detector_colors_ball_like_boxes_only():
     by_name = {d.name: d for d in rfdetr_detect.Detector(_BallBackend()).detect(picture)}
     assert by_name['orange'].color == 'yellow'
     assert by_name['teddy bear'].color is None
+
+
+def test_the_onnx_backend_caps_its_threads_and_does_not_spin(monkeypatch):
+    """ONNX Runtime's defaults took about 16 processor cores to run the network at 10
+    pictures a second, beside a simulator that renders on those cores in CI."""
+    class FakeOptions:
+        def __init__(self):
+            self.intra_op_num_threads = 0
+            self.entries = {}
+
+        def add_session_config_entry(self, key, value):
+            self.entries[key] = value
+
+    fake_ort = type('FakeOrt', (), {'SessionOptions': FakeOptions})
+    options = rfdetr_backends.onnx_session_options(fake_ort)
+    assert options.intra_op_num_threads == min(rfdetr_backends.ONNX_THREADS,
+                                               __import__('os').cpu_count())
+    assert options.entries == {'session.intra_op.allow_spinning': '0'}
+
+    monkeypatch.setattr('os.cpu_count', lambda: 2)       # a small machine: never more
+    assert rfdetr_backends.onnx_session_options(fake_ort).intra_op_num_threads == 2
