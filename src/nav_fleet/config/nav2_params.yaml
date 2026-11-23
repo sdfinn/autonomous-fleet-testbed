@@ -183,6 +183,18 @@ controller_server:
       # 10.0 widens the window to +/-0.5 rad/s, so the command can stay at 0.5 while the
       # measured rate is anywhere up to 1.0.
       max_angular_accel: 10.0
+      # The follower must not keep "position reached" once the robot is outside the goal
+      # circle again (2026-11-23). With the default (true) it latches the first time
+      # its own distance to the goal is under xy_goal_tolerance and never drives forward
+      # again, only turns to the goal heading. Recorded in the simulator: it latched at
+      # 0.144 m (circle 0.150), the robot then sat at 0.163 m, the goal checker never saw
+      # it inside, and the two waited for each other until "Failed to make progress"
+      # 60 s later, the robot swinging left and right on the spot. That was the CI
+      # failure seen six times since 2026-11-20 (5 of 13 first drives without a display).
+      # false = when it finds itself outside the circle it drives back in. The goal
+      # checker above keeps its own latch (stateful: true), so the goal still ends the
+      # moment the robot is inside. NOT yet run on the real robot's floor.
+      stateful: false
 
 planner_server:
   ros__parameters:
