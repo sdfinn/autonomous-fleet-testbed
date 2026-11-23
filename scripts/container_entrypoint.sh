@@ -6,7 +6,7 @@
 # real-robot-hil-unification-design.md) — the ONE thing this container does,
 # identically whether it's HIL (workstation Gazebo simulates the robot's body)
 # or the real robot (vendor drivers on bare metal ARE the body): launch
-# nav2_only_launch.py (EKF + ball_detector + Nav2 bringup) with context-
+# nav2_only_launch.py (EKF + Nav2 bringup) with context-
 # appropriate launch arguments, wait for it to report ready, run one mission2
 # day, exit. One-shot — no long-lived container, no docker exec.
 #
@@ -17,11 +17,6 @@
 #                        (design spec §ROBOT_MODE branching: standalone power-on can
 #                        never run a smoke test — robot_boot.sh hardcodes 'mission').
 #   USE_SIM_TIME        'true' (HIL) or 'false' (real robot) — both modes
-#   BALL_DETECTOR       'false' = mission mode does not start the hand-written ball
-#                        detector (2026-11-22: on the real robot the RF-DETR node
-#                        outside the container publishes the detections). Default true.
-#   HSV_CONFIG_FILE     filename under src/nav_fleet/config/
-#                       (hsv_gazebo.yaml or hsv_realcam.yaml) — both modes
 #   NAV2_MAP_FILE       filename under src/nav_fleet/maps/
 #                       (living_room.yaml or bedroom_real.yaml) — mission mode only
 # Optional (mission mode):
@@ -103,8 +98,6 @@ case "$ROBOT_MODE" in
     # and holds the shell open forever; < /dev/null stops it inheriting stdin.
     (nohup ros2 launch nav_fleet nav2_only_launch.py \
        use_sim_time:="${USE_SIM_TIME}" \
-       hsv_config:="/ros2_ws/src/nav_fleet/config/${HSV_CONFIG_FILE}" \
-       ball_detector:="${BALL_DETECTOR:-true}" \
        map:="/ros2_ws/src/nav_fleet/maps/${NAV2_MAP_FILE}" \
        > "$NAV2_LOG" 2>&1 < /dev/null &)
 
@@ -146,7 +139,6 @@ case "$ROBOT_MODE" in
     # DeclareLaunchArgument(default_value='') already gives the same effect.
     SENSORS_LAUNCH_ARGS=(
       use_sim_time:="${USE_SIM_TIME}"
-      hsv_config:="/ros2_ws/src/nav_fleet/config/${HSV_CONFIG_FILE}"
       serial_device:="${SERIAL_DEVICE:-/dev/ttyUSB0}"
       serial_baud:="${SERIAL_BAUD:-115200}"
     )
@@ -165,7 +157,7 @@ case "$ROBOT_MODE" in
         exit 1
       fi
       sleep 2
-      count=$(grep -c 'ball_detector up' "$SENSORS_LOG" 2>/dev/null || true)
+      count=$(grep -cE 'ekf_node-[0-9]+\]: process started' "$SENSORS_LOG" 2>/dev/null || true)
       count="${count:-0}"
     done
     echo "=== [container-entrypoint] sensors up — running smoke test ==="
@@ -174,8 +166,8 @@ case "$ROBOT_MODE" in
       ${COMMIT_SHA:+--commit-sha "$COMMIT_SHA"} \
       ${CI_RUN_NUMBER:+--ci-run-number "$CI_RUN_NUMBER"}
     else
-    # EKF + ball_detector ONLY, no Nav2 (skip_nav2:=true) -- proves EKF/
-    # ball_detector actually work THROUGH the real container boundary (the
+    # EKF ONLY, no Nav2 (skip_nav2:=true) -- proves EKF
+    # actually works THROUGH the real container boundary (the
     # same interface a real mission depends on), not a bare-metal stand-in.
     # Redesigned 2026-08-10 (see docs/superpowers/plans/2026-08-10-drivers-
     # bare-metal-boot-fix.md): the real driver layer runs bare-metal OUTSIDE
@@ -189,24 +181,23 @@ case "$ROBOT_MODE" in
     rm -f "$NAV2_LOG"
     ros2 launch nav_fleet nav2_only_launch.py \
       use_sim_time:="${USE_SIM_TIME}" \
-      hsv_config:="/ros2_ws/src/nav_fleet/config/${HSV_CONFIG_FILE}" \
       skip_nav2:=true \
       > "$NAV2_LOG" 2>&1 < /dev/null &
     NAV2_PID=$!
 
-    echo "=== [container-entrypoint] waiting up to 60s for EKF+ball_detector to report up ==="
+    echo "=== [container-entrypoint] waiting up to 60s for EKF to start ==="
     deadline=$((SECONDS + 60))
     until [ "${count:-0}" -ge 1 ]; do
       if (( SECONDS >= deadline )); then
-        echo "FATAL: EKF+ball_detector not up within 60s -- see $NAV2_LOG" >&2
+        echo "FATAL: EKF not started within 60s -- see $NAV2_LOG" >&2
         tail -n 40 "$NAV2_LOG" >&2 || true
         exit 1
       fi
       sleep 2
-      count=$(grep -c 'ball_detector up' "$NAV2_LOG" 2>/dev/null || true)
+      count=$(grep -cE 'ekf_node-[0-9]+\]: process started' "$NAV2_LOG" 2>/dev/null || true)
       count="${count:-0}"
     done
-    echo "=== [container-entrypoint] EKF+ball_detector up -- idling until torn down externally ==="
+    echo "=== [container-entrypoint] EKF up -- idling until torn down externally ==="
     wait "$NAV2_PID"
     fi
     ;;

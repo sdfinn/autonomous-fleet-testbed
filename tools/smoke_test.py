@@ -245,19 +245,15 @@ def check_ball_correlation(node, ball_ops, known_distance_m=KNOWN_DISTANCE_M,
                            tolerance_m=DISTANCE_TOLERANCE_M, window_s=3.0):
     """Design spec §3: PASS requires the lidar's measured range agrees with
     known_distance_m within tolerance_m, AND a yellow_ball detection is present during
-    the window. Camera-estimated range is reported, not gated — hsv_realcam.yaml's
-    range_k isn't calibrated against a real camera yet."""
+    the window. Camera-estimated range is reported, not gated."""
     if isinstance(ball_ops, GzBallOps):
         # nav_fleet.ground_truth.get_ground_truth_xy() only parses the model's
         # world-frame POSITION (x, y) — not orientation/yaw (see its own
         # parse_model_position, which never reads the `orientation` block the raw
-        # `gz topic` text actually contains). Every existing ground-truth consumer
-        # that needs a placement DIRECTION, not just a point
-        # (tools/calibrate_ball_range.py), works around this the same way: this
-        # check runs before any navigation, so the robot is still at its spawn
-        # heading — north, yaw = pi/2 in this world. Matches that same convention
-        # rather than inventing a new one; see calibrate_ball_range.py's own
-        # "facing north" comment.
+        # `gz topic` text actually contains). This check needs a placement
+        # DIRECTION, not just a point, and works around that the simple way: it
+        # runs before any navigation, so the robot is still at its spawn
+        # heading — north, yaw = pi/2 in this world.
         truth = get_ground_truth_xy()
         if truth is None:
             # 'skipped' (not just 'pass': False) distinguishes "couldn't judge" from

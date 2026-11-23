@@ -509,6 +509,78 @@ Not yet done: a floor run with the mission script unchanged and both detectors
 recorded (needs the code pushed so the Jetson's checkout has it, and Mike with the
 robot); the same with the navigation container running.
 
+## One detector everywhere; the hand-written detector removed (2026-11-23)
+
+**What changed.** RF-DETR is now the detector in every place a mission runs: the real
+robot, the local Gazebo simulator, CI's simulator stage and CI's Jetson stage. The
+hand-written color detector is gone from the code.
+
+| Where | How the network runs | Pictures from | Measured |
+|---|---|---|---|
+| Real robot (`robot_boot.sh`) | TensorRT on the Jetson's GPU, outside the container | the robot's camera | 2026-11-22: 10 pictures a second, camera-limited |
+| Local simulator, CI simulator stage (`sim_launch.py`) | ONNX Runtime on the workstation's processor | Gazebo | about 70 ms a picture, 10 pictures a second |
+| CI Jetson stage (`hil_stage.sh run`) | TensorRT on the Jetson's GPU, outside the container | Gazebo, over Ethernet | about 44 ms a picture, 10 pictures a second |
+
+**Does a network trained on photographs find Gazebo's plain colored spheres?** This
+was the open question, so it was tested before any wiring was written: the robot
+parked, a ball spawned straight ahead at seven distances and two sideways offsets,
+yellow and red (evidence: `reports/sim_rfdetr_20261123/`, not in git).
+
+- Every ball from 0.5 m to 2.5 m came back as "sports ball", scores 0.73 to 0.94.
+- The color step named every one correctly with the REAL camera's bands: Gazebo's flat
+  yellow is hue 60 and its red hue 0. No color setting is needed for the simulator.
+- Only the distance constant differs (the simulated camera is 640 pixels wide with
+  another lens): box width times distance is 44.0 to 48.0, 46.5 at the reaction
+  distances. That one number is `config/detector_rfdetr_gazebo.yaml`.
+- A ball cut by the picture's edge (0.5 m ahead, 0.3 m to the side) is called
+  "frisbee" first and "sports ball" second, and gets no distance. Same edge rule as on
+  the real robot.
+- The empty room gives three or four "refrigerator" boxes at 0.26 to 0.32. Nothing
+  reacts to them: mission logic only acts on a class in its own table (below).
+
+**What mission logic is given.** `nav_fleet/detection.py` turns each box into a
+`Detection`: class, confidence, kind (known, hazard or unknown), bearing, distance and
+where the distance came from. It is the sister project's reader, written again here
+with the same fields and kinds; neither project imports the other. The mission script
+reacts only to a hazard with a trusted distance. Anything the table does not list
+("teddy bear", a ball whose color could not be read) is kind "unknown". This is the
+hook for the next step: sending unknown boxes to the describer.
+
+**What it needs outside the repo.** On the workstation: the model file
+`~/fleet-ci-data/models/rfdetr-small.onnx` (copied from the Jetson) and ONNX Runtime
+for the system Python, because `ros2 launch` starts nodes with `/usr/bin/python3`, not
+with `fleet-env`. Installed user-level without its dependencies, so it cannot shadow
+the protobuf that ROS and Gazebo use:
+`/usr/bin/python3 -m pip install --user --break-system-packages --no-deps onnxruntime`.
+CI's simulator stage checks for both and says so. On the Jetson: the engine file built
+there on 2026-11-22.
+
+**Known limits.**
+- Under simulator time on the workstation the node's "picture age at publish" is wrong
+  (3 to 5 ms for a 70 ms detection): the node's clock does not advance while it is
+  busy. Trust that number on the real robot only.
+- The real camera's field of view in `detection.py` is implied by the measured ball
+  constant, not measured. It only feeds the bearing, which nothing uses yet.
+
+**Where the hand-written detector went.** Deleted on 2026-11-23: `ball_detector.py`,
+`hsv_detect.py`, `hsv_gazebo.yaml`, `hsv_realcam.yaml`, `tools/calibrate_ball_range.py`,
+`tools/calibrate_hsv_realcam.py` and their tests. The last commit that has them is
+`7996135` (`git show 7996135:src/nav_fleet/nav_fleet/hsv_detect.py`). The comments in
+`hsv_detect.py` and `hsv_realcam.yaml` carry the measured numbers behind the three
+failures above.
+
+**Two ideas noted, not taken up (from a pasted chat answer, 2026-11-23).**
+- *RF-DETR's segmentation checkpoints plus a color check on the mask's pixels.* We do
+  the simpler form of this already: the color is read from the middle half of the box,
+  which for a ball is all ball (98 to 100% of those pixels voted for the right color on
+  13 real pictures). A mask would matter for things that do not fill the middle of
+  their box: a plush toy, a rope. Cost: a heavier checkpoint, a new engine build and
+  timing on the Jetson, and a license check that has not been done. Revisit when the
+  dog-toy inventory needs a toy's color or shape.
+- *Fine-tuning with color-named classes* (`yellow_ball`, `red_ball`). This is the "no
+  training for now" decision. If that changes: switch off the hue and color-jitter
+  augmentations, or the training teaches the network that color does not matter.
+
 ## Other devices later (discussion, 2026-11-22; nothing measured)
 
 Mike asked how today's choices affect three possible future devices: a follower robot
@@ -545,6 +617,7 @@ page existed, "vision model" meant the describer.
 - `docs/sessions/2026-11-19.md`, section 6: the shape rule, with before and after code.
 - `docs/sessions/2026-11-20.md`, sections 4 and 5: the daylight failure, the three ideas
   that did not work, the floor rule, and the floor results.
-- `src/nav_fleet/nav_fleet/hsv_detect.py` and `src/nav_fleet/config/hsv_realcam.yaml`:
-  the detector and its measured profile; the comments carry the numbers.
+- `hsv_detect.py` and `hsv_realcam.yaml` at commit `7996135` (removed from the code on
+  2026-11-23): the hand-written detector and its measured profile; the comments carry
+  the numbers.
 - `docs/cameras.md`: both cameras, and the plans that use them together.

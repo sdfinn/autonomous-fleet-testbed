@@ -6,7 +6,7 @@ the ESP32 sub-controller's serial link — RealRobotStartup.md A2's gimbal check
 item. This only needs to run ONCE at setup time (the mast stays wherever it's last
 commanded), so it's a standalone script, not a ROS2 node/topic — same treatment this
 project already gives other one-off hardware setup actions
-(tools/calibrate_ball_range.py, tools/direct_drive_test.py).
+(tools/direct_drive_test.py).
 
 Sends esp32_protocol.encode_gimbal_cmd's T:133 command directly over pyserial — no
 ROS2, no esp32_driver.py (that node owns the link only while running; this script

@@ -218,11 +218,16 @@ sim_up() {
 
 run() {
   # HIL stack GATE (Task 13b, narrowed 2026-08 for the docker-brain unification):
-  # clean state, bring up ONLY the workstation's Gazebo half — Nav2/EKF/
-  # ball_detector now start INSIDE the container as part of `day()`'s one-shot
+  # clean state, bring up the workstation's Gazebo half and the detector — Nav2/EKF
+  # start INSIDE the container as part of `day()`'s one-shot
   # run (see container_entrypoint.sh), not as a separate bare pre-step.
   clean_state
   sim_up
+  # The detector (2026-11-23): the RF-DETR node on the Jetson, OUTSIDE the container,
+  # on its GPU, exactly as on the real robot (robot_boot.sh). It stays up for `day` and
+  # `smoke-ci` and is stopped by `teardown`. The container starts no detector.
+  require_ip
+  detector_up gazebo
 }
 
 day() {
@@ -236,30 +241,27 @@ day() {
   ws_source
   local live_power_label
   live_power_label="$(real_power_mode_label)"
-  # HIL_DETECTOR (2026-11-23): rfdetr (default) = the RF-DETR node runs on the Jetson
-  # OUTSIDE the container, on its GPU, exactly as on the real robot (robot_boot.sh), and
-  # the container does not start the hand-written detector. hsv = the old arrangement.
-  local detector="${HIL_DETECTOR:-rfdetr}" rc=0
-  if [ "$detector" = "rfdetr" ]; then
-    detector_up
-  fi
   RUNNER_TYPE=hil_jetson POWER_MODE="${live_power_label}" JETSON_IP="${JETSON_IP}" \
-    JETSON_USER="${JETSON_USER}" STATE_DIR="${STATE_DIR}" HIL_DETECTOR="${detector}" \
+    JETSON_USER="${JETSON_USER}" STATE_DIR="${STATE_DIR}" \
     PYTHONUNBUFFERED=1 python3 -u -m tools.mission2_day --executor jetson --no-launch \
-      --hold-s "${DAY_HOLD_S:-0}" || rc=$?
-  if [ "$detector" = "rfdetr" ]; then
-    detector_down
-  fi
-  return "$rc"
+      --hold-s "${DAY_HOLD_S:-0}"
 }
 
 DETECTOR_LOG_REMOTE='/tmp/hil_object_detector.log'
 
 detector_up() {
   # The RF-DETR node on the Jetson, bare-metal (it needs the GPU; the image has no
-  # TensorRT). Pictures come from the workstation's Gazebo over the network, so it gets
-  # the simulated camera's settings file and simulator time. It publishes
-  # /robot_001/detections, the topic the mission in the container reacts to.
+  # TensorRT). It publishes /robot_001/detections, the topic the mission and the smoke
+  # test read.  $1 = which camera the pictures come from:
+  #   gazebo  the workstation's simulator, over the network: the simulated camera's
+  #           settings file and simulator time (CI: run, day, smoke-ci)
+  #   real    the robot's own camera: the real camera's settings file (bench smoke)
+  local camera="${1:?usage: detector_up gazebo|real}" config sim_time
+  case "$camera" in
+    gazebo) config=detector_rfdetr_gazebo.yaml; sim_time=true ;;
+    real)   config=detector_rfdetr.yaml;        sim_time=false ;;
+    *) echo "FATAL: detector_up: unknown camera '$camera'" >&2; return 1 ;;
+  esac
   # The Jetson's install is a --symlink-install build and `sync` does not rebuild: the
   # settings file is therefore given by its path in the checkout, and
   # ensure_nav_fleet_built.sh builds only if the object_detector command is missing.
@@ -280,9 +282,9 @@ detector_up() {
      rm -f ${DETECTOR_LOG_REMOTE}; \
      set -m; \
      nohup ros2 run nav_fleet object_detector --ros-args \
-       -p use_sim_time:=true \
+       -p use_sim_time:=${sim_time} \
        -p model_path:=${engine} \
-       -p config:=\$HOME/autonomous-fleet-testbed/src/nav_fleet/config/detector_rfdetr_gazebo.yaml \
+       -p config:=\$HOME/autonomous-fleet-testbed/src/nav_fleet/config/${config} \
        -p output_topic:=/robot_001/detections \
        > ${DETECTOR_LOG_REMOTE} 2>&1 < /dev/null & \
      set +m)"
@@ -324,10 +326,10 @@ ws_source() {
 smoke() {
   # Bench smoke test (real-robot driver + smoke-test design spec, 2026-08-05/06,
   # redesigned 2026-08-10 -- see docs/superpowers/plans/2026-08-10-drivers-bare-
-  # metal-boot-fix.md): exercises the REAL production interface -- EKF +
-  # ball_detector running INSIDE the container (nav2_only_launch.py,
+  # metal-boot-fix.md): exercises the REAL production interface -- EKF
+  # running INSIDE the container (nav2_only_launch.py,
   # skip_nav2:=true), talking to the real driver layer bare-metal outside it --
-  # not a bare-metal stand-in for EKF/ball_detector. Only the driver layer
+  # not a bare-metal stand-in for EKF. The driver layer
   # (vendor lidar/camera packages, never installed in the image, and per this
   # project's architecture never should be) runs bare-metal. ATTENDED: this
   # prompts you, via THIS terminal, to place the yellow ball.
@@ -343,22 +345,6 @@ smoke() {
     exit 1
   fi
 
-  local hsv="${HSV_CONFIG_FILE:-hsv_gazebo.yaml}"
-  # I5 (2026-08-11): a silent hsv_gazebo.yaml (SIM color thresholds) default here
-  # can make the ball-correlation check false-FAIL against the real camera, and
-  # the operator (present for exactly this check) would have no idea why.
-  if [ -z "${HSV_CONFIG_FILE:-}" ]; then
-    echo "WARNING: HSV_CONFIG_FILE is unset -- defaulting to hsv_gazebo.yaml (SIM color" >&2
-    echo "thresholds). The ball-correlation check below runs against a REAL camera and" >&2
-    echo "may false-FAIL until hsv_realcam.yaml exists (RealRobotStartup.md A4). Set" >&2
-    echo "HSV_CONFIG_FILE=hsv_realcam.yaml once it does." >&2
-  fi
-
-  # I4 (2026-08-11): a prior container-mode run can leave ~/fleet-ci-data
-  # root-owned on the Jetson (CLAUDE.md Gotchas, 2026-07-22), which breaks THIS
-  # bare-metal tools.smoke_test write with a PermissionError that looks like a
-  # driver problem, not a permissions one. Cheap, non-blocking check -- warn,
-  # don't FATAL.
   local fleet_ci_owner
   fleet_ci_owner=$(jssh "stat -c '%U' \$HOME/fleet-ci-data 2>/dev/null || true")
   if [ -n "$fleet_ci_owner" ] && [ "$fleet_ci_owner" != "${JETSON_USER}" ]; then
@@ -380,6 +366,7 @@ smoke() {
   cleanup_smoke() {
     echo "=== [smoke] tearing down the container and the bare-metal driver layer ==="
     jssh "docker rm -f hil_smoke_test" >/dev/null 2>&1 || true
+    detector_down
     jssh "pkill -INT -f '[r]os2 launch nav_fleet drivers_only_launch.py'" || true
   }
   trap cleanup_smoke EXIT
@@ -454,29 +441,32 @@ smoke() {
   done
   echo "=== [smoke] driver layer up ==="
 
-  echo "=== [smoke] starting EKF+ball_detector in the container (ROBOT_MODE=smoke_test) ==="
+  # The detector: RF-DETR on the Jetson beside the drivers, reading the real camera.
+  detector_up real
+
+  echo "=== [smoke] starting EKF in the container (ROBOT_MODE=smoke_test) ==="
   jssh "docker rm -f hil_smoke_test 2>/dev/null || true; \
     docker run -d --name hil_smoke_test --network host --ipc host \
       -v \$HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
       -v \$HOME/fleet-ci-data:/root/fleet-ci-data \
-      -e USE_SIM_TIME=false -e HSV_CONFIG_FILE=${hsv} \
+      -e USE_SIM_TIME=false \
       -e ROBOT_MODE=smoke_test \
       ${image} bash /ros2_ws/scripts/container_entrypoint.sh"
 
-  echo "=== [smoke] waiting up to 60s for EKF+ball_detector to report up in the container ==="
+  echo "=== [smoke] waiting up to 60s for EKF to report up in the container ==="
   local count=0
   deadline=$((SECONDS + 60))
   until [ "$count" -ge 1 ]; do
     if (( SECONDS >= deadline )); then
-      echo "FATAL: EKF+ball_detector not up within 60s in the container -- see" >&2
+      echo "FATAL: EKF not up within 60s in the container -- see" >&2
       jssh "docker logs hil_smoke_test 2>&1 | tail -n 40" >&2 || true
       exit 1
     fi
     sleep 2
-    count=$(jssh "docker logs hil_smoke_test 2>&1 | grep -c 'ball_detector up' || true")
+    count=$(jssh "docker logs hil_smoke_test 2>&1 | grep -c 'EKF up' || true")
     count="${count:-0}"
   done
-  echo "=== [smoke] EKF+ball_detector up in the container -- running the smoke test"
+  echo "=== [smoke] EKF up in the container -- running the smoke test"
   echo "(you will be prompted to place the yellow ball when the correlation check"
   echo "starts) =="
   # Plain SSH (no docker -it involved this time -- that's exactly what broke the
@@ -523,7 +513,7 @@ smoke_ci() {
         docker run --rm --name hil_smoke_test_ci --network host --ipc host \
           -v \$HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports \
           -v \$HOME/fleet-ci-data:/root/fleet-ci-data \
-          -e USE_SIM_TIME=true -e HSV_CONFIG_FILE=hsv_gazebo.yaml \
+          -e USE_SIM_TIME=true \
           -e ROBOT_MODE=smoke_test -e SMOKE_BALL_OPS=gz -e RUNNER_TYPE=hil_jetson \
           -e COMMIT_SHA=${sha} -e CI_RUN_NUMBER=${CI_RUN_NUMBER:-} \
           ${image} bash /ros2_ws/scripts/container_entrypoint.sh"
@@ -532,6 +522,7 @@ smoke_ci() {
 teardown() {
   echo '=== [teardown] both sides ==='
   if [ -n "${JETSON_IP:-}" ]; then
+    detector_down   # SIGINT first, and its log comes back as evidence
     # ekf_node added 2026-07-26 (Session 17 Piece 2 perf pass): this pattern predates the
     # CLAUDE.md gotcha's "COMPLETE teardown pattern" (2026-07-15) and never picked up
     # ekf_node — found live, an orphaned ekf_node survived teardown and had to be killed by
@@ -549,7 +540,7 @@ teardown() {
     # starts bare-metal weren't part of this sweep at all -- a general `hil_stage.sh
     # teardown` call couldn't clean up an orphaned driver layer (e.g. after a crash
     # that skipped smoke()'s own cleanup_smoke trap).
-    jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner|[e]kf_node|[b]all_detector|[o]bject_detector|[d]rivers_only_launch|[e]sp32_driver|[l]dlidar|[d]epthai|[s]can_masker|[c]amera_relay' || true" || true
+    jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner|[e]kf_node|[o]bject_detector|[d]rivers_only_launch|[e]sp32_driver|[l]dlidar|[d]epthai|[s]can_masker|[c]amera_relay' || true" || true
     # The mission() process runs inside the container's own PID namespace — invisible to the
     # host-side pkill above. A fixed --name (hil_mission) lets teardown reach it directly.
     # Best-effort: no-op when docker is absent or nothing is running, and must never fail
@@ -588,8 +579,7 @@ teardown() {
   # run, where nav2_only_launch.py, and therefore ball_detector, runs on this same box.
   ( cd "$REPO_DIR" && python3 -m tools.proc_sweep \
       'gz sim' 'parameter_bridge' 'component_container' 'robot_state_publisher' \
-      'sim_only_launch' 'static_transform_publisher' 'ball_detector' \
-      'object_detector' ) || true
+      'sim_only_launch' 'static_transform_publisher' 'object_detector' ) || true
   echo '=== [teardown] done ==='
   return 0
 }

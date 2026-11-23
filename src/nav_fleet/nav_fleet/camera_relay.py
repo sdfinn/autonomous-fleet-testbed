@@ -4,7 +4,7 @@
 problem scan_masker.py already solved for the lidar, minus any masking logic (a
 camera image needs no self-occlusion mask, just the right topic name). Subscribes
 to depthai-ros's real output topic and republishes it unchanged on the topic
-ball_detector.py and the bench smoke test actually expect.
+the detector and the bench smoke test actually expect.
 
 depthai_ros_driver's camera.launch.py hardcodes its own topic names with no
 IncludeLaunchDescription-level remapping support (same class of gap ldlidar_ros2's

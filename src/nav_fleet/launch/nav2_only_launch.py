@@ -104,28 +104,17 @@ def generate_launch_description():
         'use_sim_time', default_value='true',
         description='true for sim/HIL (Gazebo clock), false for the real robot',
     )
-    hsv_config_arg = DeclareLaunchArgument(
-        'hsv_config', default_value=str(PKG / 'config' / 'hsv_gazebo.yaml'),
-        description='ball_detector HSV thresholds — hsv_gazebo.yaml for sim/HIL, '
-                    'hsv_realcam.yaml for the real robot',
-    )
-    ball_detector_arg = DeclareLaunchArgument(
-        'ball_detector', default_value='true',
-        description='false = do not start the hand-written ball detector here. For the '
-                    'real robot when the RF-DETR node (object_detector, outside the '
-                    'container) publishes /robot_001/detections instead: two detectors '
-                    'on one topic would double the picture count the mission relies on.',
-    )
-    # RF-DETR here (2026-11-23): for the local simulator and CI's simulator stage, where
-    # this launch file runs on the workstation and the network runs on its processor
-    # through ONNX Runtime (about 80 ms a picture). On the real robot the same node is
-    # started OUTSIDE the container by robot_boot.sh, because it needs the Jetson's GPU;
-    # there this stays false.
+    # The detector (RF-DETR, node object_detector) is started here only for the local
+    # simulator and CI's simulator stage, where this launch file runs on the workstation
+    # and the network runs on its processor through ONNX Runtime (about 70 ms a picture).
+    # On the Jetson the same node is started OUTSIDE the container (robot_boot.sh on the
+    # real robot, hil_stage.sh in CI) because it needs the GPU; there this stays false.
+    # The hand-written color detector that used to start here was removed 2026-11-23.
     object_detector_arg = DeclareLaunchArgument(
         'object_detector', default_value='false',
         description='true = start the RF-DETR node (object_detector) here, publishing '
-                    '/robot_001/detections. Pass ball_detector:=false with it: two '
-                    'detectors on one topic double the picture count.',
+                    '/robot_001/detections. Never beside another one on the same topic: '
+                    'two detectors double the picture count the mission relies on.',
     )
     detector_model_arg = DeclareLaunchArgument(
         'detector_model',
@@ -145,7 +134,7 @@ def generate_launch_description():
     skip_nav2_arg = DeclareLaunchArgument(
         'skip_nav2', default_value='false',
         description='true skips Nav2/AMCL/map_server bringup entirely — EKF '
-                    'and ball_detector still start. Used by the bench smoke '
+                    'still starts. Used by the bench smoke '
                     'test to exercise the real container boundary without '
                     'needing a real map to exist yet (RealRobotStartup.md '
                     'A2 runs before A3/A4). Real missions and HIL always use '
@@ -177,21 +166,8 @@ def generate_launch_description():
         ],
     )
 
-    # Mission 2 HSV ball detector — always-on with the nav stack (spec §4): lives on the
-    # robot side so HIL runs it on the Jetson while camera frames arrive over DDS.
+    # It exits with an error if the network file is missing, instead of running blind.
     # mission_runner simply ignores detections during steps with no reactions.
-    ball_detector = Node(
-        package='nav_fleet',
-        executable='ball_detector',
-        name='ball_detector',
-        output='screen',
-        parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time'),
-                     'hsv_config': LaunchConfiguration('hsv_config')}],
-        condition=IfCondition(LaunchConfiguration('ball_detector')),
-    )
-
-    # The RF-DETR detector, same message and topic as the hand-written one. It exits
-    # with an error if the network file is missing, instead of running blind.
     object_detector = Node(
         package='nav_fleet',
         executable='object_detector',
@@ -244,15 +220,12 @@ def generate_launch_description():
         start_delay_arg,
         log_level_arg,
         use_sim_time_arg,
-        hsv_config_arg,
-        ball_detector_arg,
         object_detector_arg,
         detector_model_arg,
         detector_config_arg,
         map_arg,
         skip_nav2_arg,
         ekf_node,
-        ball_detector,
         object_detector,
         resolve_params_action,
         nav2,

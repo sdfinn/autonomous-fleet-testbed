@@ -116,8 +116,9 @@ Claude is working with files under this directory.
   tf2 "Detected jump back in time" floods (8,716 in one CI run) → AMCL can't anchor TF →
   goals REJECTED, and the nav2 container can even SIGABRT on an uncaught
   `tf2::NoDataForExtrapolationException`. The COMPLETE teardown/verify pattern is:
-  `pgrep -af "gz sim|component_container|robot_state_publisher|ros2 launch|parameter_bridge|static_transform|ekf_node|ball_detector"`
-  (`ball_detector` added 2026-07-26, second-round code review: its cmdline contains
+  `pgrep -af "gz sim|component_container|robot_state_publisher|ros2 launch|parameter_bridge|static_transform|ekf_node|object_detector"`
+  (`object_detector` is the RF-DETR node; until 2026-11-23 this was the hand-written
+  `ball_detector`, added 2026-07-26, second-round code review: its cmdline contains
   `nav_fleet`, not `nav2`, so it matched none of the sweep sites and 2 live orphans were
   found running on the Jetson — not cosmetic, since extra publishers on
   `/robot_001/detections` raise the effective detection rate and shorten Mission 2's

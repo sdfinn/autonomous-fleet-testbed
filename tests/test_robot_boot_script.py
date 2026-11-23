@@ -89,6 +89,21 @@ case "$1" in
     fi
     while true; do sleep 0.2; done ;;
   run)
+    # `ros2 run nav_fleet object_detector ...`: the RF-DETR node. Says "detector ready"
+    # like the real one (FAKE_DETECTOR_NEVER_READY: stays silent; FAKE_DETECTOR_DIES:
+    # exits like a node whose model cannot be loaded).
+    if [ "$3" = "object_detector" ]; then
+      trap 'echo detector_sigint >> "$EVENTS"; exit 0' INT
+      echo "detector_start $*" >> "$EVENTS"
+      if [ -n "${FAKE_DETECTOR_DIES:-}" ]; then
+        echo "RuntimeError: model file could not be loaded"
+        exit 1
+      fi
+      if [ -z "${FAKE_DETECTOR_NEVER_READY:-}" ]; then
+        echo "[INFO] [object_detector]: detector ready: rfdetr-small.engine on TensorRTBackend, input 512x512; loaded in 1.8 s, first picture 40 ms; publishing on /robot_001/detections"
+      fi
+      while true; do sleep 0.2; done
+    fi
     # `ros2 run nav_fleet operator_watch ...`: "watches" while $STATE/operator_up
     # exists, then gives up (exit 3) like the real node. FAKE_WATCH_CRASHES: dies.
     trap 'echo watch_sigint >> "$EVENTS"; exit 0' INT
@@ -146,6 +161,9 @@ def boot_env(tmp_path):
     _write_exec(stubs / 'git', FAKE_GIT)
     _write_exec(stubs / 'docker', FAKE_DOCKER)
     _write_exec(stubs / 'ros2', FAKE_ROS2)
+    # The RF-DETR engine file robot_boot.sh insists on before anything moves.
+    (home / 'fleet-ci-data' / 'models').mkdir(parents=True)
+    (home / 'fleet-ci-data' / 'models' / 'rfdetr-small.engine').write_text('')
     events = state / 'events.log'
     events.write_text('')
     env = {
@@ -569,54 +587,70 @@ def test_no_params_mount_without_the_override(boot_env):
     assert 'nav2_params.yaml' not in _docker_run_line(events)
 
 
-# --- ROBOT_BOOT_DETECTOR: try a ball-detector change on the robot without a new image ---
-def test_detector_override_mounts_code_and_profile_over_the_images_copies(boot_env):
+# --- The detector: RF-DETR beside the drivers, the container starts none ---
+def test_the_rfdetr_detector_is_ready_before_the_mission_and_publishes_the_real_topic(boot_env):
     env, events, home = boot_env
-    trial = home / 'detector_trial'
-    trial.mkdir()
-    (trial / 'hsv_detect.py').write_text('# trial\n')
-    (trial / 'hsv_realcam.yaml').write_text('colors: {}\n')
-    env['ROBOT_BOOT_DETECTOR'] = str(trial)
     env['FAKE_MISSION_SECONDS'] = '1'
     out = _finish(_start(env))
+    ev = _events(events)
+    assert ev.index('detector_start') < ev.index('docker_run'), out
+    start = _event_line(events, 'detector_start')
+    assert f'model_path:={home}/fleet-ci-data/models/rfdetr-small.engine' in start
+    assert 'output_topic:=/robot_001/detections' in start
+    assert 'detections_shadow' not in start
+    assert 'RF-DETR detector ready' in out
+    assert 'detector_sigint' in ev                    # stopped again on the way out
+
+
+def test_the_container_is_given_no_detector_settings(boot_env):
+    """The hand-written detector and its color profiles are gone (2026-11-23)."""
+    env, events, _home = boot_env
+    env['FAKE_MISSION_SECONDS'] = '1'
+    _finish(_start(env))
     line = _docker_run_line(events)
-    site = '/ros2_ws/install/nav_fleet/lib/python3.12/site-packages/nav_fleet'
-    assert f'{trial}/hsv_detect.py:{site}/hsv_detect.py:ro' in line
-    assert f'{trial}/hsv_detect.py:/ros2_ws/src/nav_fleet/nav_fleet/hsv_detect.py:ro' in line
-    # The entrypoint reads the profile from src/; the installed copy is covered too.
-    assert f'{trial}/hsv_realcam.yaml:/ros2_ws/src/nav_fleet/config/hsv_realcam.yaml:ro' in line
-    assert (f'{trial}/hsv_realcam.yaml:/ros2_ws/install/nav_fleet/share/nav_fleet/config/'
-            'hsv_realcam.yaml:ro') in line
-    assert 'NOT from the image' in out
+    assert 'HSV_CONFIG_FILE' not in line and 'BALL_DETECTOR' not in line
+    assert 'hsv_detect.py' not in line
 
 
-def test_no_mission_when_the_detector_override_is_incomplete(boot_env):
-    """Code and profile change together: a new profile section crashes old code."""
+def test_no_mission_without_the_model_file(boot_env):
     env, events, home = boot_env
-    trial = home / 'detector_trial'
-    trial.mkdir()
-    (trial / 'hsv_realcam.yaml').write_text('colors: {}\n')
-    env['ROBOT_BOOT_DETECTOR'] = str(trial)
+    (home / 'fleet-ci-data' / 'models' / 'rfdetr-small.engine').unlink()
     proc = _start(env)
     out = _finish(proc, timeout=60.0)
     assert proc.returncode == 1, out
-    assert 'has no hsv_detect.py' in out
+    assert 'is not a file' in out
     assert 'docker_run' not in _events(events)
 
 
-def test_no_detector_mount_without_the_override(boot_env):
+def test_no_mission_when_the_detector_dies_at_start(boot_env):
     env, events, _home = boot_env
-    env['FAKE_MISSION_SECONDS'] = '1'
-    _finish(_start(env))
-    assert 'hsv_detect.py' not in _docker_run_line(events)
+    env['FAKE_DETECTOR_DIES'] = '1'
+    proc = _start(env)
+    out = _finish(proc, timeout=60.0)
+    assert proc.returncode == 1, out
+    assert 'did not become ready' in out and 'could not be loaded' in out
+    assert 'docker_run' not in _events(events)
 
 
-def test_the_real_robot_uses_the_real_camera_colour_profile(boot_env):
-    """Not the simulator's: that one took the bedroom's wood floor for a yellow ball."""
-    env, events, _home = boot_env
+def test_another_model_file_can_be_named_for_one_run(boot_env):
+    env, events, home = boot_env
+    other = home / 'trial.onnx'
+    other.write_text('')
+    env['ROBOT_BOOT_RFDETR'] = str(other)
     env['FAKE_MISSION_SECONDS'] = '1'
     _finish(_start(env))
-    assert 'HSV_CONFIG_FILE=hsv_realcam.yaml' in _docker_run_line(events)
+    assert f'model_path:={other}' in _event_line(events, 'detector_start')
+
+
+@pytest.mark.parametrize('gone', ['ROBOT_BOOT_SHADOW_DETECTOR', 'ROBOT_BOOT_DETECTOR'])
+def test_a_removed_detector_switch_is_refused_not_ignored(boot_env, gone):
+    env, events, _home = boot_env
+    env[gone] = '1'
+    proc = _start(env)
+    out = _finish(proc, timeout=60.0)
+    assert proc.returncode == 1, out
+    assert f'{gone} was removed' in out
+    assert 'docker_run' not in _events(events)
 
 
 # --- Obstacle guard: on for every mission, attended or not ---

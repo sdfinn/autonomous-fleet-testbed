@@ -15,7 +15,7 @@ from the ground up, both worth knowing before reading further:
    real-robot drift detection are explicitly R2 scope, not R1. The gate is: the mission
    runs, passes per leg (same PASS/FAIL judging HIL already does), and you visually
    confirm it — nothing more automated than that.
-2. **Nav2/EKF/`ball_detector`/`mission_runner` run INSIDE the container** (reversed
+2. **Nav2/EKF/`mission_runner` run INSIDE the container** (reversed
    2026-08-03 — see `docs/superpowers/specs/ 2026-08-03-docker-brain-real-robot-hil-unification-design.md`, which supersedes
    `docs/bare-metal-vs-container-decision.md`'s conclusion). Ball placement and
    ground-truth judging stay workstation-side for HIL (that harness never runs on the
@@ -34,7 +34,7 @@ knowing going in:
   avahi Gotchas for the exact commands).
 - The deployed robot does not need WiFi to reach anything else once running — it's a
   purely local prerequisite (CycloneDDS needs at least one physical, up interface to
-  bind its own internal DDS discovery to; nothing about Nav2/EKF/`ball_detector`/
+  bind its own internal DDS discovery to; nothing about Nav2/EKF/
   `mission_runner`/Ollama needs to reach the workstation or the internet). WiFi has to
   be associated *before* the boot sequence starts (see Part A, the systemd unit waits
   on it); nothing after that point talks in or out.
@@ -114,7 +114,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   # check first, only install if actually missing:
   dpkg -l | grep -E "ros-jazzy-robot-localization|ros-jazzy-vision-msgs"
   sudo apt install -y ros-jazzy-robot-localization ros-jazzy-vision-msgs
-  # (ekf_node needs the first, ball_detector needs the second)
+  # (ekf_node needs the first, the detector needs the second)
 
   source /opt/ros/jazzy/setup.bash
   cd ~/autonomous-fleet-testbed
@@ -333,7 +333,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     known ROS2/CycloneDDS limitation (official ROS docs' own DDS-tuning guide),
     not a depthai-ros or project-specific bug. **This will also hit the real
     robot/HIL path once the camera is wired into `sensors_only_launch.py`** —
-    `ball_detector.py` subscribes to `/robot_001/camera/image_raw`, the exact same
+    The detector (`object_detector.py`) subscribes to `/robot_001/camera/image_raw`, the exact same
     class of uncompressed Image topic. **Fixed 2026-08-10:**
     `scripts/regen_cyclonedds_config.sh` now emits a `<SocketReceiveBufferSize
     min="10MB"/>` element inside `<Internal>`, additive to its existing
@@ -360,7 +360,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
     fixed the same way, minus any masking logic: `nav_fleet/camera_relay.py`
     (TDD, `tests/test_camera_relay.py`) subscribes to depthai-ros's real
     `/oak/rgb/image_rect` topic and republishes it unchanged on
-    `/robot_001/camera/image_raw`, which `ball_detector.py` and the bench smoke
+    `/robot_001/camera/image_raw`, which the detector and the bench smoke
     test's own `check_photo()` actually expect. **Verified live against the real
     camera**: `/robot_001/camera/image_raw` measured ~10-12Hz (matches the
     profile's `hz_min: 10`), and `check_photo()` — the exact primitive the smoke
@@ -378,7 +378,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   yaw-rate from this exact topic; a silently-missing IMU degrades the EKF fusion the
   6-wheel-skid-steer mitigation below depends on, without an obvious error anywhere)
   and confirm `teleop_twist_keyboard`/`teleop_twist_joy` physically drives the wheels.
-  (`ball_detector` subscribes to the camera topic and stays silently uninitialized,
+  (the detector subscribes to the camera topic and stays silently uninitialized,
   not crashed, if it's missing — check explicitly rather than discovering it later.)
 - [X] **Command the pan-tilt gimbal to a fixed forward/level pose — code built AND
   verified live against real hardware, 2026-08-10 (TDD, `encode_gimbal_cmd` +
@@ -532,7 +532,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   2026-08-11 — see
   docs/superpowers/plans/2026-08-10-drivers-bare-metal-boot-fix.md): `scripts/
   hil_stage.sh smoke <sha>` now runs the real driver layer bare-metal AND
-  EKF+ball_detector inside the container (`nav2_only_launch.py
+  EKF inside the container (`nav2_only_launch.py
   skip_nav2:=true`) — exercising the actual production container boundary, not
   a bare-metal stand-in. The old `ROBOT_MODE=smoke_test`-launches-
   `sensors_only_launch.py`-in-container approach never actually worked for real
@@ -614,41 +614,28 @@ Procedure (repeat whenever furniture moves enough to matter):
 - [ ] Check `robot_boot.sh` prints `map: the robot's own map` on the next run. A
   `WARNING: no real map` line means it fell back to the borrowed one.
 
-### A4. Calibrate ball-color detection for the real camera
+### A4. The detector: RF-DETR on the Jetson's GPU
 
-**New — this didn't matter under the old BR-01 gate (Mission 1 never consumed
-detections), but mission2's yellow/red legs are entirely about reacting to a detected
-ball, so `ball_detector`'s color thresholds have to actually work against the real
-camera.** `hsv_gazebo.yaml`'s thresholds are tuned for Gazebo's rendered ball material
-— there's no reason they hold for a real webcam's real-world color/lighting response.
+**Rewritten 2026-11-23.** This section used to be about measuring color thresholds for
+a hand-written color detector (`hsv_realcam.yaml`). That detector failed three ways on
+the real robot and was replaced by a trained one, RF-DETR, on 2026-11-22; its code was
+removed on 2026-11-23. The story is `docs/detection-history.md`.
 
-- [ ] Take a close-up photo of the real red ball with the robot's actual camera, under
-  the actual deployment lighting, filling most of the frame. Repeat for yellow.
-- [ ] Get a suggested threshold from each photo:
+- [x] The portable model file is on the Jetson:
+  `~/fleet-ci-data/models/rfdetr-small.onnx`.
+- [x] The engine file is built ON this Jetson from it (about three minutes; rebuild
+  after a JetPack update):
 
   ```bash
-  python -m tools.calibrate_hsv_realcam red_ball_photo.png --color red
-  python -m tools.calibrate_hsv_realcam yellow_ball_photo.png --color yellow
+  cd ~/fleet-ci-data/models
+  trtexec --onnx=rfdetr-small.onnx --saveEngine=rfdetr-small.engine --fp16
   ```
-
-  This is a suggestion tool, not a solver — there's no ground truth for a real photo's
-  HSV band the way `tools/calibrate_ball_range.py` has Gazebo ground truth for range.
-  Sanity-check the printed numbers look like real hue values (red near 0/360, yellow
-  in the 40-75 range) before trusting them.
-- [ ] Create `src/nav_fleet/config/hsv_realcam.yaml`, same shape as `hsv_gazebo.yaml`:
-
-  ```yaml
-  colors:
-    red:    {h: [<from tool>], s_min: <from tool>, v_min: <from tool>}
-    yellow: {h: [<from tool>], s_min: <from tool>, v_min: <from tool>}
-  min_pixels: 40
-  range_k: 47.1   # unchanged from hsv_gazebo.yaml — a property of focal length, not
-                  # color; no real-camera range calibration exists yet
-  ```
-- [ ] Verify live: point the camera at each real ball, watch `ball_detector`'s output
-  topic (`/robot_001/detections` or equivalent) for a correct-color hit before moving
-  on. Don't trust the tool's numbers unverified.
-- [ ] Commit `hsv_realcam.yaml`.
+- [x] `robot_boot.sh` starts the node (`object_detector`) beside the drivers, outside
+  the container, and will not start a mission until it says "detector ready".
+  `ROBOT_BOOT_RFDETR=<file>` names another model file for one run.
+- [ ] Nothing to calibrate per room. Settings are in
+  `src/nav_fleet/config/detector_rfdetr.yaml` (which names count as a ball, the
+  distance constant, the two color bands used to tell yellow from red inside a box).
 
 ### A5. No new launch file needed
 
@@ -656,14 +643,10 @@ Superseded 2026-08 by the docker-brain unification (docs/superpowers/specs/
 2026-08-03-docker-brain-real-robot-hil-unification-design.md): `robot_launch.py` is
 never created. `src/nav_fleet/launch/nav2_only_launch.py` — the same file HIL already
 uses — is reused directly, parameterized by three launch arguments
-(`use_sim_time:=false hsv_config:=... map:=...`), passed in by
+(`use_sim_time:=false map:=...`), passed in by
 `scripts/container_entrypoint.sh` (see A6). Nothing to write here.
-**(2026-11-18: `bedroom_real.yaml` now exists, outside git — see A3. The text below is still true for `hsv_realcam.yaml`.)** **`hsv_realcam.yaml`/`bedroom_real.yaml` still don't exist (A3/A4, still open)** —
-`robot_boot.sh` currently points these two args at real, existing stand-ins instead
-(`hsv_gazebo.yaml`/`living_room.yaml`, confirmed 2026-08-11 to be the same physical
-room) so a mission-mode run doesn't crash on a missing file; ball-detection accuracy
-against `hsv_gazebo.yaml`'s sim thresholds is still unproven against the real
-camera/lighting.
+(2026-11-18: the robot's own map `bedroom_real.yaml` exists, outside git — see A3.
+2026-11-23: there is no color profile argument any more — see A4.)
 
 ### A6. Build the power-on boot sequence
 
@@ -734,13 +717,9 @@ in one follow-up commit, both re-reviewed independently clean ("Ready to push: Y
    USB/udev enumeration for the OAK-D camera and the lidar is expected to be
    slower. Worth timing for real before trusting the systemd unit as-is, or
    consider bumping the 60s timeout.
-4. **`hsv_realcam.yaml` (A4) still doesn't exist; `bedroom_real.yaml` (A3) was built 2026-11-18 (see A3).** Original note: **`hsv_realcam.yaml` (A4) and `bedroom_real.yaml` (A3) still don't exist.**
-   `robot_boot.sh` no longer crashes on this (repointed at `hsv_gazebo.yaml`/
-   `living_room.yaml`, both real files, 2026-08-11 — see the A5 note above), but
-   ball-detection accuracy against sim HSV thresholds and navigation against a
-   borrowed (if same-room) map are both still unproven against the real robot.
-   `hil_stage.sh smoke()`'s own HSV default has the same fallback, with its own
-   loud warning.
+4. **Closed.** The robot's own map was built 2026-11-18 (A3); the hand-written color
+   detector this item was about was replaced by RF-DETR on 2026-11-22 and removed on
+   2026-11-23 (A4).
 5. **A real AMCL scan-processing deadlock was found and fixed 2026-08-11, but only
    proven on a bare-metal ad-hoc test — NOT yet through `robot_boot.sh`'s real
    container path.** `robot_state_publisher` was never started anywhere in the real
@@ -769,7 +748,7 @@ in one follow-up commit, both re-reviewed independently clean ("Ready to push: Y
   missing tag) rather than trying to fetch it.
 - [ ] Run `scripts/robot_boot.sh` **manually over SSH** first — don't install the
   systemd unit yet. Watch it: image-present check → container starts → DDS regen →
-  Nav2/EKF/`ball_detector` come up (inside the container) → "Managed nodes are
+  Nav2/EKF come up (inside the container) → "Managed nodes are
   active" ×2 → `mission_runner --day` starts, self-reporting each leg's PASS/FAIL
   (no ground-truth judging — the real robot has none). Place the yellow ball, then the
   red ball, at the right moments (see A7) and confirm the whole day runs to
@@ -824,15 +803,15 @@ prompting exists in operator mode; watch the robot and act on your own judgment*
   git tag r1-complete
   git push origin r1-complete
   ```
-- [ ] Commit everything from Part A (map, `hsv_realcam.yaml`):
+- [ ] Commit everything from Part A (the map lives outside git, see A3):
   ```bash
   git add .
-  git commit -m "feat: real robot deploy — SLAM map, HSV calibration, r1-complete"
+  git commit -m "feat: real robot deploy — SLAM map, r1-complete"
   git push
   ```
 
-**Part A complete when:** `bedroom_real.pgm`/`.yaml` and `hsv_realcam.yaml` are both
-committed; `robot_boot.sh` has been run manually at least once and passed all 3 legs
+**Part A complete when:** `bedroom_real.pgm`/`.yaml` exist (A3) and the RF-DETR engine
+is built (A4); `robot_boot.sh` has been run manually at least once and passed all 3 legs
 with your own eyes-on confirmation; the systemd unit is installed and enabled;
 `r1-complete` is tagged.
 
@@ -870,7 +849,7 @@ with your own eyes-on confirmation; the systemd unit is installed and enabled;
   documented heading.
 - [ ] Power on. That's it — `robot-mission.service` handles everything from there:
   waits for WiFi, regenerates the DDS config, brings up the container (which runs
-  Nav2/EKF/`ball_detector` inside), and runs the mission2 day with operator ball
+  Nav2/EKF inside), and runs the mission2 day with operator ball
   placement. Step back and watch; place the balls per A7's timing when the moment comes.
 - [ ] Ground-truth check by eye, every time.
 
@@ -888,7 +867,7 @@ explicitly R2 scope, not R1):
   the right tool anymore — found + fixed in review, 2026-08-09.** That tool's entire
   mechanism is resolving `~/.ros/log/latest` on the target host, which only ever
   gets written by a BARE-METAL `ros2 launch` process. Since the docker-brain
-  unification, Nav2/EKF/`ball_detector` all run INSIDE the container (see the intro
+  unification, Nav2/EKF all run INSIDE the container (see the intro
   note at the top of this doc), and the container's own internal `~/.ros/log` is
   never bind-mounted out — `robot_boot.sh` only mounts `reports/` and
   `fleet-ci-data/`. Running `pull_ros_logs.py` against the Jetson now will NOT error;

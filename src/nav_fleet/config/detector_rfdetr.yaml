@@ -22,7 +22,7 @@ ball_like_classes: [sports ball, orange, apple]
 
 # Distance for a ball-like box: range_m = ball_range_k / width_px, for a picture
 # range_reference_width_px wide. 86.0 is the mean of the hand-written detector's two
-# per-color values (hsv_realcam.yaml); with tighter boxes it gave 6-8% error.
+# per-color values (hsv_realcam.yaml, removed 2026-11-23); with tighter boxes it gave 6-8% error.
 ball_range_k: 86.0
 range_reference_width_px: 1280
 

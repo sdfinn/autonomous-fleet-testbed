@@ -13,6 +13,6 @@
 # Box width times distance, at 0.5 / 0.8 / 1.0 / 1.3 / 1.5 / 2.0 / 2.5 m:
 # 44.0 / 45.6 / 46.5 / 46.8 / 46.5 / 48.0 / 47.5. The reactions fire at 0.8 m and
 # 1.3 m, so the constant is taken there. The hand-written detector's own constant for
-# this camera was 47.1 (hsv_gazebo.yaml).
+# this camera was 47.1 (hsv_gazebo.yaml, removed 2026-11-23).
 ball_range_k: 46.5
 range_reference_width_px: 640

@@ -2,21 +2,21 @@
 # Copyright 2026 Mike
 # SPDX-License-Identifier: Apache-2.0
 """Real-hardware driver layer ONLY — esp32_driver (odom/imu/cmd_vel) + the lidar and
-camera vendor launch files + scan_masker + camera_relay. No EKF, no ball_detector, no
+camera vendor launch files + scan_masker + camera_relay. No EKF, no detector, no
 Nav2 — those stay in nav2_only_launch.py (the container), started separately.
 
 Extracted 2026-08-10 out of sensors_only_launch.py (which used to bundle these five
-driver nodes together with EKF + ball_detector for the bench smoke test's own
+driver nodes together with EKF for the bench smoke test's own
 self-contained convenience) so this exact driver set can ALSO be launched bare-metal
 by robot_boot.sh AND by the bench smoke test for the real deployed robot, without
-duplicating EKF/ball_detector against the copies nav2_only_launch.py already starts
+duplicating EKF against the copies nav2_only_launch.py already starts
 inside the container. See
 docs/superpowers/plans/2026-08-10-drivers-bare-metal-boot-fix.md for the full story:
 neither robot_boot.sh's ROBOT_MODE=mission container branch nor the smoke test's old
 ROBOT_MODE=smoke_test container branch could ever actually reach the real lidar/
 camera — the vendor packages were never installed in the Docker image, and were
 never meant to be (this project's own docker-brain-unification decision: the driver
-layer stays bare-metal, only Nav2/EKF/ball_detector/mission_runner run in the
+layer stays bare-metal, only Nav2/EKF/mission_runner run in the
 container).
 
 No use_sim_time argument here at all — this file is ONLY ever invoked in real-
@@ -169,7 +169,7 @@ def generate_launch_description():
     # camera_relay: closes the CAMERA half of the same topic-remapping gap
     # (2026-08-10) — depthai-ros's camera.launch.py has no remapping support of
     # its own, so a small relay node republishes its real image_rect topic as
-    # /robot_001/camera/image_raw, which ball_detector.py expects. Always
+    # /robot_001/camera/image_raw, which the detector expects. Always
     # included alongside camera_include — harmless with no publisher on
     # image_rect yet.
     camera_relay = Node(

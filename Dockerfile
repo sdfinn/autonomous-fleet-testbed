@@ -1,5 +1,5 @@
 # arm64 ROS2 Jazzy nav_fleet build — built natively on the Jetson runner (stage-3-arm64).
-# THE brain: EKF + ball_detector + Nav2 bringup + mission_runner, run identically by
+# THE brain: EKF + Nav2 bringup + mission_runner, run identically by
 # HIL (tools/mission2_day.py's JetsonExecutor) and the real robot
 # (scripts/robot_boot.sh) via scripts/container_entrypoint.sh — see
 # docs/superpowers/specs/2026-08-03-docker-brain-real-robot-hil-unification-design.md.

@@ -57,18 +57,47 @@ First note (2026-11-15, doorway): this repo's `tools/mission2_day.py`
 `_judge_and_log_leg` ignores the mission's own `ok` flag, so a failed navigate leg
 can still be judged PASS (verified true here 2026-11-16; not fixed).
 
-## Current status — START HERE (last real work 2026-11-22)
+## Current status — START HERE (last real work 2026-11-23)
 
-**NEXT SESSION (Mike, 2026-11-22 close): AFT only, no wayfarer session beside it.**
-Order (recommended, not yet confirmed; `docs/sessions/2026-11-22.md` "Next"):
-(A) one detector everywhere: RF-DETR in the local Gazebo simulator (ONNX Runtime, a
-settings file for the simulator's camera), merge in wayfarer's `Detection` object as
-code written HERE (do not change wayfarer), CI's simulator stage then the Jetson stage,
-then REMOVE the hand-written detector (no switch; its story is
-`docs/detection-history.md`); (B) something to do after an obstacle hold, starting
-with the root cause of Nav2's `BackUp`/`Spin` failure on the real robot. Class names
-stay the model's own labels ("sports ball": the ROS convention); our own
-`yellow_ball`/`red_ball` keep the underscore.
+**2026-11-23 session: one detector everywhere (list item A), done except one floor
+run.** Detail: `docs/sessions/2026-11-23.md`, `docs/detection-history.md`.
+- **RF-DETR (`object_detector`) is the only detector**: real robot, local simulator,
+  CI's simulator stage, CI's Jetson stage, all three smoke-test paths. The hand-written
+  color detector, its two color profiles, two calibration tools and their tests are
+  deleted (last commit that has them: `7996135`).
+- **Where it runs.** On the Jetson: OUTSIDE the container, on the GPU (TensorRT):
+  started by `robot_boot.sh` (always; not ready within 60 s = no mission) and by
+  `hil_stage.sh run` (stopped by `teardown`). On the workstation: started by
+  `sim_launch.py` / `sensors_only_launch.py object_detector:=true`, ONNX Runtime on
+  the processor, about 70 ms a picture. The container starts no detector.
+- **Needed outside the repo on the workstation (CI runner):**
+  `~/fleet-ci-data/models/rfdetr-small.onnx`, and ONNX Runtime for the SYSTEM Python
+  (`ros2 launch` starts nodes with `/usr/bin/python3`, not `fleet-env`):
+  `/usr/bin/python3 -m pip install --user --break-system-packages --no-deps onnxruntime`
+  (`--no-deps` so it cannot shadow ROS's protobuf). CI's simulator stage checks both.
+- **A pretrained network finds Gazebo's plain spheres** ("sports ball" 0.73-0.94,
+  0.5-2.5 m) and the real camera's color bands fit Gazebo's colors; only the distance
+  constant differs (`config/detector_rfdetr_gazebo.yaml`).
+- **`nav_fleet/detection.py`**: what mission logic is given about an object (class,
+  confidence, kind known/hazard/unknown, bearing, distance and its source). Same
+  fields and kinds as wayfarer's reader, written here, no import either way. The
+  mission script reacts only to a HAZARD with a trusted distance. `OBJECTS` there is
+  the table of classes missions may act on.
+- **Not verified:** the new `robot_boot.sh` default on the floor (script tests only);
+  the attended bench smoke test (`hil_stage.sh smoke`) with RF-DETR on the real camera.
+  Under simulator time on the workstation the node's "picture age" number is wrong.
+- **Removed switches:** `ROBOT_BOOT_SHADOW_DETECTOR`, `ROBOT_BOOT_DETECTOR`,
+  `HSV_CONFIG_FILE`, `BALL_DETECTOR`, launch arguments `hsv_config` / `ball_detector`.
+  `ROBOT_BOOT_RFDETR=<file>` now only names another model file.
+
+**NEXT (order agreed with Mike 2026-11-23):** (A5) one CI-like Mission 2 day with the
+Gazebo GUI for Mike to watch; (B) something to do after an obstacle hold, starting
+with the existing-solution check: root-cause Nav2's `BackUp`/`Spin` failure on the
+real robot ("Pose Goes Off Grid"), then back away and re-plan in the simulator on the
+box bench, then the door frame and the dresser on the floor; (C) reaction distances
+with the fresher detections, the remaining 0.9 s delay, M2/M3 (`docs/goals-and-events.md`),
+CI's simulator stage under load. Class names stay the model's own labels ("sports
+ball"); our own `yellow_ball`/`red_ball` keep the underscore.
 
 **2026-11-22 session (the camera, the Jetson's GPU, three floor runs in the evening).** Detail:
 `docs/detection-history.md` (results, decisions, next steps), `docs/sessions/2026-11-22.md`.
@@ -100,19 +129,13 @@ stay the model's own labels ("sports ball": the ROS convention); our own
   around" is missing). CI's simulator stage failed twice beside wayfarer's CI and passed
   idle. Wayfarer wrote its own RF-DETR node; the two need merging
   (`docs/sessions/2026-11-22.md` section 11).
-- **RF-DETR is the robot's detector (Mike, evening): `ROBOT_BOOT_RFDETR=1`.** It
-  publishes `/robot_001/detections`; the container's hand-written detector is switched
-  off (`BALL_DETECTOR=false`, launch argument `ball_detector`). Yellow from red is read
+- **RF-DETR became the robot's detector (Mike, evening).** Yellow from red is read
   from the color INSIDE the network's box (`ball_color`), published as `yellow_ball` /
-  `red_ball`, so the mission script is unchanged. The simulator and CI still use the
-  hand-written detector (now with a queue of 1): bringing them onto RF-DETR is next.
-- **Detector node built and run on the floor in shadow mode:** `object_detector`
-  (`rfdetr_detect.py`, `rfdetr_backends.py`), shadow mode on
-  `/robot_001/detections_shadow`; `ROBOT_BOOT_SHADOW_DETECTOR=1` starts it from
-  `robot_boot.sh`. Matches the reference implementation; 10 pictures a second live on
-  the Jetson (camera-limited), pictures about 0.35 s old at publish. Model files:
-  `~/fleet-ci-data/models/` on the Jetson. `tests/test_object_detector.py` needs ROS and
-  runs in no CI stage. Untested: rope/rubber toys, with Nav2 running, a moving robot.
+  `red_ball`. Node `object_detector` (`rfdetr_detect.py`, `rfdetr_backends.py`); 10
+  pictures a second live on the Jetson (camera-limited), pictures about 0.35 s old at
+  publish. Model files: `~/fleet-ci-data/models/` on the Jetson.
+  `tests/test_object_detector.py` needs ROS and runs in no CI stage. Untested:
+  rope/rubber toys, a moving robot.
 - **Ollama today:** CI only (`tools/vlm_canary.py`, log-only); never in a real mission.
 - **Wayfarer (Mike):** wayfarer builds brain releases (a release may carry a "limited
   on this Jetson because..." caveat); this robot receives them. Both projects are about
@@ -140,11 +163,10 @@ wheels in 0.33 s. Repeat after any firmware update or change to how motion is se
   no re-plan, no start-pose check.
 - **Ball detection:** the floor rule (`floor:` section in a camera profile) fixed
   daylight; red reacted on the robot, yellow missed by one frame (two inside 0.8 m,
-  three needed). Limits are written in `hsv_realcam.yaml`.
+  three needed). (That detector and `hsv_realcam.yaml` were removed 2026-11-23.)
 - **WiFi address change killed a mission.** After unplugging the Ethernet, wait for the
   address to settle (`hostname -I` twice, a minute apart) before starting a run.
-- `ROBOT_BOOT_DETECTOR=<folder>` mounts a trial detector for one run. Mast camera
-  recorder: `~/robot_boot_debug/mast_record.py` on the Jetson (`docs/cameras.md` 9-15).
+- Mast camera recorder: `~/robot_boot_debug/mast_record.py` on the Jetson (`docs/cameras.md` 9-15).
 
 **Mike's direction (2026-11-20):** the practical target is "rove around the whole house
 and give me an inventory of where all the dog toys are"; ball-detection polish is
@@ -215,7 +237,7 @@ per-session detail is in `docs/sessions/`):**
 
 **Where things stand:** the real robot (Waveshare UGV + Jetson Orin Nano) is mid
 bring-up. Sim + HIL CI is green. The production path (`scripts/robot_boot.sh`: driver
-layer bare-metal + Nav2/EKF/ball_detector/mission_runner in the arm64 container)
+layer and RF-DETR detector bare-metal + Nav2/EKF/mission_runner in the arm64 container)
 boots, localizes on its own map, completes the nav-only mission with a home error of a
 few centimeters, holds for an obstacle, and has a proven stop when the Jetson dies. It
 has no go-around or stuck recovery, and only observes wheel slip.
@@ -297,12 +319,12 @@ scripts/robot_boot.sh                # real production mission path
 ```
 
 ## Architecture (durable facts)
-- **One container, two consumers.** Nav2/EKF/`ball_detector`/`mission_runner` run in
+- **One container, two consumers.** Nav2/EKF/`mission_runner` run in
   the arm64 image via `scripts/container_entrypoint.sh`, identically on HIL and the
-  real robot, differing only by env vars (`use_sim_time`/`hsv_config`/`map`/
+  real robot, differing only by env vars (`use_sim_time`/`map`/
   self-report vs judged). Driver layer (`drivers_only_launch.py`: esp32_driver,
-  lidar, camera, scan_masker, camera_relay, robot_state_publisher) and Ollama run
-  bare-metal on the Jetson. HIL judging/ball placement (`tools/mission2_harness.py`,
+  lidar, camera, scan_masker, camera_relay, robot_state_publisher), the detector
+  (`object_detector`, needs the GPU) and Ollama run bare-metal on the Jetson. HIL judging/ball placement (`tools/mission2_harness.py`,
   Gazebo transport) stays workstation-side; the real robot self-reports PASS/FAIL.
 - **HIL always runs `use_sim_time=true`** — it is structurally blind to the
   real-driver code path (frames, RSP, IMU scaling, sign conventions). Only a real

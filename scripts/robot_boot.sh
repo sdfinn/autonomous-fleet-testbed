@@ -6,10 +6,10 @@
 # Part A). Two things run, in order: the real-hardware driver layer BARE-METAL
 # (drivers_only_launch.py — esp32_driver/lidar/camera/scan_masker/camera_relay), then
 # the SAME container image and entrypoint HIL uses (scripts/container_entrypoint.sh,
-# ROBOT_MODE=mission — Nav2/EKF/ball_detector/mission_runner, skip_nav2 defaults to
+# ROBOT_MODE=mission — Nav2/EKF/mission_runner, skip_nav2 defaults to
 # false so Nav2 runs exactly as before) — only the launch-argument VALUES differ from
-# HIL (real-robot context: use_sim_time=false, the real-camera HSV profile, the real
-# room's map).
+# HIL (real-robot context: use_sim_time=false, the real room's map). The detector
+# (RF-DETR) runs beside the drivers, outside the container: it needs the GPU.
 #
 # Fixed 2026-08-10 (see docs/superpowers/plans/2026-08-10-drivers-bare-metal-boot-fix.md
 # for the full story): this script used to start ONLY the container. Nothing ever
@@ -95,7 +95,7 @@ DRIVERS_PID=""
 MISSION_PID=""
 WATCH_PID=""
 WATCH_WAITER_PID=""
-SHADOW_PID=""
+DETECTOR_PID=""
 
 # SIGINT a background job, give it 15 s to exit by itself, then SIGKILL it.
 stop_job() {
@@ -139,10 +139,10 @@ cleanup() {
   if [ -n "$WATCH_PID" ]; then kill -INT -- "-$WATCH_PID" 2>/dev/null || true; fi
   stop_job "the operator watch" "$WATCH_PID"
   stop_job "the bag recorder" "$BAG_PID"
-  # After the bag, so the recording holds the shadow detections to the very end. Its own
+  # After the bag, so the recording holds the detections to the very end. Its own
   # process group, like the watch (`ros2 run` does not pass a signal on).
-  if [ -n "$SHADOW_PID" ]; then kill -INT -- "-$SHADOW_PID" 2>/dev/null || true; fi
-  stop_job "the RF-DETR detector" "$SHADOW_PID"
+  if [ -n "$DETECTOR_PID" ]; then kill -INT -- "-$DETECTOR_PID" 2>/dev/null || true; fi
+  stop_job "the RF-DETR detector" "$DETECTOR_PID"
   stop_job "the bare-metal driver layer" "$DRIVERS_PID"
 }
 trap cleanup EXIT
@@ -362,58 +362,47 @@ case "$imu_line" in
     exit 1 ;;
 esac
 
-# --- RF-DETR detector (2026-11-22), optional ---
+# --- The detector: RF-DETR (2026-11-22; the only detector since 2026-11-23) ---
 # The RF-DETR node (nav_fleet/object_detector.py) runs here on the Jetson's GPU, outside
-# the container. Two ways to use it, never both:
-#   ROBOT_BOOT_RFDETR=1            it IS the detector: it publishes /robot_001/detections
-#                                  and the container does not start the hand-written one
-#                                  (BALL_DETECTOR=false). The mission reacts to RF-DETR.
-#   ROBOT_BOOT_SHADOW_DETECTOR=1   it only watches: it publishes
-#                                  /robot_001/detections_shadow, which nothing acts on,
-#                                  beside the hand-written detector. For comparing the two
-#                                  from the bag (tools/shadow_compare.py).
-# Either may be a path to a .engine/.onnx file instead of 1.
-# Asked for and not ready within 60 s is fatal, BEFORE anything moves.
-RFDETR_ARGS=()
-RFDETR_MODEL="${ROBOT_BOOT_RFDETR:-${ROBOT_BOOT_SHADOW_DETECTOR:-}}"
-if [ -n "${ROBOT_BOOT_RFDETR:-}" ] && [ -n "${ROBOT_BOOT_SHADOW_DETECTOR:-}" ]; then
-  echo "FATAL: set ROBOT_BOOT_RFDETR or ROBOT_BOOT_SHADOW_DETECTOR, not both" >&2
-  exit 1
-fi
-if [ -n "$RFDETR_MODEL" ]; then
-  if [ "$RFDETR_MODEL" = "1" ]; then RFDETR_MODEL="$HOME/fleet-ci-data/models/rfdetr-small.engine"; fi
-  if [ ! -f "$RFDETR_MODEL" ]; then
-    echo "FATAL: RF-DETR model ${RFDETR_MODEL} is not a file (build it on this Jetson: trtexec --onnx=rfdetr-small.onnx --saveEngine=rfdetr-small.engine --fp16)" >&2
+# the container, and publishes /robot_001/detections, the topic the mission reacts to.
+# The container starts no detector of its own. The hand-written color detector that
+# used to run there was removed on 2026-11-23 (its story: docs/detection-history.md).
+#   ROBOT_BOOT_RFDETR=<file>   another .engine/.onnx file for this run (default: the
+#                              engine built on this Jetson, below). 1 = the default.
+# Not ready within 60 s is fatal, BEFORE anything moves: a mission that reacts to balls
+# must not start blind.
+for gone in ROBOT_BOOT_SHADOW_DETECTOR ROBOT_BOOT_DETECTOR; do
+  if [ -n "${!gone:-}" ]; then
+    echo "FATAL: ${gone} was removed on 2026-11-23 with the hand-written detector; RF-DETR is the only detector (ROBOT_BOOT_RFDETR=<file> picks another model file)" >&2
     exit 1
   fi
-  if [ -n "${ROBOT_BOOT_RFDETR:-}" ]; then
-    RFDETR_TOPIC=/robot_001/detections
-    RFDETR_ARGS=(-e BALL_DETECTOR=false)
-    echo "=== [robot-boot] detector: RF-DETR on this Jetson; the hand-written detector in the container is OFF ==="
-  else
-    RFDETR_TOPIC=/robot_001/detections_shadow
-    echo "=== [robot-boot] detector: hand-written (in the container); RF-DETR in shadow mode ==="
-  fi
-  SHADOW_LOG="$LOG_DIR/rfdetr_detector_${TS}.log"
-  rm -f "$SHADOW_LOG"
-  set -m
-  ros2 run nav_fleet object_detector --ros-args -p model_path:="$RFDETR_MODEL" \
-    -p output_topic:="$RFDETR_TOPIC" \
-    > "$SHADOW_LOG" 2>&1 < /dev/null &
-  SHADOW_PID=$!
-  set +m
-  shadow_waited=0
-  until grep -q 'detector ready' "$SHADOW_LOG" 2>/dev/null; do
-    if ! kill -0 "$SHADOW_PID" 2>/dev/null || [ "$shadow_waited" -ge 60 ]; then
-      echo "FATAL: the RF-DETR detector did not become ready -- see $SHADOW_LOG" >&2
-      tail -n 15 "$SHADOW_LOG" >&2 || true
-      exit 1
-    fi
-    sleep 1
-    shadow_waited=$((shadow_waited + 1))
-  done
-  echo "=== [robot-boot] RF-DETR detector ready after ${shadow_waited}s ($(grep -o 'detector ready.*first picture [0-9]* ms' "$SHADOW_LOG" | tail -n 1)); log: $SHADOW_LOG ==="
+done
+RFDETR_MODEL="${ROBOT_BOOT_RFDETR:-1}"
+if [ "$RFDETR_MODEL" = "1" ]; then RFDETR_MODEL="$HOME/fleet-ci-data/models/rfdetr-small.engine"; fi
+if [ ! -f "$RFDETR_MODEL" ]; then
+  echo "FATAL: RF-DETR model ${RFDETR_MODEL} is not a file (build it on this Jetson: trtexec --onnx=rfdetr-small.onnx --saveEngine=rfdetr-small.engine --fp16)" >&2
+  exit 1
 fi
+echo "=== [robot-boot] detector: RF-DETR on this Jetson (${RFDETR_MODEL}) ==="
+DETECTOR_LOG="$LOG_DIR/rfdetr_detector_${TS}.log"
+rm -f "$DETECTOR_LOG"
+set -m
+ros2 run nav_fleet object_detector --ros-args -p model_path:="$RFDETR_MODEL" \
+  -p output_topic:=/robot_001/detections \
+  > "$DETECTOR_LOG" 2>&1 < /dev/null &
+DETECTOR_PID=$!
+set +m
+detector_waited=0
+until grep -q 'detector ready' "$DETECTOR_LOG" 2>/dev/null; do
+  if ! kill -0 "$DETECTOR_PID" 2>/dev/null || [ "$detector_waited" -ge 60 ]; then
+    echo "FATAL: the RF-DETR detector did not become ready -- see $DETECTOR_LOG" >&2
+    tail -n 15 "$DETECTOR_LOG" >&2 || true
+    exit 1
+  fi
+  sleep 1
+  detector_waited=$((detector_waited + 1))
+done
+echo "=== [robot-boot] RF-DETR detector ready after ${detector_waited}s ($(grep -o 'detector ready.*first picture [0-9]* ms' "$DETECTOR_LOG" | tail -n 1)); log: $DETECTOR_LOG ==="
 
 # --- Operator pre-flight and watch (2026-11-19) ---
 # A link that is already bad is no link to start a floor run on: check before anything
@@ -446,7 +435,7 @@ if [ -n "$OPERATOR_IP" ]; then
   WATCH_WAITER_PID=$!
 fi
 
-# --- Nav2/EKF/ball_detector/mission_runner, containerized (unchanged) ---
+# --- Nav2/EKF/mission_runner, containerized ---
 echo "=== [robot-boot] running ${IMAGE} (real-robot context, operator ball placement) ==="
 # RUNNER_TYPE=real_robot matches the convention every other real-robot telemetry row
 # in this project already uses. MISSION2_SELF_REPORT=1: no ground-truth judging (no
@@ -455,10 +444,7 @@ echo "=== [robot-boot] running ${IMAGE} (real-robot context, operator ball place
 # ROBOT_MODE=mission is hardcoded here, never a variable — standalone power-on can
 # never run a smoke test (design spec). skip_nav2 is NOT set here — its default
 # (false) means Nav2 runs exactly as it always has.
-# HSV_CONFIG_FILE: hsv_realcam.yaml, measured on this robot's front camera 2026-11-19
-# (RealRobotStartup.md A4; the file says under which light and what is still unchecked).
-# Until then this was hsv_gazebo.yaml, the simulator's profile, which took the wood
-# floor for a yellow ball 4 cm away. (The map is chosen just below.)
+# (The map is chosen just below.)
 #
 # Map selection (A3 done 2026-11-18). The robot's own map lives OUTSIDE git, in
 # ~/fleet-ci-data/maps/bedroom_real.{yaml,pgm}: it is a floor plan of a real home and
@@ -493,35 +479,6 @@ if [ -n "${ROBOT_BOOT_NAV2_PARAMS:-}" ]; then
   PARAMS_ARGS=(-v "$ROBOT_BOOT_NAV2_PARAMS:/ros2_ws/install/nav_fleet/share/nav_fleet/config/nav2_params.yaml:ro"
                -v "$ROBOT_BOOT_NAV2_PARAMS:/ros2_ws/src/nav_fleet/config/nav2_params.yaml:ro")
 fi
-# Trying a ball-detector change on the robot without a new image (2026-11-20), same
-# idea as ROBOT_BOOT_NAV2_PARAMS above. ROBOT_BOOT_DETECTOR=<folder on the Jetson> must
-# hold BOTH hsv_detect.py and hsv_realcam.yaml (code and profile change together: a
-# profile with a section the image's code does not know is refused at load). Each is
-# mounted over both of the image's copies for this run only. What works still has to
-# be committed.
-DETECTOR_ARGS=()
-if [ -n "${ROBOT_BOOT_DETECTOR:-}" ]; then
-  for f in hsv_detect.py hsv_realcam.yaml; do
-    if [ ! -f "$ROBOT_BOOT_DETECTOR/$f" ]; then
-      echo "FATAL: ROBOT_BOOT_DETECTOR=${ROBOT_BOOT_DETECTOR} has no $f" >&2
-      exit 1
-    fi
-  done
-  echo "=== [robot-boot] WARNING: ball detector code and colour profile come from ${ROBOT_BOOT_DETECTOR}, NOT from the image ===" >&2
-  DETECTOR_ARGS=(
-    -v "$ROBOT_BOOT_DETECTOR/hsv_detect.py:/ros2_ws/install/nav_fleet/lib/python3.12/site-packages/nav_fleet/hsv_detect.py:ro"
-    -v "$ROBOT_BOOT_DETECTOR/hsv_detect.py:/ros2_ws/src/nav_fleet/nav_fleet/hsv_detect.py:ro"
-    -v "$ROBOT_BOOT_DETECTOR/hsv_realcam.yaml:/ros2_ws/install/nav_fleet/share/nav_fleet/config/hsv_realcam.yaml:ro"
-    -v "$ROBOT_BOOT_DETECTOR/hsv_realcam.yaml:/ros2_ws/src/nav_fleet/config/hsv_realcam.yaml:ro")
-  # The node around the detector too, when the folder has it (2026-11-22: trying a
-  # change to how ball_detector.py reads its pictures).
-  if [ -f "$ROBOT_BOOT_DETECTOR/ball_detector.py" ]; then
-    echo "=== [robot-boot] WARNING: ball_detector.py also comes from ${ROBOT_BOOT_DETECTOR} ===" >&2
-    DETECTOR_ARGS+=(
-      -v "$ROBOT_BOOT_DETECTOR/ball_detector.py:/ros2_ws/install/nav_fleet/lib/python3.12/site-packages/nav_fleet/ball_detector.py:ro"
-      -v "$ROBOT_BOOT_DETECTOR/ball_detector.py:/ros2_ws/src/nav_fleet/nav_fleet/ball_detector.py:ro")
-  fi
-fi
 docker rm -f robot_mission 2>/dev/null || true
 mkdir -p "$REPO/reports"
 # Navigation-only diagnostic runs (2026-11-16): the container only sees env vars
@@ -540,11 +497,8 @@ set -m
   -v "$REPO/reports:/ros2_ws/reports" \
   -v "$HOME/fleet-ci-data:/root/fleet-ci-data" \
   -e USE_SIM_TIME=false \
-  -e HSV_CONFIG_FILE=hsv_realcam.yaml \
   "${MAP_ARGS[@]}" \
   ${PARAMS_ARGS[@]+"${PARAMS_ARGS[@]}"} \
-  ${DETECTOR_ARGS[@]+"${DETECTOR_ARGS[@]}"} \
-  ${RFDETR_ARGS[@]+"${RFDETR_ARGS[@]}"} \
   -e MISSION2_SELF_REPORT=1 \
   -e RUNNER_TYPE=real_robot \
   -e ROBOT_MODE=mission \

@@ -1,7 +1,7 @@
 # src/nav_fleet/launch/sensors_only_launch.py
 # Copyright 2026 Mike
 # SPDX-License-Identifier: Apache-2.0
-"""Driver layer + EKF + ball_detector, for bare-metal bring-up/debugging use
+"""Driver layer + EKF (+ the RF-DETR detector on request), for bare-metal bring-up/debugging use
 (RealRobotStartup.md A2's own live driver checks) — deliberately WITHOUT Nav2/
 AMCL/map_server. No map required, so this runs even before bedroom_real.yaml
 exists.
@@ -18,7 +18,7 @@ smoke test itself (hil_stage.sh smoke) does NOT use this file any more as of
 the same day's later revision — it launches drivers_only_launch.py bare-metal
 AND nav2_only_launch.py (skip_nav2:=true) in the container separately, to
 actually exercise the container boundary. This file remains for convenient
-bare-metal-only driver+EKF+ball_detector bring-up/debugging (A2's own live
+bare-metal-only driver+EKF bring-up/debugging (A2's own live
 checks already use it this way). See
 docs/superpowers/plans/2026-08-10-drivers-bare-metal-boot-fix.md.
 
@@ -32,7 +32,7 @@ import pathlib
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
-from launch.conditions import UnlessCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -47,10 +47,22 @@ def generate_launch_description():
                     'scan/camera directly — the real driver layer is skipped '
                     'entirely); false for the real robot bench.',
     )
-    hsv_config_arg = DeclareLaunchArgument(
-        'hsv_config', default_value=str(PKG / 'config' / 'hsv_gazebo.yaml'),
-        description='ball_detector HSV thresholds — hsv_gazebo.yaml for sim, '
-                    'hsv_realcam.yaml for the real robot bench',
+    # The detector (RF-DETR). false inside the container on the Jetson, where the node
+    # runs outside it on the GPU (hil_stage.sh); true on the workstation.
+    object_detector_arg = DeclareLaunchArgument(
+        'object_detector', default_value='false',
+        description='true = start the RF-DETR node (object_detector) here, publishing '
+                    '/robot_001/detections',
+    )
+    detector_model_arg = DeclareLaunchArgument(
+        'detector_model',
+        default_value=str(pathlib.Path.home() / 'fleet-ci-data' / 'models' / 'rfdetr-small.onnx'),
+        description='RF-DETR network file for object_detector',
+    )
+    detector_config_arg = DeclareLaunchArgument(
+        'detector_config', default_value=str(PKG / 'config' / 'detector_rfdetr_gazebo.yaml'),
+        description='object_detector settings: detector_rfdetr_gazebo.yaml for the '
+                    'simulated camera, detector_rfdetr.yaml for the real one',
     )
     serial_device_arg = DeclareLaunchArgument('serial_device', default_value='/dev/ttyUSB0')
     serial_baud_arg = DeclareLaunchArgument('serial_baud', default_value='115200')
@@ -86,17 +98,21 @@ def generate_launch_description():
             ('odometry/filtered', '/robot_001/odometry/filtered'),
         ],
     )
-    ball_detector = Node(
+    object_detector = Node(
         package='nav_fleet',
-        executable='ball_detector',
-        name='ball_detector',
+        executable='object_detector',
+        name='object_detector',
         output='screen',
         parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time'),
-                     'hsv_config': LaunchConfiguration('hsv_config')}],
+                     'model_path': LaunchConfiguration('detector_model'),
+                     'config': LaunchConfiguration('detector_config'),
+                     'output_topic': '/robot_001/detections'}],
+        condition=IfCondition(LaunchConfiguration('object_detector')),
     )
 
     return LaunchDescription([
-        use_sim_time_arg, hsv_config_arg, serial_device_arg, serial_baud_arg,
+        use_sim_time_arg, object_detector_arg, detector_model_arg, detector_config_arg,
+        serial_device_arg, serial_baud_arg,
         lidar_launch_file_arg, camera_launch_file_arg,
-        real_hardware_drivers, ekf_node, ball_detector,
+        real_hardware_drivers, ekf_node, object_detector,
     ])

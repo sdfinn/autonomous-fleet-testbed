@@ -271,7 +271,6 @@ def test_run_day_dispatches_the_container_entrypoint(monkeypatch, tmp_path):
     assert '--network host --ipc host' in ssh_cmd[-1]
     assert 'bash /ros2_ws/scripts/container_entrypoint.sh' in ssh_cmd[-1]
     assert '-e USE_SIM_TIME=true' in ssh_cmd[-1]
-    assert '-e HSV_CONFIG_FILE=hsv_gazebo.yaml' in ssh_cmd[-1]
     assert '-e NAV2_MAP_FILE=living_room.yaml' in ssh_cmd[-1]
     # container_entrypoint.sh's ROBOT_MODE is now required (2026-08-06 smoke-test
     # plan, Task 8) — without this, every HIL mission run dies immediately with
@@ -1069,15 +1068,12 @@ def test_run_day_calls_maybe_spawn_vlm_canary_once_per_leg(monkeypatch):
     assert calls == ['no_ball', 'yellow', 'red']
 
 
-# ── Which detector the Jetson stage and the local launch run (2026-11-23) ────────────────────
-@pytest.mark.parametrize('hil_detector, expected', [('rfdetr', 'false'), ('hsv', 'true')])
-def test_run_day_tells_the_container_whether_to_start_the_hand_written_detector(
-        monkeypatch, tmp_path, hil_detector, expected):
-    """With RF-DETR running on the Jetson outside the container, the container must not
-    start the hand-written detector: two detectors on /robot_001/detections double the
-    picture count the mission's reaction rule relies on."""
+
+# ── One detector everywhere (2026-11-23) ────────────────────────────────────────────────────
+def test_run_day_gives_the_container_no_detector_settings(monkeypatch, tmp_path):
+    """The RF-DETR node runs on the Jetson outside the container (hil_stage.sh run). The
+    hand-written detector and its color profiles are gone."""
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module, 'HIL_DETECTOR', hil_detector)
     calls = []
 
     def fake_run(cmd, **kwargs):
@@ -1091,27 +1087,10 @@ def test_run_day_tells_the_container_whether_to_start_the_hand_written_detector(
     JetsonExecutor('10.42.0.217', str(tmp_path)).run_day()
 
     ssh_cmd = next(c for c in calls if 'ssh' in c and 'timeout' in c)
-    assert f'-e BALL_DETECTOR={expected} ' in ssh_cmd[-1]
+    assert 'HSV_CONFIG_FILE' not in ssh_cmd[-1] and 'BALL_DETECTOR' not in ssh_cmd[-1]
 
 
-def test_launch_stack_passes_the_detector_choice_to_the_launch_file(monkeypatch, tmp_path):
-    seen = {}
-
-    class _Proc:
-        returncode = 0
-
-        def poll(self):
-            return None
-
-    def fake_popen(cmd, **kwargs):
-        seen['cmd'] = cmd
-        return _Proc()
-
-    log_path = tmp_path / 'stack.log'
-    monkeypatch.setattr(mission2_day_module, 'sweep_orphans', lambda: None)
-    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
-    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', fake_popen)
-    monkeypatch.setattr(mission2_day_module, 'STACK_READY_TIMEOUT_S', 0.0)
-    with pytest.raises(RuntimeError, match='not ready'):   # times out at once
-        mission2_day_module.launch_stack(str(log_path), detector='rfdetr')
-    assert seen['cmd'][-1] == 'detector:=rfdetr'
+def test_every_sweep_covers_the_detector_node():
+    """A leftover detector publishes on /robot_001/detections beside the next run's own."""
+    assert any('object_detector' in pat for pat in mission2_day_module._SWEEP_PATTERNS)
+    assert 'object_detector' in mission2_day_module._LEFTOVER_PATTERN
