@@ -54,9 +54,18 @@ BOX_AHEAD_FUNNEL_M = 2.20
 # gap and the robot is held at it again and again (6 tries, each after 10 s without
 # progress plus the recovery itself).
 NO_WAY_TIMEOUT_S = 240.0
-# Furthest any corner of the robot's footprint is from its centre, and of the box's.
+# Furthest any corner of the robot's footprint is from its centre: no part of the robot
+# is farther out than this, whatever its heading.
 ROBOT_REACH_M = math.hypot(ROBOT_LENGTH_M, ROBOT_WIDTH_M) / 2.0
-BOX_REACH_M = math.hypot(sim_box.BOX_SIZE_M[0], sim_box.BOX_SIZE_M[1]) / 2.0
+
+
+def _gap_to_box(xy, box_xy):
+    """Distance from a point to the nearest face or corner of the box (spawned square to
+    the world's axes; 0 inside it). Centre-to-centre distance is too coarse: it treats
+    the box as a circle through its corners, 6 cm farther out than its faces."""
+    half_x, half_y = sim_box.BOX_SIZE_M[0] / 2.0, sim_box.BOX_SIZE_M[1] / 2.0
+    return math.hypot(max(abs(xy[0] - box_xy[0]) - half_x, 0.0),
+                      max(abs(xy[1] - box_xy[1]) - half_y, 0.0))
 
 
 @pytest.fixture(scope='module', autouse=True)
@@ -169,7 +178,7 @@ def _drive_with_a_box_left_on_the_path(nav, box_ahead_m, timeout_s):
             seen['last_look'] = now
             truth = get_ground_truth_xy()
             if truth is not None:
-                gap = math.dist(truth, seen['box'])
+                gap = _gap_to_box(truth, seen['box'])
                 if seen['closest_m'] is None or gap < seen['closest_m']:
                     seen['closest_m'], seen['closest_xy'] = gap, truth
         return None
@@ -188,11 +197,13 @@ def _drive_with_a_box_left_on_the_path(nav, box_ahead_m, timeout_s):
 
 
 def _assert_never_touched(seen):
-    """The footprints cannot overlap at this centre distance, whatever their headings."""
-    assert seen['closest_m'] > ROBOT_REACH_M + BOX_REACH_M, (
-        f"robot centre came within {seen['closest_m']:.2f} m of the box centre at "
-        f"{seen['closest_xy']} (box {seen['box']}); below "
-        f'{ROBOT_REACH_M + BOX_REACH_M:.2f} m the two footprints can touch')
+    """No part of the robot is farther than ROBOT_REACH_M from its centre, so while the
+    centre stays farther than that from the box's nearest face they cannot touch,
+    whatever the robot's heading."""
+    assert seen['closest_m'] > ROBOT_REACH_M, (
+        f"robot centre came within {seen['closest_m']:.3f} m of the box's nearest face at "
+        f"{seen['closest_xy']} (box centre {seen['box']}); a corner of the robot reaches "
+        f'{ROBOT_REACH_M:.3f} m')
 
 
 def test_the_robot_drives_around_a_box_in_open_floor(nav):
@@ -204,11 +215,12 @@ def test_the_robot_drives_around_a_box_in_open_floor(nav):
     assert reached is True, (
         'the robot did not get around the box: really at '
         f'{get_ground_truth_xy()}, believes it is at {nav._pose_xy()}, goal {goal}, box at '
-        f"{seen['box']}, closest {seen['closest_m']:.2f} m; holds {watch.hold_changes}; "
+        f"{seen['box']}, closest {seen['closest_m']:.2f} m to its face; "
+        f'holds {watch.hold_changes}; '
         f'last seen -- {watch.describe()}')
     # It did have to go around: the box was really on the route.
-    assert seen['closest_m'] < 1.0, (
-        f"the robot never came within 1 m of the box at {seen['box']}: it was not on "
+    assert seen['closest_m'] < 0.85, (
+        f"the robot never came within 0.85 m of the box at {seen['box']}: it was not on "
         'the route, so nothing was tested')
 
 

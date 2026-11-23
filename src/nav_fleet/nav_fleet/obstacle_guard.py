@@ -26,7 +26,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool
 
 from nav_fleet.operator_link import write_beep_wav
-from nav_fleet.path_guard import BLOCKED, CLEARED, PathGuard, scan_points
+from nav_fleet.path_guard import BLOCKED, CLEARED, TURN, PathGuard, scan_points
 
 # A command older than this is not a command any more (Nav2 sends at 20 Hz).
 CMD_FRESH_S = 0.3
@@ -41,6 +41,7 @@ class ObstacleGuard(Node):
         self.declare_parameter('side_margin_m', 0.02)
         self.declare_parameter('min_points', 3)
         self.declare_parameter('clear_after_s', 1.0)
+        self.declare_parameter('turn_margin_m', 0.03)
         self.declare_parameter('beep', True)
         self.declare_parameter('beep_device', 'plughw:CARD=Device,DEV=0')
 
@@ -48,8 +49,10 @@ class ObstacleGuard(Node):
             stop_distance_m=self.get_parameter('stop_distance_m').value,
             side_margin_m=self.get_parameter('side_margin_m').value,
             min_points=self.get_parameter('min_points').value,
-            clear_after_s=self.get_parameter('clear_after_s').value)
+            clear_after_s=self.get_parameter('clear_after_s').value,
+            turn_margin_m=self.get_parameter('turn_margin_m').value)
         self._cmd_x = 0.0
+        self._cmd_turn = 0.0
         self._cmd_time = 0.0
         self._beep_file = None
         self._beep_failed = False
@@ -64,28 +67,35 @@ class ObstacleGuard(Node):
         self.get_logger().info(
             f'obstacle_guard up — holds for anything within '
             f'{self._guard.stop_distance_m:.2f} m of the bumper, '
-            f'{2 * self._guard.half_width_m:.3f} m wide; beeps '
+            f'{2 * self._guard.half_width_m:.3f} m wide, and holds a turn on the spot '
+            f'for anything within {self._guard.turn_reach_m:.2f} m of its center; beeps '
             f'{"on" if self._beep_file else "off"}')
 
     def _cmd_cb(self, msg):
         self._cmd_x = msg.linear.x
+        self._cmd_turn = msg.angular.z
         self._cmd_time = time.monotonic()
 
     def _scan_cb(self, msg):
         now = time.monotonic()
-        linear_x = self._cmd_x if now - self._cmd_time < CMD_FRESH_S else 0.0
+        fresh = now - self._cmd_time < CMD_FRESH_S
+        linear_x = self._cmd_x if fresh else 0.0
+        turn = self._cmd_turn if fresh else 0.0
         points = scan_points(msg.ranges, msg.angle_min, msg.angle_increment,
                              msg.range_min, msg.range_max)
-        events = self._guard.update(points, linear_x, now)
+        events = self._guard.update(points, linear_x, now, angular_z=turn)
         # Published on EVERY scan, not only on change: the driver reads silence as
         # "the guard or the lidar is gone".
         self._pub.publish(Bool(data=self._guard.blocked))
         for event in events:
             if event == BLOCKED:
-                way = 'ahead' if linear_x > 0 else 'behind'
-                self.get_logger().warn(
-                    f'obstacle_guard: something {self._guard.nearest_m:.2f} m {way} of the '
-                    f'bumper — robot HELD')
+                if self._guard.zone == TURN:
+                    what = (f'something {self._guard.nearest_m:+.2f} m from the circle '
+                            f'its corners sweep in a turn')
+                else:
+                    what = (f'something {self._guard.nearest_m:.2f} m {self._guard.zone} '
+                            f'of the bumper')
+                self.get_logger().warn(f'obstacle_guard: {what} — robot HELD')
                 self._beep()
             elif event == CLEARED:
                 self.get_logger().info('obstacle_guard: path clear — robot RELEASED')
