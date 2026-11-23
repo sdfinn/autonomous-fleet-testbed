@@ -1,28 +1,33 @@
 <!--
-  Based on nav2_bt_navigator's default navigate_to_pose_w_replanning_and_recovery.xml.
+  Nav2's behavior tree for one "navigate to pose" goal, with re-planning and
+  recoveries. Based on nav2_bt_navigator's default
+  navigate_to_pose_w_replanning_and_recovery.xml; every node is a standard Nav2 node.
 
-  The default tree gates its recovery subtree behind WouldAPlannerRecoveryHelp /
-  WouldAControllerRecoveryHelp condition nodes, which decide — based on the numeric
-  error code — whether a recovery is worth attempting. Empirically, in this room,
-  a "Start occupied" failure (SmacPlanner2D and SmacPlannerHybrid both hit this at the
-  narrow doorway threshold, mid heading-correction) never triggers those conditions:
-  no ClearEntireCostmap call is ever logged, and the goal just fails outright with no
-  recovery attempt. Since clearing the costmap wouldn't fix a static-map wall anyway,
-  but Spin/Wait/BackUp plausibly could (the "occupied" condition is heading-dependent,
-  not a permanent obstruction), this tree drops the error-code gating entirely and
-  always runs the recovery round-robin on ANY pipeline failure, retried up to 6 times
-  by the outer RecoveryNode.
+  What it does:
+    * plans the path again every second, so an obstacle the lidar has put into the
+      global costmap is planned around (nav2_params.yaml, global_costmap);
+    * when the planner or the path follower fails (no path; no progress for
+      movement_time_allowance, which is what an obstacle-guard hold looks like to
+      Nav2), runs ONE recovery and tries again: back up 0.30 m, then wait 5 s, then
+      spin a quarter turn, in that order on successive failures;
+    * after 6 failed tries the goal fails.
 
-  ClearingActions (clear local+global costmap) was removed from the rotation: it can't
-  fix a static-map obstruction anyway, and it was actively breaking the other two
-  recovery actions — Spin/BackUp run in behavior_server, a separate node from
-  controller_server, so they collision-check against a *subscribed snapshot* of the
-  local costmap (nav2_costmap_2d::CostmapSubscriber), not the live costmap object.
-  Every time Spin or BackUp landed right after a ClearEntireCostmap call in the
-  rotation, that snapshot hadn't caught up yet, so the projected pose fell outside the
-  cached grid ("Pose Goes Off Grid"), which the collision checker conservatively
-  treated as unsafe and aborted instantly. Wait was the only action in the rotation
-  that ever completed, because it doesn't check the costmap at all.
+  Differences from Nav2's default tree, and why:
+    * No WouldAPlannerRecoveryHelp / WouldAControllerRecoveryHelp gates. In this room
+      they never let a recovery run for a "start occupied" failure at the doorway.
+    * No "clear costmaps" recovery. Clearing cannot move a real obstacle, and a box
+      that is cleared from the map is planned through again until the lidar re-marks it.
+    * BackUp is first. The usual reason to be here is something close in front of the
+      bumper; turning on the spot first would swing a corner toward it. Nav2's own
+      collision check refuses a Spin or BackUp into a marked obstacle ("Collision
+      Ahead - Exiting Spin"), and the obstacle guard checks behind while reversing.
+
+  History. This tree sat unused from the summer until 2026-11-23 because Spin and
+  BackUp "failed 100% of the time" with "Pose Goes Off Grid". That message means a
+  pose outside the behavior server's received copy of the local costmap; the local
+  costmap was in the wrong frame ("map") until 2026-08-12. Re-tested 2026-11-23 in the
+  simulator: both succeed, at the spawn pose, after a drive, and right after a costmap
+  clear (docs/sessions/2026-11-23.md, section 13). Not yet run on the real robot.
 -->
 <root BTCPP_format="4" main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
@@ -38,9 +43,9 @@
       <ReactiveFallback name="RecoveryFallback">
         <GoalUpdated/>
         <RoundRobin name="RecoveryActions">
-          <Spin spin_dist="1.57" error_code_id="{spin_error_code}"/>
-          <Wait wait_duration="5.0"/>
           <BackUp backup_dist="0.30" backup_speed="0.15" error_code_id="{backup_code_id}"/>
+          <Wait wait_duration="5.0"/>
+          <Spin spin_dist="1.57" error_code_id="{spin_error_code}"/>
         </RoundRobin>
       </ReactiveFallback>
     </RecoveryNode>

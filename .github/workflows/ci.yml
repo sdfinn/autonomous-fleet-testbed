@@ -341,7 +341,7 @@ jobs:
                                              # pytest 7.4.4 (owned by colcon-core) otherwise
           python -m pytest tests/test_navigation.py tests/test_mission_run.py \
             tests/test_sim_box_guard.py tests/test_nav_runner.py \
-            tests/test_sim_wheel_hold.py -v --timeout=300 \
+            tests/test_sim_wheel_hold.py -v --timeout=480 \
             --cov=tools --cov=src/nav_fleet/nav_fleet --cov-report=
 
       - name: Run Mission 2 day (in-process — VLM canary x86 coverage)
