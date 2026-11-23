@@ -104,13 +104,16 @@ bt_navigator:
     navigators: ["navigate_to_pose"]
     navigate_to_pose:
       plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
-    # Minimal one-shot tree (matches BC/isaac_project reference) — compute path once, follow
-    # once, no periodic replanning, no recovery dependency. The recovery-capable tree
-    # (navigate_to_pose_recovery.xml) is kept in the repo for when behavior_server's
-    # "Pose Goes Off Grid" bug is fixed (see Release1Todo.md Session 16+). Path is relative
-    # to repo root, matching this launch file's existing pathlib.Path(__file__).parent.parent
-    # convention (see CLAUDE.md).
-    default_nav_to_pose_bt_xml: "src/nav_fleet/behavior_trees/navigate_simple.xml"
+    # Nav2's behavior tree with re-planning and recoveries (2026-11-23, item B). The path
+    # is planned again every second, so an obstacle the lidar sees is planned around;
+    # when the planner or the path follower fails, the robot backs up, waits or spins and
+    # tries again, up to 6 times, then the goal fails. Until this date the one-shot tree
+    # (navigate_simple.xml, still in the repo) was used because the behavior server's
+    # Spin/BackUp "failed 100% of the time" with "Pose Goes Off Grid". Re-tested
+    # 2026-11-23 in the simulator: both succeed, at the spawn pose, after a 2.8 m drive
+    # and right after clearing the costmaps (docs/sessions/2026-11-23.md, section 13).
+    # NOT yet run on the real robot's floor. Path is relative to the repo root.
+    default_nav_to_pose_bt_xml: "src/nav_fleet/behavior_trees/navigate_to_pose_recovery.xml"
 
 controller_server:
   ros__parameters:
@@ -131,9 +134,18 @@ controller_server:
     progress_checker_plugins: ["progress_checker"]   # Jazzy: plural param name
     goal_checker_plugins: ["goal_checker"]
     progress_checker:
-      plugin: "nav2_controller::SimpleProgressChecker"
+      # Pose, not Simple (2026-11-23): "progress" is moving 0.1 m OR turning 0.3 rad.
+      # The simple checker counts distance only, so a long turn on the spot (half a
+      # turn at 0.5 rad/s is 6 s, longer on a floor that scrubs) would be judged "no
+      # progress" once the allowance below is short.
+      plugin: "nav2_controller::PoseProgressChecker"
       required_movement_radius: 0.1
-      movement_time_allowance: 60.0
+      required_movement_angle: 0.3
+      # 10 s, was 60 (2026-11-23). This is how long the robot may stand still (held by
+      # the obstacle guard, or stuck) before the path follower gives up and the
+      # behavior tree tries a recovery. With no recovery a long wait cost nothing; with
+      # one, 60 s of standing in front of a box is the stall of 2026-11-20 and -22.
+      movement_time_allowance: 10.0
     goal_checker:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
@@ -196,6 +208,36 @@ controller_server:
       # moment the robot is inside. NOT yet run on the real robot's floor.
       stateful: false
 
+behavior_server:
+  ros__parameters:
+    use_sim_time: true
+    # Written out 2026-11-23: until then this server ran on Nav2's defaults with no
+    # section here at all. The values ARE the defaults except the three rotation limits,
+    # which follow the path follower's (0.5 rad/s: a slower spin skids less).
+    # "Pose Goes Off Grid" has one cause: a pose outside this server's received copy of
+    # a costmap. local_frame must be the frame the local costmap is in (odom, set
+    # explicitly in local_costmap below; it was "map" by default until 2026-08-12).
+    local_costmap_topic: local_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_costmap_topic: global_costmap/costmap_raw
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "wait"]
+    spin:
+      plugin: "nav2_behaviors::Spin"
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_link
+    transform_tolerance: 0.1
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 0.5
+    min_rotational_vel: 0.2
+    rotational_acc_lim: 3.2
+
 planner_server:
   ros__parameters:
     use_sim_time: true
@@ -257,10 +299,10 @@ global_costmap:
       use_sim_time: true
       robot_radius: 0.24
       robot_base_frame: "base_footprint"
-      # obstacle_layer restored (removed in Session 11 to fix a "Start occupied" bug that was
-      # specific to periodic replanning accumulating live scan data mid-transit — the minimal
-      # BT has no periodic replanning, so that failure mode no longer applies, and this now
-      # matches the reference project exactly.
+      # obstacle_layer: removed in Session 11 for a "Start occupied" failure with periodic
+      # re-planning in the Isaac setup, later restored, but inert until 2026-11-23 (see
+      # max_obstacle_height below). Re-planning is on again since that date; first drives
+      # through the 0.71 m doorway with both on: no planner failure in the simulator.
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
@@ -270,6 +312,15 @@ global_costmap:
         observation_sources: scan
         scan:
           topic: /robot_001/scan
+          data_type: "LaserScan"
+          # Without this line the layer marks NOTHING (found 2026-11-23): Nav2's default
+          # for a source's max_obstacle_height is 0.0, which throws away every lidar
+          # point above the floor. The local costmap below has always set it; this one
+          # did not, so the planner only ever knew the saved map, and every re-planned
+          # path went through the center of a box the lidar could plainly see.
+          max_obstacle_height: 2.0
+          marking: true
+          clearing: true
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         inflation_radius: 0.30

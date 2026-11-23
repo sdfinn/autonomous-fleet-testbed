@@ -31,3 +31,50 @@ def test_the_follower_and_the_goal_checker_agree_on_the_goal_circle():
     controller = _controller()
     assert 'xy_goal_tolerance' in controller['goal_checker']
     assert 'goal_dist_tol' not in controller['FollowPath']
+
+
+def _all():
+    return yaml.safe_load(PARAMS.read_text())
+
+
+def test_the_planners_costmap_marks_what_the_lidar_sees():
+    """2026-11-23. A source's max_obstacle_height defaults to 0.0 in Nav2, which throws
+    away every lidar point above the floor. The global costmap's lidar source did not set
+    it, so the planner only knew the saved map and every re-planned path went through
+    the center of a box the lidar could plainly see."""
+    for name in ('global_costmap', 'local_costmap'):
+        layer = _all()[name][name]['ros__parameters']['obstacle_layer']
+        assert layer['scan']['max_obstacle_height'] >= 0.5, name
+    scan = _all()['global_costmap']['global_costmap']['ros__parameters']['obstacle_layer']['scan']
+    assert scan['marking'] is True and scan['clearing'] is True
+
+
+def test_the_behavior_tree_replans_and_recovers_and_the_tree_file_exists():
+    bt = _all()['bt_navigator']['ros__parameters']['default_nav_to_pose_bt_xml']
+    assert bt.endswith('navigate_to_pose_recovery.xml')
+    text = (PARAMS.parent.parent.parent.parent / bt).read_text()
+    assert '<RateController' in text and '<ComputePathToPose' in text     # re-planning
+    order = [text.index(tag) for tag in ('<BackUp', '<Wait', '<Spin')]
+    assert order == sorted(order), 'back away first: a spin swings a corner at the obstacle'
+    assert 'ClearEntireCostmap' not in text, 'a cleared box is planned through again'
+
+
+def test_the_behavior_server_works_in_the_frame_of_the_local_costmap():
+    """"Pose Goes Off Grid" = a pose outside the behavior server's copy of the local
+    costmap. That is what a frame mismatch looks like, and it kept recovery switched
+    off from the summer until 2026-11-23."""
+    everything = _all()
+    server = everything['behavior_server']['ros__parameters']
+    local = everything['local_costmap']['local_costmap']['ros__parameters']
+    assert server['local_frame'] == local['global_frame'] == 'odom'
+    assert set(server['behavior_plugins']) == {'spin', 'backup', 'wait'}
+
+
+def test_a_stand_still_ends_in_seconds_and_a_turn_on_the_spot_counts_as_progress():
+    """A hold by the obstacle guard looks to Nav2 like no progress. With recoveries on,
+    that must end in seconds, not the old 60. And a long turn on the spot must not be
+    mistaken for standing still, which the distance-only checker would do."""
+    checker = _controller()['progress_checker']
+    assert checker['plugin'] == 'nav2_controller::PoseProgressChecker'
+    assert checker['movement_time_allowance'] <= 15.0
+    assert 0.0 < checker['required_movement_angle'] <= 0.5
