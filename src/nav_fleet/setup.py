@@ -14,7 +14,8 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/config',
          ['config/nav2_params.yaml', 'config/hsv_gazebo.yaml',
-          'config/hsv_realcam.yaml', 'config/ekf.yaml']),
+          'config/hsv_realcam.yaml', 'config/ekf.yaml',
+          'config/detector_rfdetr.yaml']),
         (os.path.join('share', package_name, 'launch'),
          glob('launch/*.py')),
         (os.path.join('share', package_name, 'urdf'),
@@ -43,6 +44,7 @@ setup(
             'obstacle_guard = nav_fleet.obstacle_guard:main',
             'sim_wheel_hold = nav_fleet.sim_wheel_hold:main',
             'camera_relay = nav_fleet.camera_relay:main',
+            'object_detector = nav_fleet.object_detector:main',
         ],
     },
 )

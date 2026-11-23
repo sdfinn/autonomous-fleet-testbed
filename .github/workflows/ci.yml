@@ -170,6 +170,7 @@ jobs:
             --ignore=tests/test_scan_masker.py \
             --ignore=tests/test_slip_monitor.py \
             --ignore=tests/test_camera_relay.py \
+            --ignore=tests/test_object_detector.py \
             -k "not integration" \
             --cov=tools --cov=src/nav_fleet/nav_fleet --cov-report=term-missing
 

@@ -95,6 +95,7 @@ DRIVERS_PID=""
 MISSION_PID=""
 WATCH_PID=""
 WATCH_WAITER_PID=""
+SHADOW_PID=""
 
 # SIGINT a background job, give it 15 s to exit by itself, then SIGKILL it.
 stop_job() {
@@ -138,6 +139,10 @@ cleanup() {
   if [ -n "$WATCH_PID" ]; then kill -INT -- "-$WATCH_PID" 2>/dev/null || true; fi
   stop_job "the operator watch" "$WATCH_PID"
   stop_job "the bag recorder" "$BAG_PID"
+  # After the bag, so the recording holds the shadow detections to the very end. Its own
+  # process group, like the watch (`ros2 run` does not pass a signal on).
+  if [ -n "$SHADOW_PID" ]; then kill -INT -- "-$SHADOW_PID" 2>/dev/null || true; fi
+  stop_job "the shadow detector" "$SHADOW_PID"
   stop_job "the bare-metal driver layer" "$DRIVERS_PID"
 }
 trap cleanup EXIT
@@ -356,6 +361,41 @@ case "$imu_line" in
     echo "FATAL: ${imu_line#esp32_driver: } -- the motor board's IMU is not working; switch the robot off and on again" >&2
     exit 1 ;;
 esac
+
+# --- Shadow detector (2026-11-22), optional ---
+# ROBOT_BOOT_SHADOW_DETECTOR=1 (or =<path to a .engine/.onnx file>) runs the RF-DETR
+# detector beside the mission, here on the Jetson's GPU, publishing on
+# /robot_001/detections_shadow. NOTHING acts on that topic: the mission still reacts to
+# the hand-written detector in the container. The bag records both, so the two can be
+# compared on the same run (docs/detection-history.md; node: nav_fleet/object_detector.py).
+# Asked for and not ready within 60 s is fatal, BEFORE anything moves: a floor run that
+# silently recorded no shadow detections is a wasted floor run.
+if [ -n "${ROBOT_BOOT_SHADOW_DETECTOR:-}" ]; then
+  SHADOW_MODEL="$ROBOT_BOOT_SHADOW_DETECTOR"
+  if [ "$SHADOW_MODEL" = "1" ]; then SHADOW_MODEL="$HOME/fleet-ci-data/models/rfdetr-small.engine"; fi
+  if [ ! -f "$SHADOW_MODEL" ]; then
+    echo "FATAL: shadow detector model ${SHADOW_MODEL} is not a file (build it on this Jetson: trtexec --onnx=rfdetr-small.onnx --saveEngine=rfdetr-small.engine --fp16)" >&2
+    exit 1
+  fi
+  SHADOW_LOG="$LOG_DIR/shadow_detector_${TS}.log"
+  rm -f "$SHADOW_LOG"
+  set -m
+  ros2 run nav_fleet object_detector --ros-args -p model_path:="$SHADOW_MODEL" \
+    > "$SHADOW_LOG" 2>&1 < /dev/null &
+  SHADOW_PID=$!
+  set +m
+  shadow_waited=0
+  until grep -q 'detector ready' "$SHADOW_LOG" 2>/dev/null; do
+    if ! kill -0 "$SHADOW_PID" 2>/dev/null || [ "$shadow_waited" -ge 60 ]; then
+      echo "FATAL: the shadow detector did not become ready -- see $SHADOW_LOG" >&2
+      tail -n 15 "$SHADOW_LOG" >&2 || true
+      exit 1
+    fi
+    sleep 1
+    shadow_waited=$((shadow_waited + 1))
+  done
+  echo "=== [robot-boot] shadow detector ready after ${shadow_waited}s ($(grep -o 'detector ready.*first picture [0-9]* ms' "$SHADOW_LOG" | tail -n 1)); log: $SHADOW_LOG ==="
+fi
 
 # --- Operator pre-flight and watch (2026-11-19) ---
 # A link that is already bad is no link to start a floor run on: check before anything

@@ -1,0 +1,31 @@
+# Settings for the RF-DETR detector (nav_fleet.rfdetr_detect, node object_detector).
+# Every key here must be one of rfdetr_detect.DEFAULTS; a misspelled key is an error.
+# Measured values come from docs/detection-history.md (2026-11-22).
+
+# A box below this score is not reported. 0.25 is the line used for every measurement
+# on 2026-11-22. A high score does NOT mean the name is right (a yellow croquet ball is
+# "orange" at 0.92): this only removes the weakest boxes.
+min_confidence: 0.25
+
+# A box covering more of the picture than this is dropped. RF-DETR small boxes the rug
+# as "bed" (scores 0.28-0.49) in most test frames; that box is the full width of the
+# picture and covers about 41% of it. The real bed at the edge of the view covers
+# 17-20%, so the line sits between the two.
+max_box_fraction: 0.35
+
+# Most boxes reported for one picture.
+max_detections: 50
+
+# Names a croquet ball arrives under. A pretrained model has no "croquet ball" class,
+# so the same ball is "sports ball", "orange" or "apple" depending on the light.
+ball_like_classes: [sports ball, orange, apple]
+
+# Distance for a ball-like box: range_m = ball_range_k / width_px, for a picture
+# range_reference_width_px wide. 86.0 is the mean of the hand-written detector's two
+# per-color values (hsv_realcam.yaml); with tighter boxes it gave 6-8% error.
+ball_range_k: 86.0
+range_reference_width_px: 1280
+
+# A box this close to the frame edge gets no distance (a ball cut by the edge looks
+# narrow and would read too far).
+edge_margin_px: 4
