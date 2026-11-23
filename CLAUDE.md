@@ -89,9 +89,12 @@ run.** Detail: `docs/sessions/2026-11-23.md`, `docs/detection-history.md`.
 - **CI's simulator stage failed once more on its first drive**
   (`test_navigation_succeeds`, "Failed to make progress": the robot drove 10 s, then
   stood 60 s; fourth time since 2026-11-20) with NOTHING else running, so "fails under
-  load" is not the whole story. Re-run green. `nav_runner.py` now logs where the robot
-  stood on any goal Nav2 does not complete (`describe_failed_goal`): read that line
-  first next time, in CI or on the floor.
+  load" is not it. `nav_runner.py` now logs where the robot stood on any goal Nav2 does
+  not complete (`describe_failed_goal`), and on the fifth occurrence it said: 0.22 m
+  from the goal (goal circle 0.15 m), still for 42 s. The stall is in the FINAL
+  APPROACH, not at the doorway. 2 of 4 CI runs today, 0 of 3 local copies. Untested
+  idea: the approach speed is too low to move the simulated robot; record
+  `/robot_001/cmd_vel` during a stall before changing anything.
 - **Removed switches:** `ROBOT_BOOT_SHADOW_DETECTOR`, `ROBOT_BOOT_DETECTOR`,
   `HSV_CONFIG_FILE`, `BALL_DETECTOR`, launch arguments `hsv_config` / `ball_detector`.
   `ROBOT_BOOT_RFDETR=<file>` now only names another model file.
