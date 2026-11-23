@@ -35,6 +35,20 @@ from tools.log_setup import build_env_manifest, git_sha, resolve_level
 # 0.03 m/s is comfortably above AMCL localization jitter while the robot is at rest.
 MOTION_VELOCITY_THRESHOLD_MPS = 0.03
 
+# A robot whose reported position stays inside this radius counts as standing still.
+STILL_RADIUS_M = 0.05
+
+
+def describe_failed_goal(status, last_xy, moved_time, now):
+    """One log line for a goal Nav2 did not complete: where the robot was when the
+    result came, and how long it had been standing there. Pure text, no ROS."""
+    if last_xy is None:
+        return f'goal not completed (Nav2 status {status}); no position was ever reported'
+    still_s = now - moved_time if moved_time is not None else 0.0
+    return (f'goal not completed (Nav2 status {status}); last position '
+            f'({last_xy[0]:.3f}, {last_xy[1]:.3f}), within {STILL_RADIUS_M} m of that spot '
+            f'for the last {still_s:.1f} s')
+
 
 class NavRunner(Node):
 
@@ -141,8 +155,13 @@ class NavRunner(Node):
             # closure-captured locals because feedback_cb is registered before accept_time
             # is known — feedback only starts flowing once the goal is actually accepted
             # and executing, so accept_time is always set by the time feedback arrives.
+            # moved_xy / moved_time (2026-11-23): where and when the robot last moved
+            # STILL_RADIUS_M from its previous such spot. On a failed goal this says
+            # where the robot stood and for how long, which the log could not tell
+            # before ("Failed to make progress" in CI, four times, position unknown).
             motion_state = {
                 'accept_time': None, 'last_xy': None, 'last_time': None, 'logged': False,
+                'moved_xy': None, 'moved_time': None,
             }
 
             def feedback_cb(feedback_msg):
@@ -151,6 +170,10 @@ class NavRunner(Node):
                 xy = (pos.x, pos.y)
                 prev_xy, prev_time = motion_state['last_xy'], motion_state['last_time']
                 motion_state['last_xy'], motion_state['last_time'] = xy, now
+                moved_xy = motion_state['moved_xy']
+                if moved_xy is None or math.hypot(xy[0] - moved_xy[0],
+                                                  xy[1] - moved_xy[1]) > STILL_RADIUS_M:
+                    motion_state['moved_xy'], motion_state['moved_time'] = xy, now
                 # accept_time can still be None here: rclpy's executor delivers the
                 # send_goal_async future's completion and this feedback callback as
                 # independent async events, with no ordering guarantee between them —
@@ -257,6 +280,10 @@ class NavRunner(Node):
                 f'[timing] goal result received at {result_time:.3f} '
                 f'(+{result_time - accept_time:.3f}s since accept)')
             succeeded = result_future.result().status == GoalStatus.STATUS_SUCCEEDED
+            if not succeeded:
+                self.get_logger().error(describe_failed_goal(
+                    result_future.result().status, motion_state['last_xy'],
+                    motion_state['moved_time'], result_time))
             elapsed = time.time() - accept_time
             end_xy = self._pose_xy()
             displacement = (math.hypot(end_xy[0] - start_xy[0], end_xy[1] - start_xy[1])

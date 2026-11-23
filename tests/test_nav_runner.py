@@ -189,3 +189,17 @@ def test_interrupt_is_terminal_and_not_retried(_ros):
         assert node.last_interrupt == 'red'
     finally:
         node.destroy_node()
+
+
+# ── A failed goal says where the robot stood (2026-11-23) ───────────────────────────────────
+def test_a_failed_goal_is_described_with_its_last_position_and_how_long_it_stood_there():
+    from nav_fleet.nav_runner import describe_failed_goal
+    line = describe_failed_goal(6, (0.412, 2.95), moved_time=100.0, now=160.5)
+    assert 'status 6' in line
+    assert '(0.412, 2.950)' in line
+    assert 'for the last 60.5 s' in line
+
+
+def test_a_failed_goal_with_no_position_report_says_so():
+    from nav_fleet.nav_runner import describe_failed_goal
+    assert 'no position was ever reported' in describe_failed_goal(6, None, None, 10.0)
