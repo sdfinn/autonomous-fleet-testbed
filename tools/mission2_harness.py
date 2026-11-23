@@ -305,6 +305,21 @@ def remove_ball(name):
                 f'name: "{name}" type: MODEL')
 
 
+def world_model_names():
+    """Names of the models in the running Gazebo world, or None when Gazebo cannot be
+    asked. Needed because the remove service answers "true" for a model that is not
+    there (seen 2026-11-23), so a removal cannot tell whether anything was removed."""
+    try:
+        out = subprocess.run(['gz', 'model', '--list'], capture_output=True, text=True,
+                             timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0 or 'Available models' not in out.stdout:
+        return None
+    return [line.strip()[2:].strip() for line in out.stdout.splitlines()
+            if line.strip().startswith('- ')]
+
+
 def _gz_service(srv, reqtype, req):
     out = subprocess.run(
         ['gz', 'service', '-s', srv, '--reqtype', reqtype,

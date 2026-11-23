@@ -305,6 +305,19 @@ Claude is working with files under this directory.
   env var reaches `tools/mission2_day.py --hold-s` and keeps the robot in place after the
   final red run so an observer sees an unambiguous "done" instead of the process exiting
   mid-frame.
+- **Attaching the GUI (`gz sim -g`) PAUSES the simulation** (found 2026-11-23, a watched
+  day: the world froze at the second the GUI attached; no `/clock`, so no odom
+  transform, Nav2 never became active and the mission process died at start-up, which
+  looks nothing like "paused"). After the GUI window is up, un-pause and check before
+  starting anything:
+  ```bash
+  gz service -s /world/bedroom/control --reqtype gz.msgs.WorldControl \
+    --reptype gz.msgs.Boolean --timeout 3000 --req 'pause: false'
+  gz topic -e -t /world/bedroom/stats -n 1 | grep paused     # must not say true
+  gz model --list                                             # no ball_* left over
+  ```
+  (or press play in the GUI). A stalled simulator shows in the detector's log too: its
+  10-second statistics line stops, because that timer runs on simulator time.
 - **`hil_stage.sh sync` works only with PUSHED shas** (`git fetch origin <sha>` of an
   unpushed commit fails "not our ref") — and the Jetson's local `main` only advances via
   `restore-checkout`, which fast-forwards since d3bb66e (2026-07-19; before that it sat on

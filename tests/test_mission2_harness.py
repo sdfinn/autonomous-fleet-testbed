@@ -260,3 +260,16 @@ def test_log_variant_row_photos_null_when_not_given(monkeypatch):
     mission2_harness.log_variant_row('no_ball', None, ok=True, runner=None)
 
     assert captured['photos'] is None
+
+
+def test_world_model_names_parses_gazebos_list_and_is_none_when_gazebo_is_not_there(monkeypatch):
+    import subprocess
+    from tools import mission2_harness as h
+    listing = ('Requesting state for world [bedroom]...\n\nAvailable models:\n'
+               '    - floor\n    - robot_001\n    - ball_red\n')
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(
+        a, 0, stdout=listing, stderr=''))
+    assert h.world_model_names() == ['floor', 'robot_001', 'ball_red']
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(
+        a, 0, stdout='', stderr='timed out'))
+    assert h.world_model_names() is None

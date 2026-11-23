@@ -794,6 +794,11 @@ def test_judge_and_log_leg_ok_false_when_judge_reports_fails(monkeypatch):
 class _FakeBallOps:
     def __init__(self, concurrent):
         self.concurrent = concurrent
+        self.cleared = 0
+
+    def clear(self):
+        self.cleared += 1
+        return []
 
 
 def _fake_log_only(stop_evt, poll_s=0.3):
@@ -907,7 +912,9 @@ def test_run_day_gz_mode_starts_and_joins_the_choreography_thread(monkeypatch):
         def run_day(self):
             return [_leg(), _leg(), _leg()]
 
-    ok = run_day(FakeExecutor(), _FakeBallOps(concurrent=True), (1.2, 3.9), hold_s=0)
+    ball_ops = _FakeBallOps(concurrent=True)
+    ok = run_day(FakeExecutor(), ball_ops, (1.2, 3.9), hold_s=0)
+    assert ball_ops.cleared == 1          # leftover balls are removed before the day starts
     assert started == [True]
     assert ok is True
 
@@ -1094,3 +1101,52 @@ def test_every_sweep_covers_the_detector_node():
     """A leftover detector publishes on /robot_001/detections beside the next run's own."""
     assert any('object_detector' in pat for pat in mission2_day_module._SWEEP_PATTERNS)
     assert 'object_detector' in mission2_day_module._LEFTOVER_PATTERN
+
+
+# ── A day that dies must not leave a ball behind; a day starts from a clean world ───────────
+def test_ball_sequence_places_nothing_when_the_day_ends_before_the_robot_moves(monkeypatch):
+    """2026-11-23, watched run: the mission died at start-up, and the ball thread still
+    spawned yellow, swapped it for red and left the red ball for the next day."""
+    stop_evt = threading.Event()
+    calls = []
+
+    class FakeBallOps:
+        concurrent = True
+
+        def place(self, color, x, y):
+            calls.append(('place', color))
+            return f'ball_{color}'
+
+        def remove(self, name):
+            calls.append(('remove', name))
+
+        def settle(self):
+            pass
+
+    def robot_never_moves():
+        stop_evt.set()                       # the day ends while the first wait is on
+        return (-1.276, 1.2)
+
+    monkeypatch.setattr(mission2_day_module, 'get_ground_truth_xy', robot_never_moves)
+    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+    mission2_day_module.run_ball_choreography(FakeBallOps(), (1.2, 3.9), stop_evt, poll_s=0.0)
+    assert calls == []
+
+
+def test_gz_ball_ops_clear_removes_only_balls_that_are_really_in_the_world(monkeypatch):
+    """Gazebo's remove service answers "true" for a model that is not there, so the
+    world's own model list decides what counts as a leftover."""
+    removed = []
+    monkeypatch.setattr(mission2_day_module, 'remove_ball', removed.append)
+    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(mission2_day_module, 'world_model_names',
+                        lambda: ['floor', 'robot_001', 'ball_red'])
+    assert mission2_day_module.GzBallOps().clear() == ['ball_red']
+    assert removed == ['ball_red']
+
+    removed.clear()
+    monkeypatch.setattr(mission2_day_module, 'world_model_names', lambda: ['floor', 'robot_001'])
+    assert mission2_day_module.GzBallOps().clear() == [] and removed == []
+
+    monkeypatch.setattr(mission2_day_module, 'world_model_names', lambda: None)   # no Gazebo
+    assert mission2_day_module.GzBallOps().clear() == [] and removed == []

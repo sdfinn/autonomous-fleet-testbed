@@ -61,7 +61,8 @@ from tools import proc_sweep
 from tools.log_setup import build_env_manifest, configure, get_logger, git_sha
 from tools.mission2_harness import (BALL_AT_SPHERE_XY, BALL_REMOVAL_SETTLE_S,
                                     home_pair_similarity, judge_no_ball, judge_red,
-                                    judge_yellow, log_variant_row, remove_ball, spawn_ball)
+                                    judge_yellow, log_variant_row, remove_ball, spawn_ball,
+                                    world_model_names)
 from tools.pipeline_matrix import load_stage
 from tools.telemetry_logger import PHOTO_DIR as _PHOTO_DIR, log_run
 
@@ -93,6 +94,10 @@ _SWEEP_PATTERNS = (
 
 
 # ── Ball placement (WHO) ──────────────────────────────────────────────────────────────────
+# The names tools.mission2_harness.spawn_ball() gives the two balls.
+LEFTOVER_BALL_NAMES = ('ball_yellow', 'ball_red')
+
+
 class BallOps:
     """Placement of the reaction ball. Two implementations: Gazebo (sim) and operator
     (the on-robot day). `concurrent` says whether a ball swap can happen WHILE the robot is
@@ -110,6 +115,10 @@ class BallOps:
         """Wait out the llvmpipe ghost-model lag after a removal (>=3 s)."""
         time.sleep(BALL_REMOVAL_SETTLE_S)
 
+    def clear(self):
+        """Remove balls left in the world by an earlier day. Nothing to do by default."""
+        return []
+
 
 class GzBallOps(BallOps):
     """Sim/HIL day: spawn/remove camera-only balls in the workstation Gazebo (reuses the
@@ -125,6 +134,25 @@ class GzBallOps(BallOps):
     def remove(self, name):
         remove_ball(name)
         log.info(f'gz removed {name}')
+
+    def clear(self):
+        """Remove any ball a previous, aborted day left in the world. Returns the names
+        removed. A leftover ball is not cosmetic (2026-11-23, watched run): the robot
+        reacted to a stale red ball on its first trip and all three legs failed."""
+        present = world_model_names()
+        if present is None:
+            log.warning('could not list the world\'s models — leftover balls not checked')
+            return []
+        removed = []
+        for name in LEFTOVER_BALL_NAMES:
+            if name not in present:
+                continue                     # the normal case
+            remove_ball(name)
+            removed.append(name)
+            log.warning(f'gz removed a LEFTOVER {name} before the day started')
+        if removed:
+            self.settle()                    # a removed model lingers in rendered frames
+        return removed
 
 
 class OperatorBallOps(BallOps):
@@ -620,18 +648,29 @@ def run_ball_choreography(ball_ops, ball_xy, stop_evt, poll_s=0.3):
             time.sleep(poll_s)
         return False
 
-    if _wait_for(RetreatDetector()):
+    # A wait that ends because the day is over (stop_evt), not because the robot did
+    # what was waited for, ends ALL ball actions (2026-11-23). Before, each action ran
+    # whatever its wait returned: when the mission died at start-up, this thread still
+    # spawned yellow, swapped it for red and left the red ball in the world for the
+    # next day to react to.
+    def _choreograph():
+        if not _wait_for(RetreatDetector()):
+            return
         log.info('retreat detected — placing yellow behind the returning robot')
-    holder['placed_name'] = ball_ops.place('yellow', *ball_xy)
-
-    if _wait_for(OutboundDetector()):
+        holder['placed_name'] = ball_ops.place('yellow', *ball_xy)
+        if not _wait_for(OutboundDetector()):
+            return
         log.info('robot heading back out — arming swap detection')
-
-    if _wait_for(RetreatDetector()):
+        if not _wait_for(RetreatDetector()):
+            return
         log.info('retreat detected — swapping yellow -> red behind the robot')
-    ball_ops.remove(holder['placed_name'])
-    ball_ops.settle()
-    holder['red_name'] = ball_ops.place('red', *ball_xy)
+        ball_ops.remove(holder['placed_name'])
+        ball_ops.settle()
+        holder['red_name'] = ball_ops.place('red', *ball_xy)
+
+    _choreograph()
+    if stop_evt.is_set() and holder['red_name'] is None:
+        log.warning('the day ended before the ball sequence finished — no further balls placed')
 
     # Keep logging (no more ball actions left) until the caller signals the day is
     # done, so leg 3's own closest-approach/truth samples are still captured.
@@ -819,6 +858,10 @@ def run_day(executor, ball_ops, ball_xy, hold_s):
         else:
             gt_log_holder['log'] = run_ground_truth_log_only(stop_evt)
 
+    # Start from a clean world: a ball left by an aborted day makes the robot react on
+    # its first trip (2026-11-23). Gazebo modes only; an operator's balls are theirs.
+    if ball_ops.concurrent:
+        ball_ops.clear()
     gt_thread = threading.Thread(target=_run, daemon=True)
     gt_thread.start()
     try:

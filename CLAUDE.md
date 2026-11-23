@@ -96,8 +96,14 @@ run.** Detail: `docs/sessions/2026-11-23.md`, `docs/detection-history.md`.
   `HSV_CONFIG_FILE`, `BALL_DETECTOR`, launch arguments `hsv_config` / `ball_detector`.
   `ROBOT_BOOT_RFDETR=<file>` now only names another model file.
 
-**NEXT (order agreed with Mike 2026-11-23):** (A5) one CI-like Mission 2 day with the
-Gazebo GUI for Mike to watch; (B) something to do after an obstacle hold, starting
+- **Watched run with the Gazebo GUI (A5): PASS on the third attempt.** It found:
+  attaching the GUI PAUSES the simulation (un-pause command in `src/nav_fleet/CLAUDE.md`);
+  the day tool's ball thread left a red ball behind when the mission died (fixed:
+  no ball actions once the day has ended); a day did not start from a clean world
+  (fixed: `GzBallOps.clear()`, which asks `gz model --list` because Gazebo's remove
+  call answers "true" for a model that is not there).
+
+**NEXT (order agreed with Mike 2026-11-23):** (B) something to do after an obstacle hold, starting
 with the existing-solution check: root-cause Nav2's `BackUp`/`Spin` failure on the
 real robot ("Pose Goes Off Grid"), then back away and re-plan in the simulator on the
 box bench, then the door frame and the dresser on the floor; (C) reaction distances
