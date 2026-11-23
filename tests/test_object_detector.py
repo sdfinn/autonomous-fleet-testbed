@@ -92,8 +92,12 @@ def test_message_carries_distance_or_nan():
     header = Image().header
     array = object_detector.to_detection_array(
         [Detection('sports ball', 0.8, 10, 20, 96, 100, 1.0),
-         Detection('teddy bear', 0.6, 0, 0, 50, 50, float('nan'))], header)
-    first, second = array.detections
+         Detection('teddy bear', 0.6, 0, 0, 50, 50, float('nan')),
+         Detection('orange', 0.7, 200, 20, 286, 100, 1.0, 'yellow')], header)
+    first, second, third = array.detections
+    # A ball whose color was read goes out under the name the mission reacts to.
+    assert [d.results[0].hypothesis.class_id for d in array.detections] == [
+        'sports ball', 'teddy bear', 'yellow_ball']
     assert first.results[0].pose.pose.position.x == 1.0
     assert math.isnan(second.results[0].pose.pose.position.x)
     assert (first.bbox.center.position.y, first.bbox.size_y) == (60.0, 80.0)

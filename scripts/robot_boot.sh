@@ -142,7 +142,7 @@ cleanup() {
   # After the bag, so the recording holds the shadow detections to the very end. Its own
   # process group, like the watch (`ros2 run` does not pass a signal on).
   if [ -n "$SHADOW_PID" ]; then kill -INT -- "-$SHADOW_PID" 2>/dev/null || true; fi
-  stop_job "the shadow detector" "$SHADOW_PID"
+  stop_job "the RF-DETR detector" "$SHADOW_PID"
   stop_job "the bare-metal driver layer" "$DRIVERS_PID"
 }
 trap cleanup EXIT
@@ -362,39 +362,57 @@ case "$imu_line" in
     exit 1 ;;
 esac
 
-# --- Shadow detector (2026-11-22), optional ---
-# ROBOT_BOOT_SHADOW_DETECTOR=1 (or =<path to a .engine/.onnx file>) runs the RF-DETR
-# detector beside the mission, here on the Jetson's GPU, publishing on
-# /robot_001/detections_shadow. NOTHING acts on that topic: the mission still reacts to
-# the hand-written detector in the container. The bag records both, so the two can be
-# compared on the same run (docs/detection-history.md; node: nav_fleet/object_detector.py).
-# Asked for and not ready within 60 s is fatal, BEFORE anything moves: a floor run that
-# silently recorded no shadow detections is a wasted floor run.
-if [ -n "${ROBOT_BOOT_SHADOW_DETECTOR:-}" ]; then
-  SHADOW_MODEL="$ROBOT_BOOT_SHADOW_DETECTOR"
-  if [ "$SHADOW_MODEL" = "1" ]; then SHADOW_MODEL="$HOME/fleet-ci-data/models/rfdetr-small.engine"; fi
-  if [ ! -f "$SHADOW_MODEL" ]; then
-    echo "FATAL: shadow detector model ${SHADOW_MODEL} is not a file (build it on this Jetson: trtexec --onnx=rfdetr-small.onnx --saveEngine=rfdetr-small.engine --fp16)" >&2
+# --- RF-DETR detector (2026-11-22), optional ---
+# The RF-DETR node (nav_fleet/object_detector.py) runs here on the Jetson's GPU, outside
+# the container. Two ways to use it, never both:
+#   ROBOT_BOOT_RFDETR=1            it IS the detector: it publishes /robot_001/detections
+#                                  and the container does not start the hand-written one
+#                                  (BALL_DETECTOR=false). The mission reacts to RF-DETR.
+#   ROBOT_BOOT_SHADOW_DETECTOR=1   it only watches: it publishes
+#                                  /robot_001/detections_shadow, which nothing acts on,
+#                                  beside the hand-written detector. For comparing the two
+#                                  from the bag (tools/shadow_compare.py).
+# Either may be a path to a .engine/.onnx file instead of 1.
+# Asked for and not ready within 60 s is fatal, BEFORE anything moves.
+RFDETR_ARGS=()
+RFDETR_MODEL="${ROBOT_BOOT_RFDETR:-${ROBOT_BOOT_SHADOW_DETECTOR:-}}"
+if [ -n "${ROBOT_BOOT_RFDETR:-}" ] && [ -n "${ROBOT_BOOT_SHADOW_DETECTOR:-}" ]; then
+  echo "FATAL: set ROBOT_BOOT_RFDETR or ROBOT_BOOT_SHADOW_DETECTOR, not both" >&2
+  exit 1
+fi
+if [ -n "$RFDETR_MODEL" ]; then
+  if [ "$RFDETR_MODEL" = "1" ]; then RFDETR_MODEL="$HOME/fleet-ci-data/models/rfdetr-small.engine"; fi
+  if [ ! -f "$RFDETR_MODEL" ]; then
+    echo "FATAL: RF-DETR model ${RFDETR_MODEL} is not a file (build it on this Jetson: trtexec --onnx=rfdetr-small.onnx --saveEngine=rfdetr-small.engine --fp16)" >&2
     exit 1
   fi
-  SHADOW_LOG="$LOG_DIR/shadow_detector_${TS}.log"
+  if [ -n "${ROBOT_BOOT_RFDETR:-}" ]; then
+    RFDETR_TOPIC=/robot_001/detections
+    RFDETR_ARGS=(-e BALL_DETECTOR=false)
+    echo "=== [robot-boot] detector: RF-DETR on this Jetson; the hand-written detector in the container is OFF ==="
+  else
+    RFDETR_TOPIC=/robot_001/detections_shadow
+    echo "=== [robot-boot] detector: hand-written (in the container); RF-DETR in shadow mode ==="
+  fi
+  SHADOW_LOG="$LOG_DIR/rfdetr_detector_${TS}.log"
   rm -f "$SHADOW_LOG"
   set -m
-  ros2 run nav_fleet object_detector --ros-args -p model_path:="$SHADOW_MODEL" \
+  ros2 run nav_fleet object_detector --ros-args -p model_path:="$RFDETR_MODEL" \
+    -p output_topic:="$RFDETR_TOPIC" \
     > "$SHADOW_LOG" 2>&1 < /dev/null &
   SHADOW_PID=$!
   set +m
   shadow_waited=0
   until grep -q 'detector ready' "$SHADOW_LOG" 2>/dev/null; do
     if ! kill -0 "$SHADOW_PID" 2>/dev/null || [ "$shadow_waited" -ge 60 ]; then
-      echo "FATAL: the shadow detector did not become ready -- see $SHADOW_LOG" >&2
+      echo "FATAL: the RF-DETR detector did not become ready -- see $SHADOW_LOG" >&2
       tail -n 15 "$SHADOW_LOG" >&2 || true
       exit 1
     fi
     sleep 1
     shadow_waited=$((shadow_waited + 1))
   done
-  echo "=== [robot-boot] shadow detector ready after ${shadow_waited}s ($(grep -o 'detector ready.*first picture [0-9]* ms' "$SHADOW_LOG" | tail -n 1)); log: $SHADOW_LOG ==="
+  echo "=== [robot-boot] RF-DETR detector ready after ${shadow_waited}s ($(grep -o 'detector ready.*first picture [0-9]* ms' "$SHADOW_LOG" | tail -n 1)); log: $SHADOW_LOG ==="
 fi
 
 # --- Operator pre-flight and watch (2026-11-19) ---
@@ -495,6 +513,14 @@ if [ -n "${ROBOT_BOOT_DETECTOR:-}" ]; then
     -v "$ROBOT_BOOT_DETECTOR/hsv_detect.py:/ros2_ws/src/nav_fleet/nav_fleet/hsv_detect.py:ro"
     -v "$ROBOT_BOOT_DETECTOR/hsv_realcam.yaml:/ros2_ws/install/nav_fleet/share/nav_fleet/config/hsv_realcam.yaml:ro"
     -v "$ROBOT_BOOT_DETECTOR/hsv_realcam.yaml:/ros2_ws/src/nav_fleet/config/hsv_realcam.yaml:ro")
+  # The node around the detector too, when the folder has it (2026-11-22: trying a
+  # change to how ball_detector.py reads its pictures).
+  if [ -f "$ROBOT_BOOT_DETECTOR/ball_detector.py" ]; then
+    echo "=== [robot-boot] WARNING: ball_detector.py also comes from ${ROBOT_BOOT_DETECTOR} ===" >&2
+    DETECTOR_ARGS+=(
+      -v "$ROBOT_BOOT_DETECTOR/ball_detector.py:/ros2_ws/install/nav_fleet/lib/python3.12/site-packages/nav_fleet/ball_detector.py:ro"
+      -v "$ROBOT_BOOT_DETECTOR/ball_detector.py:/ros2_ws/src/nav_fleet/nav_fleet/ball_detector.py:ro")
+  fi
 fi
 docker rm -f robot_mission 2>/dev/null || true
 mkdir -p "$REPO/reports"
@@ -518,6 +544,7 @@ set -m
   "${MAP_ARGS[@]}" \
   ${PARAMS_ARGS[@]+"${PARAMS_ARGS[@]}"} \
   ${DETECTOR_ARGS[@]+"${DETECTOR_ARGS[@]}"} \
+  ${RFDETR_ARGS[@]+"${RFDETR_ARGS[@]}"} \
   -e MISSION2_SELF_REPORT=1 \
   -e RUNNER_TYPE=real_robot \
   -e ROBOT_MODE=mission \

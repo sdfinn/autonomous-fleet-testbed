@@ -63,9 +63,19 @@ DEFAULTS = {
     'ball_range_k': 86.0,         # range_m = ball_range_k / width_px, for 1280-wide pictures
     'range_reference_width_px': 1280,
     'edge_margin_px': 4,          # a box this close to the frame edge gets no distance
+    # Color of a ball-like box, read from the pixels inside it (hue in degrees; a band
+    # may wrap through 0, as red does). See ball_color().
+    'ball_colors': {'yellow': [20, 70], 'red': [300, 20]},
+    'color_min_saturation': 0.25,  # paler pixels than this do not vote
+    'color_min_value': 0.08,       # darker pixels than this do not vote
+    'color_min_fraction': 0.7,     # this share of the box's middle must vote, or no color
+    'color_min_agreement': 0.6,    # this share of the votes must be in the winning band
 }
 
-Detection = namedtuple('Detection', 'name score x0 y0 x1 y1 range_m')
+# name: what the network called it. color: for a ball-like box, the color read from
+# inside the box ('yellow', 'red', ...) or None.
+Detection = namedtuple('Detection', 'name score x0 y0 x1 y1 range_m color',
+                       defaults=(None,))
 
 
 def load_config(path=None):
@@ -205,6 +215,52 @@ def decode(boxes, logits, image_hw, cfg=None, names=None):
     return out
 
 
+def _in_band(hue, band):
+    low, high = band
+    return (hue >= low) & (hue <= high) if low <= high else (hue >= low) | (hue <= high)
+
+
+def ball_color(picture, box, cfg, bgr=False):
+    """The color name of a ball-like box, from the pixels in the middle of the box, or
+    None when they do not agree on one.
+
+    Why this exists (2026-11-22): the network finds a ball in any light but has no idea
+    what color it is: a yellow croquet ball is "sports ball" or "orange", a red one
+    "sports ball" or "apple". The mission reacts differently to yellow and red. Finding
+    a ball BY color is what failed in three sessions (the floor, the light); telling two
+    colors apart INSIDE a box the network already drew is a much easier question, and
+    the bands can be wide because nothing but the ball is being looked at.
+
+    Only the middle half of the box votes (the corners of a ball's box are floor), and
+    only pixels with enough color and light to have a meaningful hue."""
+    x0, y0, x1, y1 = (int(round(v)) for v in box)
+    w, h = x1 - x0, y1 - y0
+    if w < 4 or h < 4:
+        return None
+    crop = picture[y0 + h // 4:y1 - h // 4, x0 + w // 4:x1 - w // 4].astype(np.float32) / 255.0
+    if crop.size == 0:
+        return None
+    if bgr:
+        crop = crop[:, :, ::-1]
+    r, g, b = crop[..., 0], crop[..., 1], crop[..., 2]
+    value = crop.max(axis=-1)
+    spread = value - crop.min(axis=-1)
+    saturation = np.where(value > 0, spread / np.maximum(value, 1e-6), 0.0)
+    votes = (saturation >= cfg['color_min_saturation']) & (value >= cfg['color_min_value'])
+    if votes.mean() < cfg['color_min_fraction']:
+        return None
+    safe = np.maximum(spread, 1e-6)
+    hue = np.where(value == r, ((g - b) / safe) % 6.0,
+                   np.where(value == g, (b - r) / safe + 2.0, (r - g) / safe + 4.0)) * 60.0
+    hue = hue[votes]
+    best, best_share = None, 0.0
+    for name, band in cfg['ball_colors'].items():
+        share = float(_in_band(hue, band).mean())
+        if share > best_share:
+            best, best_share = name, share
+    return best if best_share >= cfg['color_min_agreement'] else None
+
+
 class Detector:
     """prepare -> backend -> decode, for one picture at a time.
 
@@ -217,4 +273,6 @@ class Detector:
 
     def detect(self, picture, bgr=False):
         boxes, logits = self.backend.infer(prepare(picture, self.backend.input_hw, bgr))
-        return decode(boxes[0], logits[0], picture.shape[:2], self.cfg)
+        found = decode(boxes[0], logits[0], picture.shape[:2], self.cfg)
+        return [d._replace(color=ball_color(picture, d[2:6], self.cfg, bgr))
+                if d.name in self.cfg['ball_like_classes'] else d for d in found]

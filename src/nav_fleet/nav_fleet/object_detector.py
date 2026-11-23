@@ -14,7 +14,9 @@ on the same run before this one is trusted (docs/detection-history.md). Switchin
 later is the `output_topic` parameter.
 
 Message convention, same as the hand-written detector:
-  results[0].hypothesis.class_id   the name ("sports ball", "teddy bear", ...)
+  results[0].hypothesis.class_id   "yellow_ball" / "red_ball" for a ball whose color
+                                   could be read from inside its box; otherwise the
+                                   network's name ("sports ball", "teddy bear", ...)
   results[0].hypothesis.score      the network's score, 0-1. NOT a measure of being right
   results[0].pose.pose.position.x  estimated distance in meters, NaN when there is none
   bbox                             center and size in pixels of the camera picture
@@ -83,7 +85,9 @@ def to_detection_array(detections, header):
         det = Detection2D()
         det.header = header
         hyp = ObjectHypothesisWithPose()
-        hyp.hypothesis.class_id = d.name
+        # A ball-like box whose color could be read goes out as "<color>_ball", the name
+        # the mission reacts to; everything else keeps the network's own name.
+        hyp.hypothesis.class_id = '%s_ball' % d.color if d.color else d.name
         hyp.hypothesis.score = float(d.score)
         hyp.pose.pose.position.x = float(d.range_m)
         det.results.append(hyp)

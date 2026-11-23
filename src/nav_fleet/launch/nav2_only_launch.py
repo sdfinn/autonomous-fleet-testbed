@@ -33,7 +33,7 @@ from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, GroupAction,
                             IncludeLaunchDescription, OpaqueFunction,
                             SetLaunchConfiguration, TimerAction)
-from launch.conditions import UnlessCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -109,6 +109,13 @@ def generate_launch_description():
         description='ball_detector HSV thresholds — hsv_gazebo.yaml for sim/HIL, '
                     'hsv_realcam.yaml for the real robot',
     )
+    ball_detector_arg = DeclareLaunchArgument(
+        'ball_detector', default_value='true',
+        description='false = do not start the hand-written ball detector here. For the '
+                    'real robot when the RF-DETR node (object_detector, outside the '
+                    'container) publishes /robot_001/detections instead: two detectors '
+                    'on one topic would double the picture count the mission relies on.',
+    )
     map_arg = DeclareLaunchArgument(
         'map', default_value=str(PKG / 'maps' / 'living_room.yaml'),
         description='Nav2 map yaml — living_room.yaml for sim/HIL, bedroom_real.yaml '
@@ -159,6 +166,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time'),
                      'hsv_config': LaunchConfiguration('hsv_config')}],
+        condition=IfCondition(LaunchConfiguration('ball_detector')),
     )
 
     # Resolves use_sim_time into our own corrected copy of nav2_params.yaml before
@@ -202,6 +210,7 @@ def generate_launch_description():
         log_level_arg,
         use_sim_time_arg,
         hsv_config_arg,
+        ball_detector_arg,
         map_arg,
         skip_nav2_arg,
         ekf_node,

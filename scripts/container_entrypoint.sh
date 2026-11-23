@@ -17,6 +17,9 @@
 #                        (design spec §ROBOT_MODE branching: standalone power-on can
 #                        never run a smoke test — robot_boot.sh hardcodes 'mission').
 #   USE_SIM_TIME        'true' (HIL) or 'false' (real robot) — both modes
+#   BALL_DETECTOR       'false' = mission mode does not start the hand-written ball
+#                        detector (2026-11-22: on the real robot the RF-DETR node
+#                        outside the container publishes the detections). Default true.
 #   HSV_CONFIG_FILE     filename under src/nav_fleet/config/
 #                       (hsv_gazebo.yaml or hsv_realcam.yaml) — both modes
 #   NAV2_MAP_FILE       filename under src/nav_fleet/maps/
@@ -101,6 +104,7 @@ case "$ROBOT_MODE" in
     (nohup ros2 launch nav_fleet nav2_only_launch.py \
        use_sim_time:="${USE_SIM_TIME}" \
        hsv_config:="/ros2_ws/src/nav_fleet/config/${HSV_CONFIG_FILE}" \
+       ball_detector:="${BALL_DETECTOR:-true}" \
        map:="/ros2_ws/src/nav_fleet/maps/${NAV2_MAP_FILE}" \
        > "$NAV2_LOG" 2>&1 < /dev/null &)
 

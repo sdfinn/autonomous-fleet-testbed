@@ -29,3 +29,18 @@ range_reference_width_px: 1280
 # A box this close to the frame edge gets no distance (a ball cut by the edge looks
 # narrow and would read too far).
 edge_margin_px: 4
+
+# Color of a ball-like box, read from the pixels in the middle of the box (hue in
+# degrees; a band may wrap through 0, as red does). The network finds the ball; this
+# only tells yellow from red, so the bands are wide on purpose. Measured inside the
+# boxes on 2026-11-22 (13 real pictures, lamp, daylight, curtain closed): yellow ball
+# hue 21-51 with 98-100% of the pixels voting; red ball 324-9 with 99-100% voting; the
+# dark green ball 100-213, or hue 37 with only 46% voting in dim light, which is why
+# color_min_fraction is 0.7. Known limit: a pink plush pig boxed as "apple" reads red.
+ball_colors:
+  yellow: [20, 70]
+  red: [300, 20]
+color_min_saturation: 0.25   # paler pixels than this do not vote
+color_min_value: 0.08        # darker pixels than this do not vote
+color_min_fraction: 0.7      # this share of the box's middle must vote, or no color
+color_min_agreement: 0.6     # this share of the votes must be in the winning band

@@ -32,7 +32,13 @@ class BallDetector(Node):
         self.declare_parameter('hsv_config', DEFAULT_CONFIG)
         self.cfg = load_hsv_config(self.get_parameter('hsv_config').value)
         self.pub = self.create_publisher(Detection2DArray, '/robot_001/detections', 10)
-        self.create_subscription(Image, '/robot_001/camera/image_raw', self._image_cb, 10)
+        # Queue of 1, not 10 (2026-11-22): this detector takes about 0.24 s a picture and
+        # the real camera sends 10 a second. With a queue of 10 it always worked on the
+        # oldest of ten waiting pictures, and its detections reached the mission about 3 s
+        # after the picture was taken (measured from a real run's bag): the robot reacted
+        # to where the ball had been 0.9 m ago. An old picture's detections are worse
+        # than none; keep only the newest.
+        self.create_subscription(Image, '/robot_001/camera/image_raw', self._image_cb, 1)
         self.get_logger().info(
             f"ball_detector up — colors {sorted(self.cfg['colors'])}, "
             f"range_k {self.cfg['range_k']}")

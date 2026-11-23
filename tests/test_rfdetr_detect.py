@@ -262,3 +262,66 @@ def test_cuda_library_is_looked_for_in_the_jetpack_folder_too(monkeypatch):
                         lambda path: (_ for _ in ()).throw(OSError('no')))
     with pytest.raises(RuntimeError, match='CUDA runtime library not found'):
         rfdetr_backends._Cuda._load('libcudart.so')
+
+
+# --- color of a ball-like box (2026-11-22) -----------------------------------------------
+def _scene(ball_rgb, floor_rgb=(150, 140, 120), size=80):
+    """A floor-colored picture with a filled disc of `ball_rgb`; returns (picture, box)."""
+    picture = np.empty((240, 320, 3), dtype=np.uint8)
+    picture[:] = floor_rgb
+    yy, xx = np.mgrid[0:240, 0:320]
+    picture[(yy - 120) ** 2 + (xx - 160) ** 2 <= (size // 2) ** 2] = ball_rgb
+    half = size // 2
+    return picture, (160 - half, 120 - half, 160 + half, 120 + half)
+
+
+def test_ball_color_tells_yellow_from_red_including_reds_two_ends_of_the_circle():
+    cfg = DEFAULTS
+    assert rfdetr_detect.ball_color(*_scene((220, 170, 30)), cfg) == 'yellow'    # hue 44
+    assert rfdetr_detect.ball_color(*_scene((200, 30, 40)), cfg) == 'red'        # hue 356
+    assert rfdetr_detect.ball_color(*_scene((200, 40, 110)), cfg) == 'red'       # 334, daylight
+    assert rfdetr_detect.ball_color(*_scene((210, 60, 30)), cfg) == 'red'        # hue 10
+
+
+def test_a_ball_of_another_color_or_no_color_gets_none():
+    cfg = DEFAULTS
+    assert rfdetr_detect.ball_color(*_scene((30, 90, 60)), cfg) is None          # dark green
+    assert rfdetr_detect.ball_color(*_scene((40, 80, 200)), cfg) is None         # blue
+    assert rfdetr_detect.ball_color(*_scene((180, 178, 175)), cfg) is None       # grey: no hue
+    assert rfdetr_detect.ball_color(*_scene((12, 6, 2)), cfg) is None            # too dark
+
+
+def test_too_few_voting_pixels_gives_no_color():
+    """2026-11-22: the dark green ball in dim light read hue 37 with 46% of its pixels
+    colored enough to vote; real yellow and red balls had 98-100%."""
+    picture, box = _scene((70, 68, 66))                   # a grey ball ...
+    picture[100:140, 140:158] = (220, 170, 30)            # ... with a yellow glint, under half
+    assert rfdetr_detect.ball_color(picture, box, DEFAULTS) is None
+
+
+def test_ball_color_reads_blue_green_red_pictures_when_told():
+    picture, box = _scene((220, 170, 30))
+    bgr = np.ascontiguousarray(picture[:, :, ::-1])
+    assert rfdetr_detect.ball_color(bgr, box, DEFAULTS, bgr=True) == 'yellow'
+    assert rfdetr_detect.ball_color(bgr, box, DEFAULTS) is None      # read as RGB it is blue
+
+
+def test_a_sliver_of_a_box_has_no_color():
+    picture, _ = _scene((220, 170, 30))
+    assert rfdetr_detect.ball_color(picture, (160, 120, 162, 122), DEFAULTS) is None
+
+
+class _BallBackend:
+    input_hw = (64, 64)
+
+    def infer(self, batch):
+        boxes, logits = _raw([(0, ORANGE, 0.7, 0.5, 0.5, 0.25, 0.333),     # the disc below
+                              (1, TEDDY, 0.6, 0.15, 0.2, 0.1, 0.1)])
+        return boxes[None], logits[None]
+
+
+def test_detector_colors_ball_like_boxes_only():
+    picture, _ = _scene((220, 170, 30))
+    by_name = {d.name: d for d in rfdetr_detect.Detector(_BallBackend()).detect(picture)}
+    assert by_name['orange'].color == 'yellow'
+    assert by_name['teddy bear'].color is None
