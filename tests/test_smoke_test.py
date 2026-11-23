@@ -190,7 +190,8 @@ def test_operator_place_ball_ops_prompts_with_inches(monkeypatch):
     OperatorPlaceBallOps().place('yellow', 0.305)
     assert len(prompts) == 1
     assert 'yellow' in prompts[0]
-    assert '12' in prompts[0]  # 0.305 m -> ~12 inches
+    # 0.305 m center to center = 0.1785 m (7.0 inches) from the robot's front edge
+    assert '7.0 inches' in prompts[0] and 'FRONT EDGE' in prompts[0]
 
 
 def _make_scan_360(range_by_bearing_deg, default_range=10.0):
@@ -354,7 +355,8 @@ def test_check_ball_correlation_gzballops_uses_raw_bearing_zero_not_real_hardwar
 
     def _publish_loop():
         while not stop_publishing.is_set():
-            scan_pub.publish(_make_scan_360({0: 0.305}))  # object at RAW bearing 0
+            scan_pub.publish(_make_scan_360({0: 0.212}))  # object at RAW bearing 0: what
+            # the lidar reads for a ball 0.305 m away center to center (0.305 - 0.05 - 0.043)
             det = Detection2D()
             hyp = ObjectHypothesisWithPose()
             hyp.hypothesis.class_id = 'yellow_ball'
@@ -376,7 +378,8 @@ def test_check_ball_correlation_gzballops_uses_raw_bearing_zero_not_real_hardwar
         node.destroy_node()
 
     assert result['pass'] is True
-    assert result['lidar_min_range_m'] == pytest.approx(0.305)
+    assert result['lidar_min_range_m'] == pytest.approx(0.212)
+    assert result['expected_lidar_range_m'] == pytest.approx(0.212)
     assert result['yellow_ball_detected'] is True
 
 
@@ -793,3 +796,27 @@ def test_run_smoke_test_logs_full_checks_dict_and_passthrough_args():
     assert checks['photo'] == photo_result
     assert checks['ball_correlation'] == ball_result
     assert checks['motion'] == motion_result
+
+
+# --- The lidar check compares like with like (2026-11-23) ---
+def test_expected_lidar_range_is_surface_from_the_lidar_not_center_from_the_robot():
+    """In the simulator the lidar read 0.666-0.669 m for a ball "0.75 m away" in four CI
+    runs, because it measures from the lidar to the ball's near surface. The check used
+    to compare that with 0.75 itself, leaving 2 cm of a 10 cm tolerance."""
+    from tools.smoke_test import (DISTANCE_TOLERANCE_M, REAL_BALL_RADIUS_M,
+                                  SIM_BALL_RADIUS_M, expected_lidar_range)
+    sim = expected_lidar_range(KNOWN_DISTANCE_M, SIM_BALL_RADIUS_M)
+    assert sim == pytest.approx(0.657)
+    # every reading CI has produced, the 0.643 outlier that failed included, is now
+    # well inside the tolerance
+    for seen in (0.6429, 0.6595, 0.6620, 0.6663, 0.6666, 0.6691, 0.6693):
+        assert abs(seen - sim) < DISTANCE_TOLERANCE_M / 4
+    assert expected_lidar_range(KNOWN_DISTANCE_M, REAL_BALL_RADIUS_M) == pytest.approx(0.661)
+
+
+def test_the_bench_prompt_gives_the_distance_from_the_front_edge(monkeypatch):
+    prompts = []
+    monkeypatch.setattr('builtins.input', lambda p: prompts.append(p) or '')
+    OperatorPlaceBallOps().place('yellow', 0.75)
+    # 0.75 m center to center = 0.6235 m = 24.5 inches from the front edge
+    assert '24.5 inches' in prompts[0] and '0.62' in prompts[0]

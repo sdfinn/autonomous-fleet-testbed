@@ -56,6 +56,25 @@ DEFAULT_PROFILE = str(REPO_DIR / 'robot_profiles' / 'jetson_ugv_pt.yaml')
 # check, not a copy of Mission 2's numbers.
 KNOWN_DISTANCE_M = 0.75
 DISTANCE_TOLERANCE_M = 0.102   # ~4 inches placement-imprecision tolerance — design spec §3
+# What the lidar should READ for a ball whose center is known_distance from the robot's
+# center (2026-11-23). The lidar measures from where it sits to the ball's near
+# surface, not center to center. Until this was written the check compared the raw
+# reading with known_distance itself: in the simulator it read 0.667 m for "0.75 m",
+# every time, so 8 of the 10 cm tolerance were used up by geometry and a 2.4 cm outlier
+# failed CI. Now like is compared with like, and the tolerance is all for placement.
+# lidar_joint x in ugv_pt.urdf.xacro; the real robot's transforms come from the same file
+LIDAR_FORWARD_M = 0.05
+ROBOT_HALF_LENGTH_M = 0.1265   # half of the 0.253 m footprint: center to front edge
+SIM_BALL_RADIUS_M = 0.043      # tools/mission2_harness.BALL_RADIUS
+REAL_BALL_RADIUS_M = 0.039     # the 7.8 cm croquet ball
+
+
+def expected_lidar_range(known_distance_m, ball_radius_m):
+    """The range the lidar should report for a ball straight ahead whose center is
+    known_distance_m from the robot's center."""
+    return known_distance_m - LIDAR_FORWARD_M - ball_radius_m
+
+
 FORWARD_ARC_HALF_WIDTH_RAD = math.radians(15)
 # True forward bearing, in the RAW lidar's own bearing convention (angle_min=0 at
 # the lidar's physical zero, NOT the robot's forward) -- found empirically 2026-08-10
@@ -158,9 +177,14 @@ class OperatorPlaceBallOps:
     hands are the actuator; smoke_test.py waits for them."""
 
     def place(self, color, distance_m):
-        inches = distance_m * 39.37
+        # distance_m is center to center. A tape measure starts at the robot's FRONT
+        # EDGE, so say that distance (2026-11-23: the prompt used to say only "in front
+        # of the robot", which left 13 cm open to interpretation).
+        from_front = distance_m - ROBOT_HALF_LENGTH_M
+        inches = from_front * 39.37
         height_inches = LIDAR_HEIGHT_REAL_M * 39.37
-        input(f"Place the {color} ball {inches:.0f} inches ({distance_m:.3f} m) "
+        input(f"Place the {color} ball so its CENTER is {inches:.1f} inches "
+              f"({from_front:.3f} m) from the robot's FRONT EDGE, "
               f"directly in front of the robot, ON A RISER/BOX so its CENTER sits "
               f"~{height_inches:.0f} inches ({LIDAR_HEIGHT_REAL_M:.2f} m) off the bench "
               f"surface (the lidar's own scan height — a floor-level ball is below "
@@ -243,9 +267,13 @@ def _forward_arc_min_range(msg, half_width_rad=FORWARD_ARC_HALF_WIDTH_RAD,
 
 def check_ball_correlation(node, ball_ops, known_distance_m=KNOWN_DISTANCE_M,
                            tolerance_m=DISTANCE_TOLERANCE_M, window_s=3.0):
-    """Design spec §3: PASS requires the lidar's measured range agrees with
-    known_distance_m within tolerance_m, AND a yellow_ball detection is present during
-    the window. Camera-estimated range is reported, not gated."""
+    """Design spec §3: PASS requires the lidar's measured range to agree, within
+    tolerance_m, with what it should read for a ball whose center is known_distance_m
+    from the robot's center (expected_lidar_range), AND a yellow_ball detection to be
+    present during the window. Camera-estimated range is reported, not gated."""
+    ball_radius_m = (SIM_BALL_RADIUS_M if isinstance(ball_ops, GzBallOps)
+                     else REAL_BALL_RADIUS_M)
+    expected_m = expected_lidar_range(known_distance_m, ball_radius_m)
     if isinstance(ball_ops, GzBallOps):
         # nav_fleet.ground_truth.get_ground_truth_xy() only parses the model's
         # world-frame POSITION (x, y) — not orientation/yaw (see its own
@@ -319,12 +347,13 @@ def check_ball_correlation(node, ball_ops, known_distance_m=KNOWN_DISTANCE_M,
     node.destroy_subscription(det_sub)
 
     lidar_ok = (scan_state['min_range'] is not None and
-                abs(scan_state['min_range'] - known_distance_m) <= tolerance_m)
+                abs(scan_state['min_range'] - expected_m) <= tolerance_m)
     detection_present = det_state['yellow_range_m'] is not None
     return {
         'pass': bool(lidar_ok and detection_present),
         'lidar_min_range_m': scan_state['min_range'],
         'known_distance_m': known_distance_m,
+        'expected_lidar_range_m': expected_m,
         'yellow_ball_detected': detection_present,
         'camera_estimated_range_m': det_state['yellow_range_m'],  # reported, not gated
     }
