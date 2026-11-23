@@ -116,6 +116,27 @@ def generate_launch_description():
                     'container) publishes /robot_001/detections instead: two detectors '
                     'on one topic would double the picture count the mission relies on.',
     )
+    # RF-DETR here (2026-11-23): for the local simulator and CI's simulator stage, where
+    # this launch file runs on the workstation and the network runs on its processor
+    # through ONNX Runtime (about 80 ms a picture). On the real robot the same node is
+    # started OUTSIDE the container by robot_boot.sh, because it needs the Jetson's GPU;
+    # there this stays false.
+    object_detector_arg = DeclareLaunchArgument(
+        'object_detector', default_value='false',
+        description='true = start the RF-DETR node (object_detector) here, publishing '
+                    '/robot_001/detections. Pass ball_detector:=false with it: two '
+                    'detectors on one topic double the picture count.',
+    )
+    detector_model_arg = DeclareLaunchArgument(
+        'detector_model',
+        default_value=str(pathlib.Path.home() / 'fleet-ci-data' / 'models' / 'rfdetr-small.onnx'),
+        description='RF-DETR network file for object_detector (.onnx, or .engine on a Jetson)',
+    )
+    detector_config_arg = DeclareLaunchArgument(
+        'detector_config', default_value=str(PKG / 'config' / 'detector_rfdetr_gazebo.yaml'),
+        description='object_detector settings: detector_rfdetr_gazebo.yaml for the '
+                    'simulated camera, detector_rfdetr.yaml for the real one',
+    )
     map_arg = DeclareLaunchArgument(
         'map', default_value=str(PKG / 'maps' / 'living_room.yaml'),
         description='Nav2 map yaml — living_room.yaml for sim/HIL, bedroom_real.yaml '
@@ -169,6 +190,20 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('ball_detector')),
     )
 
+    # The RF-DETR detector, same message and topic as the hand-written one. It exits
+    # with an error if the network file is missing, instead of running blind.
+    object_detector = Node(
+        package='nav_fleet',
+        executable='object_detector',
+        name='object_detector',
+        output='screen',
+        parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time'),
+                     'model_path': LaunchConfiguration('detector_model'),
+                     'config': LaunchConfiguration('detector_config'),
+                     'output_topic': '/robot_001/detections'}],
+        condition=IfCondition(LaunchConfiguration('object_detector')),
+    )
+
     # Resolves use_sim_time into our own corrected copy of nav2_params.yaml before
     # bringup_launch.py ever sees it -- see _resolve_use_sim_time_in_params's own
     # docstring for why this is necessary (bringup_launch.py's own rewrite mechanism
@@ -211,10 +246,14 @@ def generate_launch_description():
         use_sim_time_arg,
         hsv_config_arg,
         ball_detector_arg,
+        object_detector_arg,
+        detector_model_arg,
+        detector_config_arg,
         map_arg,
         skip_nav2_arg,
         ekf_node,
         ball_detector,
+        object_detector,
         resolve_params_action,
         nav2,
     ])

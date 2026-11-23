@@ -35,6 +35,7 @@ from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2DArray
 
 from nav_fleet import failure_bag
+from nav_fleet.detection import CAMERA_BY_WIDTH, GAZEBO_CAMERA, HAZARD, from_detector_msg
 from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.image_io import image_msg_to_png
 from nav_fleet.missions import (MISSIONS, REACTION_FRAMES, REACTION_RANGE_M,
@@ -110,6 +111,10 @@ class MissionRunner(Node):
             for srv in CLEAR_COSTMAP_SERVICES
         }
         self.reaction_events = []
+        # Which camera the detections' pixel columns belong to (for a Detection's
+        # bearing). Learned from the first picture's width in _image_cb: this process
+        # is not told whether it is on the simulator or the real robot.
+        self._camera = None
         # Per-waypoint verdict list (Task 13, Option B): one (label, verdict) per executed
         # step — 'PASS'/'FAIL'/'REACTION'. The mission verdict IS this checklist; main()
         # prints it as the round-trip audit trail.
@@ -121,6 +126,12 @@ class MissionRunner(Node):
 
     def _image_cb(self, msg):
         self._latest_image = msg
+        if self._camera is None:
+            self._camera = CAMERA_BY_WIDTH.get(msg.width, GAZEBO_CAMERA)
+            if msg.width not in CAMERA_BY_WIDTH:
+                self.get_logger().warning(
+                    f'no camera known for pictures {msg.width} wide: bearings will be '
+                    f'worked out as for the simulated camera')
 
     def _clear_costmaps(self, wait_s=3.0, call_s=3.0):
         """Clear both Nav2 costmaps before a navigate leg. Best-effort by design.
@@ -179,25 +190,22 @@ class MissionRunner(Node):
             return
         w = self._watch
         in_range = set()
-        for det in msg.detections:
-            if not det.results:
-                continue
-            color = det.results[0].hypothesis.class_id.removesuffix('_ball')
-            est_range = det.results[0].pose.pose.position.x
-            # math.isfinite rejects NaN — hsv_detect.detect_balls sets range_m to NaN
-            # for frame-edge-clipped bounding boxes (Task 9 fix, 2026-07-17): their
-            # width-derived range is unreliable and must not drive the trigger. A plain
-            # `est_range <= REACTION_RANGE_M[color]` would already be False for NaN
-            # (IEEE754), but the explicit check documents the exclusion instead of
-            # relying on that.
+        # nav_fleet.detection is the one place that reads the detector's message
+        # (2026-11-23). A Detection's distance_m is None when the detector sent NaN: a
+        # box cut off by the picture's edge has an unreliable width and must not drive
+        # the trigger (Task 9 fix, 2026-07-17). Only a HAZARD reacts: a class that is not
+        # in detection.OBJECTS ("sports ball" with no readable color, "teddy bear") is
+        # UNKNOWN and is ignored here.
+        for d in from_detector_msg(msg, camera=self._camera or GAZEBO_CAMERA):
+            color = d.class_name.removesuffix('_ball')
             # REACTION_RANGE_M[color] (Task 9 final batch, 2026-07-17): per-color
             # threshold — red=1.3 m (danger, react early), yellow=0.8 m (caution, closer
             # approach). Direct indexing is intentional: `color in w['reactions']` above
             # only admits colors that a mission actually declared a reaction for, and
             # every such color must have a matching threshold here — a missing key is a
             # real configuration bug that should raise, not be silently swallowed.
-            if (color in w['reactions'] and math.isfinite(est_range) and est_range > 0
-                    and est_range <= REACTION_RANGE_M[color]):
+            if (d.kind == HAZARD and color in w['reactions'] and d.distance_m is not None
+                    and d.distance_m <= REACTION_RANGE_M[color]):
                 in_range.add(color)
         for color in w['reactions']:
             if color in in_range:

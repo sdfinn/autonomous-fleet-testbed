@@ -178,10 +178,13 @@ def _detection_msg(entries):
     dets = []
     for class_id, rng in entries:
         hyp = types.SimpleNamespace(
-            hypothesis=types.SimpleNamespace(class_id=class_id),
+            hypothesis=types.SimpleNamespace(class_id=class_id, score=0.9),
             pose=types.SimpleNamespace(pose=types.SimpleNamespace(
                 position=types.SimpleNamespace(x=rng))))
-        dets.append(types.SimpleNamespace(results=[hyp]))
+        bbox = types.SimpleNamespace(
+            center=types.SimpleNamespace(position=types.SimpleNamespace(x=320.0, y=240.0)),
+            size_x=40.0, size_y=40.0)
+        dets.append(types.SimpleNamespace(results=[hyp], bbox=bbox))
     return types.SimpleNamespace(detections=dets)
 
 
@@ -211,6 +214,26 @@ def test_detection_cb_ignores_far_and_unwatched(runner):
     for _ in range(5):
         runner._detection_cb(_detection_msg([('red_ball', 2.5),      # beyond 1.0 m
                                              ('yellow_ball', 0.5)]))  # not watched
+    assert runner._watch['triggered'] is None
+
+
+def test_detection_cb_ignores_a_ball_with_no_trusted_distance(runner):
+    """NaN = the detector does not trust a distance (box cut off by the picture's edge)."""
+    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'counts': {},
+                     'triggered': None}
+    for _ in range(REACTION_FRAMES + 2):
+        runner._detection_cb(_detection_msg([('red_ball', float('nan'))]))
+    assert runner._watch['triggered'] is None
+
+
+def test_detection_cb_ignores_a_class_that_is_not_a_hazard(runner):
+    """RF-DETR publishes every class it knows. A ball whose color could not be read keeps
+    the network's name and must not react, however close; nor may a bare color name."""
+    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'counts': {},
+                     'triggered': None}
+    for _ in range(REACTION_FRAMES + 2):
+        runner._detection_cb(_detection_msg([('sports ball', 0.5), ('teddy bear', 0.5),
+                                             ('red', 0.5)]))
     assert runner._watch['triggered'] is None
 
 

@@ -23,7 +23,7 @@ import pathlib
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 
 LAUNCH_DIR = pathlib.Path(__file__).parent
 
@@ -40,18 +40,35 @@ def generate_launch_description():
                     'guard and a stand-in for the driver\'s wheel hold run in the sim',
     )
 
+    # Which detector the mission reacts to. 'hsv' = the hand-written color detector
+    # (still the default until CI's Jetson stage is on RF-DETR too); 'rfdetr' = the
+    # RF-DETR node, the real robot's detector, on this machine's processor.
+    detector_arg = DeclareLaunchArgument(
+        'detector', default_value='hsv', choices=['hsv', 'rfdetr'],
+        description='hsv = hand-written color detector; rfdetr = RF-DETR (object_detector)',
+    )
+    detector = LaunchConfiguration('detector')
+
     sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(LAUNCH_DIR / 'sim_only_launch.py')),
         launch_arguments={'obstacle_guard': LaunchConfiguration('obstacle_guard')}.items(),
     )
     nav2 = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(LAUNCH_DIR / 'nav2_only_launch.py')),
-        launch_arguments={'start_delay': '13.0', 'log_level': LaunchConfiguration('log_level')}.items(),
+        launch_arguments={
+            'start_delay': '13.0',
+            'log_level': LaunchConfiguration('log_level'),
+            'ball_detector': PythonExpression(
+                ["'true' if '", detector, "' == 'hsv' else 'false'"]),
+            'object_detector': PythonExpression(
+                ["'true' if '", detector, "' == 'rfdetr' else 'false'"]),
+        }.items(),
     )
 
     return LaunchDescription([
         log_level_arg,
         obstacle_guard_arg,
+        detector_arg,
         sim,
         nav2,
     ])

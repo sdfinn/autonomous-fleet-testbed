@@ -82,12 +82,15 @@ JETSON_USER = os.environ.get('JETSON_USER', 'mike')
 JETSON_REPO = '~/autonomous-fleet-testbed'
 STATE_DIR = os.environ.get('STATE_DIR', '/tmp/hil_stage')
 POWER_MODE_LABEL = os.environ.get('POWER_MODE', '25W')
+# Which detector the Jetson stage runs: 'hsv' (hand-written, inside the container) or
+# 'rfdetr' (the RF-DETR node outside it, started by scripts/hil_stage.sh day).
+HIL_DETECTOR = os.environ.get('HIL_DETECTOR', 'hsv')
 
 # Orphan-sweep pattern (CLAUDE.md Gotchas): every process a Gazebo+Nav2 launch spawns that
 # would poison the next run's DDS domain if it lingered. Kept in sync with ci.yml stage-2
 # and scripts/hil_stage.sh teardown.
 _SWEEP_PATTERNS = (
-    'parameter_bridge|component_container_isolated|ekf_node|ball_detector',
+    'parameter_bridge|component_container_isolated|ekf_node|ball_detector|object_detector',
     'static_transform_publisher|robot_state_publisher',
 )
 
@@ -226,6 +229,10 @@ class JetsonExecutor(MissionExecutor):
             "-v $HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports "
             "-v $HOME/fleet-ci-data:/root/fleet-ci-data "
             "-e USE_SIM_TIME=true -e HSV_CONFIG_FILE=hsv_gazebo.yaml "
+            # HIL_DETECTOR=rfdetr (hil_stage.sh day, 2026-11-23): the RF-DETR node is
+            # already running on the Jetson outside the container, so the container
+            # must not start the hand-written detector on the same topic.
+            f"-e BALL_DETECTOR={'false' if HIL_DETECTOR == 'rfdetr' else 'true'} "
             "-e NAV2_MAP_FILE=living_room.yaml "
             # ROBOT_MODE is required by container_entrypoint.sh (2026-08-06 smoke-test
             # plan, Task 8) — mission, always: this executor only ever runs the daily
@@ -401,7 +408,7 @@ class JetsonExecutor(MissionExecutor):
 # ── Stack lifecycle (sim mode only; HIL's stack is owned by scripts/hil_stage.sh) ───────────
 _GZ_SERVER_PATTERN = 'gz sim -s'
 _LEFTOVER_PATTERN = ('gz sim|component_container|robot_state_publisher|ros2 launch|'
-                     'parameter_bridge|static_transform|ekf_node|ball_detector')
+                     'parameter_bridge|static_transform|ekf_node|ball_detector|object_detector')
 
 
 def sweep_orphans():
@@ -423,7 +430,7 @@ def sweep_orphans():
         log.info('sweep left another ROS domain alone: ' + proc_sweep.describe(proc))
 
 
-def launch_stack(log_path):
+def launch_stack(log_path, detector='hsv'):
     """Launch Gazebo + Nav2 (headless server) in its OWN process group and wait until Nav2
     is active. Returns the Popen. The GUI viewer, when wanted, is a SEPARATE `gz sim -g`
     client (this machine's Gazebo GUI crashes when co-launched — CLAUDE.md) — the report
@@ -433,7 +440,7 @@ def launch_stack(log_path):
     log.info('launching Gazebo + Nav2 (headless) ...')
     logf = open(log_path, 'w')
     proc = subprocess.Popen(
-        ['ros2', 'launch', LAUNCH_FILE],
+        ['ros2', 'launch', LAUNCH_FILE, f'detector:={detector}'],
         cwd=str(REPO_DIR), stdout=logf, stderr=subprocess.STDOUT,
         start_new_session=True)   # own process group => killpg SIGINTs the whole tree
     deadline = time.time() + STACK_READY_TIMEOUT_S
@@ -860,6 +867,10 @@ def main():
     parser.add_argument('--no-launch', action='store_true',
                         help='assume the stack is already up (do not launch/teardown it). '
                              'Implied by --executor jetson (hil_stage.sh owns the HIL stack).')
+    parser.add_argument('--detector', choices=['hsv', 'rfdetr'], default='hsv',
+                        help='which detector the launched stack runs (sim_launch.py '
+                             'detector:=...). Ignored with --no-launch: the stack that is '
+                             'already up decides.')
     parser.add_argument('--log', default='/tmp/mission2_day_sim.log')
     parser.add_argument('--ingest-vlm-canary', action='store_true',
                         help='pull back and log the Jetson\'s own on-device VLM canary '
@@ -892,7 +903,7 @@ def main():
     ok = False
     try:
         if not no_launch:
-            proc = launch_stack(args.log)
+            proc = launch_stack(args.log, args.detector)
         if hil:
             executor = JetsonExecutor(os.environ.get('JETSON_IP'), STATE_DIR)
             executor.spawn_vlm_warmup()

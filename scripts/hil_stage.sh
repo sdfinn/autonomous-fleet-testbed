@@ -236,10 +236,77 @@ day() {
   ws_source
   local live_power_label
   live_power_label="$(real_power_mode_label)"
+  # HIL_DETECTOR (2026-11-23): rfdetr (default) = the RF-DETR node runs on the Jetson
+  # OUTSIDE the container, on its GPU, exactly as on the real robot (robot_boot.sh), and
+  # the container does not start the hand-written detector. hsv = the old arrangement.
+  local detector="${HIL_DETECTOR:-rfdetr}" rc=0
+  if [ "$detector" = "rfdetr" ]; then
+    detector_up
+  fi
   RUNNER_TYPE=hil_jetson POWER_MODE="${live_power_label}" JETSON_IP="${JETSON_IP}" \
-    JETSON_USER="${JETSON_USER}" STATE_DIR="${STATE_DIR}" \
+    JETSON_USER="${JETSON_USER}" STATE_DIR="${STATE_DIR}" HIL_DETECTOR="${detector}" \
     PYTHONUNBUFFERED=1 python3 -u -m tools.mission2_day --executor jetson --no-launch \
-      --hold-s "${DAY_HOLD_S:-0}"
+      --hold-s "${DAY_HOLD_S:-0}" || rc=$?
+  if [ "$detector" = "rfdetr" ]; then
+    detector_down
+  fi
+  return "$rc"
+}
+
+DETECTOR_LOG_REMOTE='/tmp/hil_object_detector.log'
+
+detector_up() {
+  # The RF-DETR node on the Jetson, bare-metal (it needs the GPU; the image has no
+  # TensorRT). Pictures come from the workstation's Gazebo over the network, so it gets
+  # the simulated camera's settings file and simulator time. It publishes
+  # /robot_001/detections, the topic the mission in the container reacts to.
+  # The Jetson's install is a --symlink-install build and `sync` does not rebuild: the
+  # settings file is therefore given by its path in the checkout, and
+  # ensure_nav_fleet_built.sh builds only if the object_detector command is missing.
+  # The engine file is built once on the Jetson from the .onnx file (rfdetr_backends.py).
+  local engine="${HIL_DETECTOR_MODEL:-\$HOME/fleet-ci-data/models/rfdetr-small.engine}"
+  echo '=== [detector-up] starting the RF-DETR node on the Jetson (budget 90s) ==='
+  jssh "test -f ${engine}" || {
+    echo "FATAL: RF-DETR engine ${engine} not found on the Jetson (build it there: trtexec --onnx=rfdetr-small.onnx --saveEngine=rfdetr-small.engine --fp16)" >&2
+    return 1; }
+  detector_down
+  # set -m around the backgrounded line: without it a non-interactive shell's background
+  # job ignores SIGINT, and detector_down could not stop it cleanly (same pattern and
+  # reason as smoke() below).
+  jssh "cd ${JETSON_REPO} && \
+    (source /opt/ros/jazzy/setup.bash; bash scripts/ensure_nav_fleet_built.sh \$HOME/autonomous-fleet-testbed; \
+     source install/setup.bash; bash scripts/regen_cyclonedds_config.sh; \
+     export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0 CYCLONEDDS_URI=file://\$HOME/cyclonedds-hil.xml; \
+     rm -f ${DETECTOR_LOG_REMOTE}; \
+     set -m; \
+     nohup ros2 run nav_fleet object_detector --ros-args \
+       -p use_sim_time:=true \
+       -p model_path:=${engine} \
+       -p config:=\$HOME/autonomous-fleet-testbed/src/nav_fleet/config/detector_rfdetr_gazebo.yaml \
+       -p output_topic:=/robot_001/detections \
+       > ${DETECTOR_LOG_REMOTE} 2>&1 < /dev/null & \
+     set +m)"
+  local deadline=$((SECONDS + 90))
+  until jssh "grep -q 'detector ready' ${DETECTOR_LOG_REMOTE} 2>/dev/null"; do
+    if (( SECONDS >= deadline )); then
+      echo 'FATAL: RF-DETR node not ready within 90s — its log:' >&2
+      jssh "tail -n 40 ${DETECTOR_LOG_REMOTE}" >&2 || true
+      return 1
+    fi
+    sleep 3
+  done
+  jssh "grep 'detector ready' ${DETECTOR_LOG_REMOTE}" || true
+}
+
+detector_down() {
+  # Stop the RF-DETR node and keep its log as evidence. The PID is picked by the
+  # process's command line with the [o] trick so the pattern cannot match this ssh's own
+  # shell; SIGINT first so the node closes the GPU engine, SIGKILL if it is still there.
+  jssh "pkill -INT -f '[o]bject_detector --ros-args' 2>/dev/null; sleep 2; \
+        pkill -9 -f '[o]bject_detector --ros-args' 2>/dev/null; true" || true
+  mkdir -p "$STATE_DIR"
+  scp -q -o BatchMode=yes "${JETSON_USER}@${JETSON_IP}:${DETECTOR_LOG_REMOTE}" \
+    "${STATE_DIR}/object_detector_jetson.log" 2>/dev/null || true
 }
 
 ws_source() {
@@ -482,7 +549,7 @@ teardown() {
     # starts bare-metal weren't part of this sweep at all -- a general `hil_stage.sh
     # teardown` call couldn't clean up an orphaned driver layer (e.g. after a crash
     # that skipped smoke()'s own cleanup_smoke trap).
-    jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner|[e]kf_node|[b]all_detector|[d]rivers_only_launch|[e]sp32_driver|[l]dlidar|[d]epthai|[s]can_masker|[c]amera_relay' || true" || true
+    jssh "pkill -9 -f '[n]av2|[c]omponent_container|[m]ission_runner|[e]kf_node|[b]all_detector|[o]bject_detector|[d]rivers_only_launch|[e]sp32_driver|[l]dlidar|[d]epthai|[s]can_masker|[c]amera_relay' || true" || true
     # The mission() process runs inside the container's own PID namespace — invisible to the
     # host-side pkill above. A fixed --name (hil_mission) lets teardown reach it directly.
     # Best-effort: no-op when docker is absent or nothing is running, and must never fail
@@ -521,7 +588,8 @@ teardown() {
   # run, where nav2_only_launch.py, and therefore ball_detector, runs on this same box.
   ( cd "$REPO_DIR" && python3 -m tools.proc_sweep \
       'gz sim' 'parameter_bridge' 'component_container' 'robot_state_publisher' \
-      'sim_only_launch' 'static_transform_publisher' 'ball_detector' ) || true
+      'sim_only_launch' 'static_transform_publisher' 'ball_detector' \
+      'object_detector' ) || true
   echo '=== [teardown] done ==='
   return 0
 }

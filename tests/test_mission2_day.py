@@ -1067,3 +1067,51 @@ def test_run_day_calls_maybe_spawn_vlm_canary_once_per_leg(monkeypatch):
     ok = run_day(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
     assert ok is True
     assert calls == ['no_ball', 'yellow', 'red']
+
+
+# ── Which detector the Jetson stage and the local launch run (2026-11-23) ────────────────────
+@pytest.mark.parametrize('hil_detector, expected', [('rfdetr', 'false'), ('hsv', 'true')])
+def test_run_day_tells_the_container_whether_to_start_the_hand_written_detector(
+        monkeypatch, tmp_path, hil_detector, expected):
+    """With RF-DETR running on the Jetson outside the container, the container must not
+    start the hand-written detector: two detectors on /robot_001/detections double the
+    picture count the mission's reaction rule relies on."""
+    monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
+    monkeypatch.setattr(mission2_day_module, 'HIL_DETECTOR', hil_detector)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        out = _day_result_stdout([_leg(), _leg(), _leg()]) if cmd[0] == 'timeout' else ''
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout=out, stderr='')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_pull_photos_from_paths',
+                        lambda self, paths: list(paths))
+    JetsonExecutor('10.42.0.217', str(tmp_path)).run_day()
+
+    ssh_cmd = next(c for c in calls if 'ssh' in c and 'timeout' in c)
+    assert f'-e BALL_DETECTOR={expected} ' in ssh_cmd[-1]
+
+
+def test_launch_stack_passes_the_detector_choice_to_the_launch_file(monkeypatch, tmp_path):
+    seen = {}
+
+    class _Proc:
+        returncode = 0
+
+        def poll(self):
+            return None
+
+    def fake_popen(cmd, **kwargs):
+        seen['cmd'] = cmd
+        return _Proc()
+
+    log_path = tmp_path / 'stack.log'
+    monkeypatch.setattr(mission2_day_module, 'sweep_orphans', lambda: None)
+    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', fake_popen)
+    monkeypatch.setattr(mission2_day_module, 'STACK_READY_TIMEOUT_S', 0.0)
+    with pytest.raises(RuntimeError, match='not ready'):   # times out at once
+        mission2_day_module.launch_stack(str(log_path), detector='rfdetr')
+    assert seen['cmd'][-1] == 'detector:=rfdetr'

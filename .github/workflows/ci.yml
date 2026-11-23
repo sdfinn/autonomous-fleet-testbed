@@ -299,7 +299,7 @@ jobs:
         # 2026-07-15 red run had 8,716 "jump back in time" warnings from exactly this,
         # presenting as "Goal rejected after all retries". Sweep before launch.
         run: |
-          python3 -m tools.proc_sweep "parameter_bridge|component_container_isolated|ekf_node|ball_detector" || true
+          python3 -m tools.proc_sweep "parameter_bridge|component_container_isolated|ekf_node|ball_detector|object_detector" || true
           python3 -m tools.proc_sweep "static_transform_publisher|robot_state_publisher" || true
           python3 -m tools.proc_sweep --signal TERM "gz sim" || true
           sleep 3
@@ -315,11 +315,16 @@ jobs:
           # lost once the step ends, so a failure window has zero Nav2 output to diagnose
           # (Session 16 — the first red run had no planner_server lines at all).
           : > /tmp/stage2_sim.log
+          # detector:=rfdetr (2026-11-23): the simulator stage runs the real robot's detector
+          # (RF-DETR, on this runner's processor through ONNX Runtime). Two things it needs
+          # live outside the repo; say so here instead of failing later as a missed reaction.
+          test -f "$HOME/fleet-ci-data/models/rfdetr-small.onnx" || { echo "FATAL: RF-DETR model file missing: ~/fleet-ci-data/models/rfdetr-small.onnx (copy it from the Jetson)"; exit 1; }
+          /usr/bin/python3 -c "import onnxruntime" || { echo "FATAL: the system Python has no onnxruntime (/usr/bin/python3 -m pip install --user --break-system-packages --no-deps onnxruntime)"; exit 1; }
           # obstacle_guard:=true (2026-11-20): the real robot's obstacle guard and a
           # stand-in for the motor driver's wheel hold run in the simulator for this whole
           # stage, as they do on every real mission. tests/test_sim_box_guard.py needs
           # it; the other tests must keep passing with it watching (zero false holds).
-          ros2 launch src/nav_fleet/launch/sim_launch.py obstacle_guard:=true \
+          ros2 launch src/nav_fleet/launch/sim_launch.py obstacle_guard:=true detector:=rfdetr \
             > /tmp/stage2_sim.log 2>&1 &
           sleep 20
 
@@ -385,7 +390,7 @@ jobs:
       # sensors_only_launch.py's own design intent.
       - name: Sweep stale sim processes before smoke-test regression
         run: |
-          python3 -m tools.proc_sweep "parameter_bridge|component_container_isolated|ekf_node|ball_detector" || true
+          python3 -m tools.proc_sweep "parameter_bridge|component_container_isolated|ekf_node|ball_detector|object_detector" || true
           python3 -m tools.proc_sweep "static_transform_publisher|robot_state_publisher" || true
           python3 -m tools.proc_sweep --signal TERM "gz sim" || true
           sleep 3
@@ -504,7 +509,7 @@ jobs:
       - name: Shutdown sim (full pattern — a bare "gz sim" pkill leaves bridge/TF orphans)
         if: always()
         run: |
-          python3 -m tools.proc_sweep "parameter_bridge|component_container_isolated|ekf_node|ball_detector" || true
+          python3 -m tools.proc_sweep "parameter_bridge|component_container_isolated|ekf_node|ball_detector|object_detector" || true
           python3 -m tools.proc_sweep "static_transform_publisher|robot_state_publisher" || true
           python3 -m tools.proc_sweep --signal TERM "gz sim" || true
 
