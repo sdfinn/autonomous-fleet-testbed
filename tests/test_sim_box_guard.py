@@ -14,8 +14,8 @@ Two situations, both with a box dropped onto the path Nav2 has planned and LEFT 
 
   1. Open floor. The lidar puts the box into the planner's costmap, the path is planned
      again every second, and the robot drives around it and reaches its goal.
-  2. No way around (the funnel between the doorway, a wall and the dresser, where the
-     box leaves less than the robot's planning circle on either side). The robot must
+  2. No way around (the box in the middle of the 0.71 m doorway, which leaves 0.2 m on
+     either side: less than the robot is wide). The robot must
      stay clear of the box, the goal must END as failed instead of standing there for
      minutes, and the robot must be able to drive on to another goal afterward.
 
@@ -43,12 +43,15 @@ from tools import sim_box  # noqa: E402
 # Drop the box once the robot has driven this far ...
 SPAWN_AFTER_M = 0.30
 # ... this far ahead of it along the planned path (home -> sphere_approach is about
-# 3.6 m of path). 2.9 m is the middle of the bedroom, open floor on every side. 2.2 m is
-# 0.9 m inside the doorway, in the funnel described above. Both are far enough ahead
-# that the lidar has seen the new model (headless rendering shows a spawned model up to
-# ~1.5 s late, 0.45 m at cruise speed) well before the robot arrives.
+# 3.6 m of path). 2.9 m is the middle of the bedroom, open floor on every side: far
+# enough ahead that the lidar has seen the new model (headless rendering shows a spawned
+# model up to ~1.5 s late, 0.45 m at cruise speed) well before the robot arrives.
 BOX_AHEAD_OPEN_M = 2.90
-BOX_AHEAD_FUNNEL_M = 2.20
+# The no-way-around box goes in the middle of the doorway, about 1 m ahead at that
+# moment. Until the planning circle went from 0.48 m to 0.38 m (2026-11-23) this test
+# used a spot 0.9 m inside the door that was only blocked for the larger circle; with
+# the smaller one the robot rightly drove past it.
+BOX_IN_DOORWAY = SEMANTIC_MAP['doorway_center']
 # A goal with no way around must end by itself well inside this. Measured 2026-11-23:
 # 40-55 s when the planner finds no path at all, 113 s when the box leaves a marginal
 # gap and the robot is held at it again and again (6 tries, each after 10 s without
@@ -150,9 +153,10 @@ def _require_simulator_with_guard(nav):
         'obstacle_guard:=true')
 
 
-def _drive_with_a_box_left_on_the_path(nav, box_ahead_m, timeout_s):
+def _drive_with_a_box_left_on_the_path(nav, box_ahead_m, timeout_s, box_at=None):
     """From home toward the marker; once moving, drop a box `box_ahead_m` along the
-    planned path and leave it. Returns (reached, seen, watch) with the box REMOVED."""
+    planned path (or at `box_at`) and leave it. Returns (reached, seen, watch) with the
+    box REMOVED."""
     home = SEMANTIC_MAP['home_base']
     goal = SEMANTIC_MAP['sphere_approach']
     start = get_ground_truth_xy()
@@ -170,7 +174,7 @@ def _drive_with_a_box_left_on_the_path(nav, box_ahead_m, timeout_s):
             xy = nav._pose_xy()
             if xy is None or watch.plan is None or math.dist(xy, home) < SPAWN_AFTER_M:
                 return None
-            box = _point_ahead(watch.plan, xy, box_ahead_m)
+            box = box_at if box_at is not None else _point_ahead(watch.plan, xy, box_ahead_m)
             if box is not None:
                 sim_box.spawn_box(*box)
                 seen['box'] = box
@@ -227,13 +231,13 @@ def test_the_robot_drives_around_a_box_in_open_floor(nav):
 def test_a_box_with_no_way_around_ends_the_goal_and_leaves_the_robot_usable(nav):
     _require_simulator_with_guard(nav)
     reached, seen, watch = _drive_with_a_box_left_on_the_path(
-        nav, BOX_AHEAD_FUNNEL_M, NO_WAY_TIMEOUT_S)
+        nav, None, NO_WAY_TIMEOUT_S, box_at=BOX_IN_DOORWAY)
     took_s = seen['goal_took_s']          # the goal itself, not the drive home before it
 
     _assert_never_touched(seen)
     assert reached is False, (
-        f"the robot reached the goal past a box at {seen['box']} that should leave no way "
-        'through for its planning circle: the funnel case is not being tested any more')
+        f"the robot reached the goal past a box at {seen['box']} in the middle of the "
+        'doorway: either it squeezed past (how?) or the box was not where it should be')
     # The goal ended because Nav2 gave up, not because our own wait ran out.
     assert took_s < NO_WAY_TIMEOUT_S - 30.0, (
         f'the goal was still running after {took_s:.0f} s: nothing ended it '

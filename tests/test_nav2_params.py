@@ -78,3 +78,16 @@ def test_a_stand_still_ends_in_seconds_and_a_turn_on_the_spot_counts_as_progress
     assert checker['plugin'] == 'nav2_controller::PoseProgressChecker'
     assert checker['movement_time_allowance'] <= 15.0
     assert 0.0 < checker['required_movement_angle'] <= 0.5
+
+
+def test_the_planning_circle_holds_the_robot_at_any_heading_and_is_not_padded_beyond_need():
+    """The robot turns on the spot, so the circle must reach past its corners. Mike
+    measured the real robot at about 32 cm corner to corner (0.16 m from the center) and
+    set the circle to 38 cm on 2026-11-23. 0.24 (an older, larger model's diagonal) made
+    the planner refuse every gap under 0.48 m, including a 0.75 m doorway with a 15 cm
+    box against one side."""
+    measured_corner_reach_m = 0.16
+    for name in ('global_costmap', 'local_costmap'):
+        params = _all()[name][name]['ros__parameters']
+        assert measured_corner_reach_m + 0.02 <= params['robot_radius'] <= 0.21, name
+        assert params['inflation_layer']['inflation_radius'] > params['robot_radius'], name
