@@ -92,9 +92,20 @@ run.** Detail: `docs/sessions/2026-11-23.md`, `docs/detection-history.md`.
   load" is not it. `nav_runner.py` now logs where the robot stood on any goal Nav2 does
   not complete (`describe_failed_goal`), and on the fifth occurrence it said: 0.22 m
   from the goal (goal circle 0.15 m), still for 42 s. The stall is in the FINAL
-  APPROACH, not at the doorway. 2 of 4 CI runs today, 0 of 3 local copies. Untested
-  idea: the approach speed is too low to move the simulated robot; record
-  `/robot_001/cmd_vel` during a stall before changing anything.
+  APPROACH, not at the doorway: the recorded commands show forward 0 and the turn
+  command swinging -0.5/+0.5 rad/s every 0.8 s (a limit cycle in "rotate toward the
+  path"). It reproduces locally ONLY WITHOUT A DISPLAY, which is how the CI service
+  runs (software rendering): `env -u DISPLAY -u XAUTHORITY -u WAYLAND_DISPLAY`. Run
+  local copies of the simulator stage that way. First drives without a display:
+  `max_angular_accel: 10.0` stalled 5 of 13, the default 3.2 stalled 0 of 11 (p = 0.03).
+  NOT changed (10.0 stops the real robot's final-heading overshoot): Mike's decision,
+  recommended first job next session.
+- **ONNX Runtime's defaults used about 16 cores** for the detector on the workstation;
+  now 8 threads, no spinning: 80 ms a picture, 5 cores (`rfdetr_backends.ONNX_THREADS`).
+- **The smoke test's lidar check has 2 cm of margin** (0.667 m typical against 0.75 m
+  with a 0.102 m tolerance: surface-from-lidar vs center-from-robot). Failed once in CI
+  today. Not changed; the same rule serves the attended bench test.
+- **`main`'s head has no green CI run**; the last fully green one is `cbd2b12`.
 - **Removed switches:** `ROBOT_BOOT_SHADOW_DETECTOR`, `ROBOT_BOOT_DETECTOR`,
   `HSV_CONFIG_FILE`, `BALL_DETECTOR`, launch arguments `hsv_config` / `ball_detector`.
   `ROBOT_BOOT_RFDETR=<file>` now only names another model file.
