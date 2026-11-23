@@ -20,8 +20,8 @@ down, events come up (`docs/goals-and-events.md`, milestones M1-M6).
 
 **History lives in `docs/claude-history.md`** — a verbatim snapshot of this file as of
 2026-11-14 (full session narratives, superseded "NEXT SESSION" blocks, long-form gotcha
-write-ups with the evidence behind them), plus a section "Moved from CLAUDE.md
-2026-11-22" (older session paragraphs). This file keeps only the current status and
+write-ups with the evidence behind them), plus sections "Moved from CLAUDE.md
+2026-11-22" and "... 2026-11-23" (older session paragraphs). This file keeps only the current status and
 the durable rules. When a rule below says "see history," grep that file for its
 keyword. Keep this file under ~40k chars: when a session's write-up is done, append the
 long version to the history file and leave a short summary here.
@@ -184,21 +184,11 @@ the real robot, wheels up: `tools/bench_stop_on_silence.py` PASS (0.45 s), `--le
 FAIL as predicted, and `kill -9` on `esp32_driver` during a real mission stopped the
 wheels in 0.33 s. Repeat after any firmware update or change to how motion is sent.
 
-**2026-11-20 session** (`docs/sessions/2026-11-20.md`), five floor runs:
-- **Box in the path: PASSED** (held 0.22 m short, drove on when the box was lifted; the
-  beep is too quiet). **Simulated box test** is in CI (`sim_only_launch.py
-  obstacle_guard:=true`, `sim_wheel_hold`, `tools/sim_box.py`,
-  `tests/test_sim_box_guard.py`); 14 of 15 local runs passed, one failure unexplained.
-- **Frozen IMU:** `ImuHealth` (`esp32_protocol.py`); the driver refuses motion and
-  `robot_boot.sh` will not start without `imu ok`. Never seen to trip on the real robot.
-- **Dresser stall:** the guard held the robot and then NOTHING happened. No back-away,
-  no re-plan, no start-pose check.
-- **Ball detection:** the floor rule (`floor:` section in a camera profile) fixed
-  daylight; red reacted on the robot, yellow missed by one frame (two inside 0.8 m,
-  three needed). (That detector and `hsv_realcam.yaml` were removed 2026-11-23.)
-- **WiFi address change killed a mission.** After unplugging the Ethernet, wait for the
-  address to settle (`hostname -I` twice, a minute apart) before starting a run.
-- Mast camera recorder: `~/robot_boot_debug/mast_record.py` on the Jetson (`docs/cameras.md` 9-15).
+**2026-11-20 session** (`docs/sessions/2026-11-20.md`; the full paragraph is in
+`docs/claude-history.md`, "Moved from CLAUDE.md 2026-11-23"): box in the path PASSED on
+the floor and is in CI as a simulated test; frozen-IMU check (`ImuHealth`); the dresser
+stall (nothing follows a hold); a WiFi address change killed a mission (wait for the
+address to settle before a run); mast camera recorder `~/robot_boot_debug/mast_record.py`.
 
 **Mike's direction (2026-11-20):** the practical target is "rove around the whole house
 and give me an inventory of where all the dog toys are"; ball-detection polish is

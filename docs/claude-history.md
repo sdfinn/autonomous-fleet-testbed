@@ -2557,3 +2557,23 @@ Alignment Layer + Real Onboard Autonomy → R3 Fleet & Input Expansion, Real SLA
 Autonomy & Perception. The former R4 (Autonomy & Perception) and R5 (Self-Testing
 Fleet) are no longer standalone releases — their content was folded into R3 and the
 long-range ideas doc. Drone CUT (revivable with a written reason).
+
+## Moved from CLAUDE.md 2026-11-23
+
+The 2026-11-20 session paragraph, verbatim as it stood in CLAUDE.md on 2026-11-23.
+
+**2026-11-20 session** (`docs/sessions/2026-11-20.md`), five floor runs:
+- **Box in the path: PASSED** (held 0.22 m short, drove on when the box was lifted; the
+  beep is too quiet). **Simulated box test** is in CI (`sim_only_launch.py
+  obstacle_guard:=true`, `sim_wheel_hold`, `tools/sim_box.py`,
+  `tests/test_sim_box_guard.py`); 14 of 15 local runs passed, one failure unexplained.
+- **Frozen IMU:** `ImuHealth` (`esp32_protocol.py`); the driver refuses motion and
+  `robot_boot.sh` will not start without `imu ok`. Never seen to trip on the real robot.
+- **Dresser stall:** the guard held the robot and then NOTHING happened. No back-away,
+  no re-plan, no start-pose check.
+- **Ball detection:** the floor rule (`floor:` section in a camera profile) fixed
+  daylight; red reacted on the robot, yellow missed by one frame (two inside 0.8 m,
+  three needed). (That detector and `hsv_realcam.yaml` were removed 2026-11-23.)
+- **WiFi address change killed a mission.** After unplugging the Ethernet, wait for the
+  address to settle (`hostname -I` twice, a minute apart) before starting a run.
+- Mast camera recorder: `~/robot_boot_debug/mast_record.py` on the Jetson (`docs/cameras.md` 9-15).
