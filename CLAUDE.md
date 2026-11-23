@@ -73,7 +73,23 @@ can still be judged PASS (verified true here 2026-11-16; not fixed).
 - **On the Jetson** (TensorRT `trtexec`, already installed): RF-DETR small 96 pictures
   a second, 0.2 GB, fine beside the describer. The camera's 10 pictures a
   second is now the limit. An engine is built on the Jetson (about 3 min), from ONNX.
-- **Detector node built, bench-tested, not yet on the floor:** `object_detector`
+- **Floor run in shadow mode done (evening): the hand-written detector's results reach
+  the mission about 3 s after the picture was taken** (RF-DETR shadow: 1 s). That, not
+  the frame count, is why yellow does not react: nine pictures in a row had it in
+  range, and they arrived as the leg ended. Likely `ball_detector.py:35`'s subscription
+  queue of 10 with a consumer slower than the camera. **Retest with a queue of 1
+  (mounted for one run): 1.39 s, and the yellow reaction fired for the first time on
+  the real robot.** With no ball in the room the hand-written detector reported "red"
+  in about 60 pictures; RF-DETR none. Both detectors are still 1-1.4 s behind during a
+  mission (0.45 s idle): unexplained. Evidence `reports/robot_boot_20261122_shadow/`,
+  `reports/robot_boot_20261122_q1/`; `docs/sessions/2026-11-22.md` sections 8-9.
+- **RF-DETR is to be the robot's detector (Mike, evening): `ROBOT_BOOT_RFDETR=1`.** It
+  publishes `/robot_001/detections`; the container's hand-written detector is switched
+  off (`BALL_DETECTOR=false`, launch argument `ball_detector`). Yellow from red is read
+  from the color INSIDE the network's box (`ball_color`), published as `yellow_ball` /
+  `red_ball`, so the mission script is unchanged. The simulator and CI still use the
+  hand-written detector (now with a queue of 1): bringing them onto RF-DETR is next.
+- **Detector node built and run on the floor in shadow mode:** `object_detector`
   (`rfdetr_detect.py`, `rfdetr_backends.py`), shadow mode on
   `/robot_001/detections_shadow`; `ROBOT_BOOT_SHADOW_DETECTOR=1` starts it from
   `robot_boot.sh`. Matches the reference implementation; 10 pictures a second live on
