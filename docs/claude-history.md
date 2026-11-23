@@ -2577,3 +2577,53 @@ The 2026-11-20 session paragraph, verbatim as it stood in CLAUDE.md on 2026-11-2
 - **WiFi address change killed a mission.** After unplugging the Ethernet, wait for the
   address to settle (`hostname -I` twice, a minute apart) before starting a run.
 - Mast camera recorder: `~/robot_boot_debug/mast_record.py` on the Jetson (`docs/cameras.md` 9-15).
+
+The 2026-11-22 session paragraph, verbatim as it stood in CLAUDE.md on 2026-11-23.
+
+**2026-11-22 session (the camera, the Jetson's GPU, three floor runs in the evening).** Detail:
+`docs/detection-history.md` (results, decisions, next steps), `docs/sessions/2026-11-22.md`.
+- **Detector decided (Mike): RF-DETR small for production, YOLO for comparison only, no
+  training for now.** RF-DETR is Apache-2.0 like this repo; Ultralytics YOLO26/YOLOE
+  are AGPL-3.0: keep them out of tracked code, the image and CI (`~/detect-exp-env`).
+- **What the experiments showed:** pretrained detectors box nearly every ball and plush
+  toy ("teddy bear") and most clutter, but names are unreliable (yellow ball =
+  "orange" at 0.92): **confidence is not correctness, and a detector never says
+  "unknown object"**. Flat, dark or shadowed things are missed. The floor-line rule
+  still holds for every box. `moondream` works as a second opinion with "Describe this
+  image." and answers NOTHING to a yes/no prompt.
+- **On the Jetson** (TensorRT `trtexec`, already installed): RF-DETR small 96 pictures
+  a second, 0.2 GB, fine beside the describer. The camera's 10 pictures a
+  second is now the limit. An engine is built on the Jetson (about 3 min), from ONNX.
+- **Floor run in shadow mode done (evening): the hand-written detector's results reach
+  the mission about 3 s after the picture was taken** (RF-DETR shadow: 1 s). That, not
+  the frame count, is why yellow does not react: nine pictures in a row had it in
+  range, and they arrived as the leg ended. Likely `ball_detector.py:35`'s subscription
+  queue of 10 with a consumer slower than the camera. **Retest with a queue of 1
+  (mounted for one run): 1.39 s, and the yellow reaction fired for the first time on
+  the real robot.** With no ball in the room the hand-written detector reported "red"
+  in about 60 pictures; RF-DETR none. Both detectors are still 1-1.4 s behind during a
+  mission (0.45 s idle): unexplained. Evidence `reports/robot_boot_20261122_shadow/`,
+  `reports/robot_boot_20261122_q1/`; `docs/sessions/2026-11-22.md` sections 8-9.
+- **First floor run with RF-DETR in control (18:26): both reactions fired, colors named
+  correctly, detections 0.92 s after the picture. The return from yellow STALLED at the
+  door frame:** the obstacle guard held 61 s and nothing followed (third time; "go
+  around" is missing). CI's simulator stage failed twice beside wayfarer's CI and passed
+  idle. Wayfarer wrote its own RF-DETR node; the two need merging
+  (`docs/sessions/2026-11-22.md` section 11).
+- **RF-DETR became the robot's detector (Mike, evening).** Yellow from red is read
+  from the color INSIDE the network's box (`ball_color`), published as `yellow_ball` /
+  `red_ball`. Node `object_detector` (`rfdetr_detect.py`, `rfdetr_backends.py`); 10
+  pictures a second live on the Jetson (camera-limited), pictures about 0.35 s old at
+  publish. Model files: `~/fleet-ci-data/models/` on the Jetson.
+  `tests/test_object_detector.py` needs ROS and runs in no CI stage. Untested:
+  rope/rubber toys, a moving robot.
+- **Ollama today:** CI only (`tools/vlm_canary.py`, log-only); never in a real mission.
+- **Wayfarer (Mike):** wayfarer builds brain releases (a release may carry a "limited
+  on this Jetson because..." caveat); this robot receives them. Both projects are about
+  the brain more than the hardware: a cheap robot feeds a "mother ship". The detector
+  stays a separate node. Plan in order: RF-DETR under the mission script; the
+  describer proven in a real run; untrusted boxes to the describer, log-only; then
+  wayfarer's mission's behavior tree and brain installed here (in one step or two: not
+  decided). The list of goals (down) and events (up) is drafted:
+  `docs/goals-and-events.md`, with milestones M1-M6. It shows the install is blocked
+  by Nav2's `Spin`/`BackUp` failing on the real robot and by holds nobody listens to.

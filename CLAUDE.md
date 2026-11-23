@@ -86,26 +86,32 @@ run.** Detail: `docs/sessions/2026-11-23.md`, `docs/detection-history.md`.
 - **Not verified:** the new `robot_boot.sh` default on the floor (script tests only);
   the attended bench smoke test (`hil_stage.sh smoke`) with RF-DETR on the real camera.
   Under simulator time on the workstation the node's "picture age" number is wrong.
-- **CI's simulator stage failed once more on its first drive**
-  (`test_navigation_succeeds`, "Failed to make progress": the robot drove 10 s, then
-  stood 60 s; fourth time since 2026-11-20) with NOTHING else running, so "fails under
-  load" is not it. `nav_runner.py` now logs where the robot stood on any goal Nav2 does
-  not complete (`describe_failed_goal`), and on the fifth occurrence it said: 0.22 m
-  from the goal (goal circle 0.15 m), still for 42 s. The stall is in the FINAL
-  APPROACH, not at the doorway: the recorded commands show forward 0 and the turn
-  command swinging -0.5/+0.5 rad/s every 0.8 s (a limit cycle in "rotate toward the
-  path"). It reproduces locally ONLY WITHOUT A DISPLAY, which is how the CI service
-  runs (software rendering): `env -u DISPLAY -u XAUTHORITY -u WAYLAND_DISPLAY`. Run
-  local copies of the simulator stage that way. First drives without a display:
-  `max_angular_accel: 10.0` stalled 5 of 13, the default 3.2 stalled 0 of 11 (p = 0.03).
-  NOT changed (10.0 stops the real robot's final-heading overshoot): Mike's decision,
-  recommended first job next session.
+- **The first-drive stall in CI (six times since 2026-11-20) is FIXED: `FollowPath.stateful:
+  false`.** Cause, from Nav2's source (Regulated Pure Pursuit 1.3.12) and a recording:
+  the follower latched "position reached" the one time its own distance to the goal was
+  under `xy_goal_tolerance` (0.144 m against 0.150), stopped driving for good, the robot
+  ended 0.163 m out, the goal checker never saw it inside, and they waited for each
+  other until "Failed to make progress" while the robot swung left-right on the spot.
+  6 stalls in 14 first drives before, 0 in 13 after. `max_angular_accel: 10.0` only made
+  it likelier. Pinned by `tests/test_nav2_params.py`. NOT yet run on the floor.
+- **To make a local run behave like CI, run it WITHOUT A DISPLAY:**
+  `env -u DISPLAY -u XAUTHORITY -u WAYLAND_DISPLAY <command>`. The CI service has none,
+  so Gazebo renders camera and lidar in software there; with a display the graphics
+  card does it and the stall above never reproduced locally.
+- **`nav_runner.py` logs where the robot stood on any goal Nav2 does not complete**
+  (`describe_failed_goal`): read that line first, in CI or on the floor.
 - **ONNX Runtime's defaults used about 16 cores** for the detector on the workstation;
   now 8 threads, no spinning: 80 ms a picture, 5 cores (`rfdetr_backends.ONNX_THREADS`).
-- **The smoke test's lidar check has 2 cm of margin** (0.667 m typical against 0.75 m
-  with a 0.102 m tolerance: surface-from-lidar vs center-from-robot). Failed once in CI
-  today. Not changed; the same rule serves the attended bench test.
-- **`main`'s head has no green CI run**; the last fully green one is `cbd2b12`.
+- **The smoke test's lidar check compares like with like** (`expected_lidar_range`:
+  known distance minus the lidar's forward position minus the ball's radius, both
+  modes). Simulator reads 0.656 m against an expected 0.657. The bench prompt now gives
+  the distance from the robot's FRONT EDGE (24.5 inches). Bench mode not re-run.
+- **Item B started: Nav2's `BackUp` and `Spin` SUCCEED in the simulator** when called
+  directly (2026-11-23). "Pose Goes Off Grid" has one source in Nav2 (a pose outside the
+  behavior server's copy of a costmap); the likely old cause was the local costmap in
+  `map` while the server works in `odom`, fixed 2026-08-12 and never re-tested. There
+  is no `behavior_server` section in `nav2_params.yaml` (all defaults). Not shown yet:
+  after a drive, after a costmap clear, under a hold, on the real robot.
 - **Removed switches:** `ROBOT_BOOT_SHADOW_DETECTOR`, `ROBOT_BOOT_DETECTOR`,
   `HSV_CONFIG_FILE`, `BALL_DETECTOR`, launch arguments `hsv_config` / `ball_detector`.
   `ROBOT_BOOT_RFDETR=<file>` now only names another model file.
@@ -131,53 +137,27 @@ with the fresher detections, the remaining 0.9 s delay, M2/M3 (`docs/goals-and-e
 CI's simulator stage (below). Class names stay the model's own labels ("sports
 ball"); our own `yellow_ball`/`red_ball` keep the underscore.
 
-**2026-11-22 session (the camera, the Jetson's GPU, three floor runs in the evening).** Detail:
-`docs/detection-history.md` (results, decisions, next steps), `docs/sessions/2026-11-22.md`.
+**2026-11-22 session** (`docs/sessions/2026-11-22.md`, `docs/detection-history.md`; the
+full paragraph is in `docs/claude-history.md`, "Moved from CLAUDE.md 2026-11-23"):
 - **Detector decided (Mike): RF-DETR small for production, YOLO for comparison only, no
   training for now.** RF-DETR is Apache-2.0 like this repo; Ultralytics YOLO26/YOLOE
   are AGPL-3.0: keep them out of tracked code, the image and CI (`~/detect-exp-env`).
-- **What the experiments showed:** pretrained detectors box nearly every ball and plush
-  toy ("teddy bear") and most clutter, but names are unreliable (yellow ball =
-  "orange" at 0.92): **confidence is not correctness, and a detector never says
-  "unknown object"**. Flat, dark or shadowed things are missed. The floor-line rule
-  still holds for every box. `moondream` works as a second opinion with "Describe this
-  image." and answers NOTHING to a yes/no prompt.
-- **On the Jetson** (TensorRT `trtexec`, already installed): RF-DETR small 96 pictures
-  a second, 0.2 GB, fine beside the describer. The camera's 10 pictures a
-  second is now the limit. An engine is built on the Jetson (about 3 min), from ONNX.
-- **Floor run in shadow mode done (evening): the hand-written detector's results reach
-  the mission about 3 s after the picture was taken** (RF-DETR shadow: 1 s). That, not
-  the frame count, is why yellow does not react: nine pictures in a row had it in
-  range, and they arrived as the leg ended. Likely `ball_detector.py:35`'s subscription
-  queue of 10 with a consumer slower than the camera. **Retest with a queue of 1
-  (mounted for one run): 1.39 s, and the yellow reaction fired for the first time on
-  the real robot.** With no ball in the room the hand-written detector reported "red"
-  in about 60 pictures; RF-DETR none. Both detectors are still 1-1.4 s behind during a
-  mission (0.45 s idle): unexplained. Evidence `reports/robot_boot_20261122_shadow/`,
-  `reports/robot_boot_20261122_q1/`; `docs/sessions/2026-11-22.md` sections 8-9.
-- **First floor run with RF-DETR in control (18:26): both reactions fired, colors named
-  correctly, detections 0.92 s after the picture. The return from yellow STALLED at the
-  door frame:** the obstacle guard held 61 s and nothing followed (third time; "go
-  around" is missing). CI's simulator stage failed twice beside wayfarer's CI and passed
-  idle. Wayfarer wrote its own RF-DETR node; the two need merging
-  (`docs/sessions/2026-11-22.md` section 11).
-- **RF-DETR became the robot's detector (Mike, evening).** Yellow from red is read
-  from the color INSIDE the network's box (`ball_color`), published as `yellow_ball` /
-  `red_ball`. Node `object_detector` (`rfdetr_detect.py`, `rfdetr_backends.py`); 10
-  pictures a second live on the Jetson (camera-limited), pictures about 0.35 s old at
-  publish. Model files: `~/fleet-ci-data/models/` on the Jetson.
-  `tests/test_object_detector.py` needs ROS and runs in no CI stage. Untested:
-  rope/rubber toys, a moving robot.
+- **Confidence is not correctness, and a detector never says "unknown object"** (a
+  yellow ball was "orange" at 0.92). `moondream` works as a second opinion with
+  "Describe this image." and answers NOTHING to a yes/no prompt.
+- **On the Jetson:** RF-DETR small 96 pictures a second on the GPU (TensorRT); the
+  camera's 10 a second is the limit; an engine is built ON the Jetson from ONNX.
+- **The hand-written detector's results reached the mission 3 s late** (a subscription
+  queue of 10 behind a slow consumer), which is why yellow never reacted. Detections
+  are still about 0.9 s behind the picture during a real mission: unexplained.
+- **First floor run with RF-DETR in control:** both reactions fired; the return from
+  yellow STALLED at the door frame (obstacle hold, 61 s, nothing followed: third time).
 - **Ollama today:** CI only (`tools/vlm_canary.py`, log-only); never in a real mission.
-- **Wayfarer (Mike):** wayfarer builds brain releases (a release may carry a "limited
-  on this Jetson because..." caveat); this robot receives them. Both projects are about
-  the brain more than the hardware: a cheap robot feeds a "mother ship". The detector
-  stays a separate node. Plan in order: RF-DETR under the mission script; the
-  describer proven in a real run; untrusted boxes to the describer, log-only; then
-  wayfarer's mission's behavior tree and brain installed here (in one step or two: not
-  decided). The list of goals (down) and events (up) is drafted:
-  `docs/goals-and-events.md`, with milestones M1-M6. It shows the install is blocked
-  by Nav2's `Spin`/`BackUp` failing on the real robot and by holds nobody listens to.
+- **Wayfarer (Mike):** wayfarer builds brain releases; this robot receives them. The
+  detector stays a separate node. Plan: the describer proven in a real run; untrusted
+  boxes to the describer, log-only; then wayfarer's mission's behavior tree and brain
+  installed here. `docs/goals-and-events.md` (milestones M1-M6) shows the install is
+  blocked by `Spin`/`BackUp` on the real robot and by holds nobody listens to.
 
 **The floor ban of 2026-11-18 is lifted.** The motor board's stop-on-silence is proven on
 the real robot, wheels up: `tools/bench_stop_on_silence.py` PASS (0.45 s), `--legacy-t13`
