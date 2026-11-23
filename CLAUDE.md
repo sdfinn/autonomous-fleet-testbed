@@ -59,7 +59,18 @@ can still be judged PASS (verified true here 2026-11-16; not fixed).
 
 ## Current status — START HERE (last real work 2026-11-22)
 
-**2026-11-22 session (workstation, the camera, the Jetson's GPU; no driving).** Detail:
+**NEXT SESSION (Mike, 2026-11-22 close): AFT only, no wayfarer session beside it.**
+Order (recommended, not yet confirmed; `docs/sessions/2026-11-22.md` "Next"):
+(A) one detector everywhere: RF-DETR in the local Gazebo simulator (ONNX Runtime, a
+settings file for the simulator's camera), merge in wayfarer's `Detection` object as
+code written HERE (do not change wayfarer), CI's simulator stage then the Jetson stage,
+then REMOVE the hand-written detector (no switch; its story is
+`docs/detection-history.md`); (B) something to do after an obstacle hold, starting
+with the root cause of Nav2's `BackUp`/`Spin` failure on the real robot. Class names
+stay the model's own labels ("sports ball": the ROS convention); our own
+`yellow_ball`/`red_ball` keep the underscore.
+
+**2026-11-22 session (the camera, the Jetson's GPU, three floor runs in the evening).** Detail:
 `docs/detection-history.md` (results, decisions, next steps), `docs/sessions/2026-11-22.md`.
 - **Detector decided (Mike): RF-DETR small for production, YOLO for comparison only, no
   training for now.** RF-DETR is Apache-2.0 like this repo; Ultralytics YOLO26/YOLOE
@@ -83,7 +94,13 @@ can still be judged PASS (verified true here 2026-11-16; not fixed).
   in about 60 pictures; RF-DETR none. Both detectors are still 1-1.4 s behind during a
   mission (0.45 s idle): unexplained. Evidence `reports/robot_boot_20261122_shadow/`,
   `reports/robot_boot_20261122_q1/`; `docs/sessions/2026-11-22.md` sections 8-9.
-- **RF-DETR is to be the robot's detector (Mike, evening): `ROBOT_BOOT_RFDETR=1`.** It
+- **First floor run with RF-DETR in control (18:26): both reactions fired, colors named
+  correctly, detections 0.92 s after the picture. The return from yellow STALLED at the
+  door frame:** the obstacle guard held 61 s and nothing followed (third time; "go
+  around" is missing). CI's simulator stage failed twice beside wayfarer's CI and passed
+  idle. Wayfarer wrote its own RF-DETR node; the two need merging
+  (`docs/sessions/2026-11-22.md` section 11).
+- **RF-DETR is the robot's detector (Mike, evening): `ROBOT_BOOT_RFDETR=1`.** It
   publishes `/robot_001/detections`; the container's hand-written detector is switched
   off (`BALL_DETECTOR=false`, launch argument `ball_detector`). Yellow from red is read
   from the color INSIDE the network's box (`ball_color`), published as `yellow_ball` /
