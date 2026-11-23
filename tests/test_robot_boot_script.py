@@ -198,13 +198,39 @@ def _start(env):
         start_new_session=True)
 
 
+def _kill_session(sid):
+    """SIGKILL every process whose session is `sid`. The script puts its long-running
+    jobs in their OWN process groups (set -m), so killing the script's group leaves
+    them alive, still holding the output pipe; they all share the session _start() made."""
+    for entry in Path('/proc').iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if os.getsid(int(entry.name)) == sid:
+                os.kill(int(entry.name), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            continue
+
+
 def _finish(proc, timeout=40.0):
     try:
         out, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        out, _ = proc.communicate()
-        raise AssertionError(f'robot_boot.sh did not exit within {timeout}s:\n{out}')
+        # Fail, never hang (2026-11-23): killing only the script's own process group left
+        # its background jobs alive with the pipe open, and the unbounded read that
+        # followed blocked CI's unit-test stage until someone cancelled it.
+        # What was still running, and in what state, BEFORE anything is killed: the only
+        # evidence of where a stuck shutdown is stuck.
+        tree = subprocess.run(
+            ['ps', '-s', str(proc.pid), '-o', 'pid,ppid,pgid,stat,etimes,args', '--forest'],
+            capture_output=True, text=True).stdout
+        _kill_session(proc.pid)
+        try:
+            out, _ = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            out = '(output could not be collected: something still holds the pipe)'
+        raise AssertionError(f'robot_boot.sh did not exit within {timeout}s:\n{out}\n'
+                             f'--- processes still running at the timeout ---\n{tree}')
     return out
 
 
@@ -715,3 +741,18 @@ def test_no_mission_on_a_frozen_implausible_or_unjudged_imu(boot_env, line, says
     assert says in out
     assert 'docker_run' not in _events(events)
     assert 'drivers_sigint' in _events(events)       # and the drivers were shut down
+
+
+# --- The shutdown must not wait for the watch's waiter (2026-11-23) ---
+def test_cleanup_does_not_wait_for_the_watch_waiter():
+    """A tripwire, not a behavior test, and here is why. When the operator watch ends,
+    a small waiter process signals the script and exits by itself. If cleanup then
+    `wait`s for it after it is already gone, bash never returns from that `wait` and
+    nothing is shut down. Whether the waiter is gone first is a race the test cannot
+    force: on an idle machine it never is (test_attended_run_ends_when_the_watch_gives_up
+    passed for days); with four busy loops on the same core it was, 6 times in 8. So
+    this pins the line that caused it, and the two attended-run tests above cover the
+    behavior on a machine that wins the race."""
+    text = SCRIPT.read_text()
+    assert 'wait "$WATCH_WAITER_PID"' not in text
+    assert 'kill "$WATCH_WAITER_PID"' in text          # it is still stopped

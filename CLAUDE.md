@@ -102,6 +102,12 @@ run.** Detail: `docs/sessions/2026-11-23.md`, `docs/detection-history.md`.
   no ball actions once the day has ended); a day did not start from a clean world
   (fixed: `GzBallOps.clear()`, which asks `gz model --list` because Gazebo's remove
   call answers "true" for a model that is not there).
+- **Shutdown race in `robot_boot.sh` fixed.** When the operator watch ended, cleanup
+  `wait`ed for the small waiter process that had signalled it; if that process had
+  already exited (a busy machine), the `wait` never returned and NOTHING was shut down
+  (container, bag, drivers). Found because CI's unit-test stage hung 19 minutes; 6 of
+  8 runs under load before, 16 of 16 after. The give-up path is still unseen in a real
+  mission. Stage 1 now has `--timeout=180` per test and `timeout-minutes: 20`.
 
 **NEXT (order agreed with Mike 2026-11-23):** (B) something to do after an obstacle hold, starting
 with the existing-solution check: root-cause Nav2's `BackUp`/`Spin` failure on the
@@ -441,6 +447,11 @@ scripts/robot_boot.sh                # real production mission path
   which of the two is wrong (2026-11-19: one false stop was the watch, the next was a
   real 2.4 s WiFi outage). And check behavior, not configuration: a stored setting is
   not an obeyed one.
+- **A test passes here and hangs in CI: starve it.** Pin it to one core beside four
+  busy loops (`taskset -c 0`) and run it a dozen times; durations in two clumps (3 s or
+  never) mean a race, not slowness. `tests/test_robot_boot_script.py`'s `_finish()`
+  prints the process tree of a stuck script; a per-process shell trace
+  (`BASH_ENV` + `BASH_XTRACEFD`) names the line (2026-11-23).
 - **`pkill -f` / `pgrep -f` match the shell that runs them** when the pattern (or an
   `echo` containing it) is in the same command line: four self-kills on 2026-11-20. Pick
   the PID with `ps -eo pid,comm,args | awk` on the process NAME, then kill that PID.

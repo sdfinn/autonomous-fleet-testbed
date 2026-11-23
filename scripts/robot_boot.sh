@@ -121,9 +121,15 @@ cleanup() {
   trap '' INT TERM HUP USR1
   # The waiter first: the watch node is about to be stopped on purpose, and its exit
   # must not be reported as "the operator watch ended".
+  # Kill it, and do NOT `wait` for it (2026-11-23). When the watch ends, the waiter
+  # signals this script and then exits by itself. If it is already gone when this line
+  # is reached, `wait` on it never returns here (bash, inside the EXIT trap of a script
+  # whose `wait` was interrupted by that very signal): the container was never removed,
+  # the bag never finalized, the drivers never stopped. A busy machine loses that race;
+  # found when CI's unit-test stage hung, reproduced 6 times in 8 under load. Nothing
+  # needs the waiter's exit status, and USR1 is ignored from the line above.
   if [ -n "$WATCH_WAITER_PID" ]; then
     kill "$WATCH_WAITER_PID" 2>/dev/null || true
-    wait "$WATCH_WAITER_PID" 2>/dev/null || true
   fi
   if [ -n "$MISSION_PID" ]; then
     echo "=== [robot-boot] removing the mission container ==="

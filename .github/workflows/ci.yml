@@ -121,6 +121,10 @@ jobs:
     # ubuntu-latest moved to 26.04 by 2026-11, breaking the ament-* lint installs.
     runs-on: ubuntu-24.04
     needs: stage-0-requirements
+    # A hung test must fail the job, not hold it for six hours (2026-11-23: one test
+    # blocked on a pipe and this stage sat for 19 minutes until it was cancelled by
+    # hand; it normally takes 5). The per-test limit below names the test that hung.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -160,7 +164,7 @@ jobs:
 
       - name: Run Python unit tests
         run: |
-          python -m pytest tests/ -v \
+          python -m pytest tests/ -v --timeout=180 \
             --ignore=tests/test_ros2_contracts.py \
             --ignore=tests/test_navigation.py \
             --ignore=tests/test_mission_run.py \
