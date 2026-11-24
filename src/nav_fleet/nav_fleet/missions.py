@@ -26,7 +26,7 @@ VALID_ACTIONS = ('navigate', 'take_picture')  # Mission 2 adds reaction supervis
 VALID_REACTIONS = ('photo_then_stop', 'photo_then_home')
 
 # Trigger definition A (spec §2): a ball whose apparent range is at or under
-# REACTION_RANGE_M[color] for REACTION_FRAMES consecutive detector frames. Values shared
+# REACTION_RANGE_M[color] for long enough (ReactionRule, below). Values shared
 # by mission_runner (counting) and the Mission 2 test harness (placement envelope).
 # REACTION_RANGE_M widened 1.0 -> 1.3 during Task 9 live tuning (2026-07-17): the
 # harness places a ball ~on the planned route, but Nav2's actual SMAC/RPP path doesn't
@@ -46,7 +46,50 @@ VALID_REACTIONS = ('photo_then_stop', 'photo_then_home')
 # these same values instead of hardcoding a second copy (see BAND_FAR in
 # tools/mission2_harness.py).
 REACTION_RANGE_M = {'red': 1.3, 'yellow': 0.8}
-REACTION_FRAMES = 3
+# The reaction rule is in SECONDS, not detector messages (2026-11-23). It used to be "3
+# messages in a row", and how long that is depended on how fast the detector happened to
+# run: 0.2 s from the first to the third at the simulator's 10 a second, 0.4 s at the
+# real robot's 5, and 0.55 s at the 3.6 a second of the first real detector, where on
+# 2026-11-20 the yellow ball was in range for two messages and the robot arrived before
+# the third. A ball must now stay in range for REACTION_HOLD_S of picture time, seen in
+# at least REACTION_MIN_DETECTIONS messages, with no gap longer than REACTION_MAX_GAP_S.
+REACTION_HOLD_S = 0.3
+REACTION_MIN_DETECTIONS = 2
+REACTION_MAX_GAP_S = 0.6
+
+
+class ReactionRule:
+    """Which watched color, if any, has been in range long enough. One instance per
+    reactive leg; feed it every detector message with the picture's time stamp."""
+
+    def __init__(self, hold_s=REACTION_HOLD_S, min_detections=REACTION_MIN_DETECTIONS,
+                 max_gap_s=REACTION_MAX_GAP_S):
+        self.hold_s, self.min_detections, self.max_gap_s = hold_s, min_detections, max_gap_s
+        self._since = {}       # color -> stamp of the first message of its current run
+        self._last = {}        # color -> stamp of its latest in-range message
+        self._count = {}       # color -> messages in its current run
+
+    def update(self, in_range, watched, stamp_s):
+        """One detector message: `in_range` is the set of colors in range in it, `watched`
+        the colors this leg reacts to. Returns the color whose rule is met, or None. A
+        message without the color ends its run, and so does a gap in the messages."""
+        fired = None
+        for color in watched:
+            if color not in in_range:
+                self._since.pop(color, None)
+                self._count.pop(color, None)
+                self._last.pop(color, None)
+                continue
+            if color in self._last and stamp_s - self._last[color] > self.max_gap_s:
+                self._since.pop(color, None)           # the detector went quiet: start again
+                self._count.pop(color, None)
+            self._since.setdefault(color, stamp_s)
+            self._last[color] = stamp_s
+            self._count[color] = self._count.get(color, 0) + 1
+            if (fired is None and self._count[color] >= self.min_detections
+                    and stamp_s - self._since[color] >= self.hold_s - 1e-3):   # stamps are floats
+                fired = color
+        return fired
 
 
 @dataclass(frozen=True)

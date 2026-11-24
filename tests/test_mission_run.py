@@ -27,7 +27,7 @@ from PIL import Image as PILImage
 from nav_fleet import mission_runner as mission_runner_module
 from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.mission_runner import MissionRunner
-from nav_fleet.missions import MISSIONS, REACTION_FRAMES
+from nav_fleet.missions import MISSIONS, ReactionRule
 from nav_fleet.semantic_map import SEMANTIC_MAP
 
 # Physical arrival tolerance for the ground-truth check: Nav2's xy_goal_tolerance (0.15)
@@ -172,7 +172,10 @@ def test_log_mission_tolerates_none_runner(monkeypatch):
     assert recorded['mean_time_to_goal'] is None
 
 
-def _detection_msg(entries):
+_picture_clock = {'t': 0.0}
+
+
+def _detection_msg(entries, step_s=0.1):
     """Fake Detection2DArray via SimpleNamespace — _detection_cb reads attributes only."""
     import types
     dets = []
@@ -185,21 +188,25 @@ def _detection_msg(entries):
             center=types.SimpleNamespace(position=types.SimpleNamespace(x=320.0, y=240.0)),
             size_x=40.0, size_y=40.0)
         dets.append(types.SimpleNamespace(results=[hyp], bbox=bbox))
-    return types.SimpleNamespace(detections=dets)
+    # Each message is one picture, `step_s` after the last one (10 a second by default).
+    _picture_clock['t'] += step_s
+    sec = int(_picture_clock['t'])
+    stamp = types.SimpleNamespace(sec=sec, nanosec=int((_picture_clock['t'] - sec) * 1e9))
+    return types.SimpleNamespace(detections=dets, header=types.SimpleNamespace(stamp=stamp))
 
 
 def test_detection_cb_triggers_after_consecutive_frames(runner):
-    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'counts': {},
+    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'rule': ReactionRule(),
                      'triggered': None}
-    for _ in range(2):
+    for _ in range(3):                                 # 0.2 s in range: not yet
         runner._detection_cb(_detection_msg([('red_ball', 0.8)]))
-    assert runner._watch['triggered'] is None          # 2 frames < REACTION_FRAMES
-    runner._detection_cb(_detection_msg([('red_ball', 0.8)]))
+    assert runner._watch['triggered'] is None
+    runner._detection_cb(_detection_msg([('red_ball', 0.8)]))      # 0.3 s: the rule is met
     assert runner._watch['triggered'] == 'red'
 
 
 def test_detection_cb_gap_resets_count(runner):
-    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'counts': {},
+    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'rule': ReactionRule(),
                      'triggered': None}
     runner._detection_cb(_detection_msg([('red_ball', 0.8)]))
     runner._detection_cb(_detection_msg([('red_ball', 0.8)]))
@@ -209,7 +216,7 @@ def test_detection_cb_gap_resets_count(runner):
 
 
 def test_detection_cb_ignores_far_and_unwatched(runner):
-    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'counts': {},
+    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'rule': ReactionRule(),
                      'triggered': None}
     for _ in range(5):
         runner._detection_cb(_detection_msg([('red_ball', 2.5),      # beyond 1.0 m
@@ -219,9 +226,9 @@ def test_detection_cb_ignores_far_and_unwatched(runner):
 
 def test_detection_cb_ignores_a_ball_with_no_trusted_distance(runner):
     """NaN = the detector does not trust a distance (box cut off by the picture's edge)."""
-    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'counts': {},
+    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'rule': ReactionRule(),
                      'triggered': None}
-    for _ in range(REACTION_FRAMES + 2):
+    for _ in range(8):
         runner._detection_cb(_detection_msg([('red_ball', float('nan'))]))
     assert runner._watch['triggered'] is None
 
@@ -229,9 +236,9 @@ def test_detection_cb_ignores_a_ball_with_no_trusted_distance(runner):
 def test_detection_cb_ignores_a_class_that_is_not_a_hazard(runner):
     """RF-DETR publishes every class it knows. A ball whose color could not be read keeps
     the network's name and must not react, however close; nor may a bare color name."""
-    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'counts': {},
+    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'rule': ReactionRule(),
                      'triggered': None}
-    for _ in range(REACTION_FRAMES + 2):
+    for _ in range(8):
         runner._detection_cb(_detection_msg([('sports ball', 0.5), ('teddy bear', 0.5),
                                              ('red', 0.5)]))
     assert runner._watch['triggered'] is None
@@ -252,9 +259,9 @@ def test_detection_cb_ignores_all_when_env_flag_set(runner, monkeypatch):
     # (missions.py's reactions={'red': ..., 'yellow': ...} stays declared and armed —
     # only the trigger-counting is skipped).
     monkeypatch.setenv('MISSION2_IGNORE_REACTIONS', '1')
-    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'counts': {},
+    runner._watch = {'reactions': {'red': 'photo_then_stop'}, 'rule': ReactionRule(),
                      'triggered': None}
-    for _ in range(REACTION_FRAMES + 5):  # well past the normal trigger threshold
+    for _ in range(12):  # well past the normal trigger time
         runner._detection_cb(_detection_msg([('red_ball', 0.1)]))  # well within range
     assert runner._watch['triggered'] is None
 

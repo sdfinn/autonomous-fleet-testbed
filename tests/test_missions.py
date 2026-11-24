@@ -163,3 +163,53 @@ def test_reaction_range_is_per_color():
     reactions = next(s.reactions for s in MISSIONS['mission2'] if s.reactions)
     for color in reactions:
         assert color in REACTION_RANGE_M
+
+
+# --- The reaction rule is in seconds, not detector messages (2026-11-23) ---
+def _feed(rule, rate_hz, seconds, color='yellow', start=0.0):
+    """Messages with `color` in range, `rate_hz` a second, for `seconds`. Returns the
+    time of the message that met the rule, or None."""
+    from nav_fleet.missions import ReactionRule  # noqa: F401  (documents what `rule` is)
+    n = int(round(seconds * rate_hz)) + 1
+    for i in range(n):
+        t = start + i / rate_hz
+        if rule.update({color}, {color: 'photo_then_home'}, t) == color:
+            return t
+    return None
+
+
+@pytest.mark.parametrize('rate_hz', [10.0, 5.0, 3.6])
+def test_a_ball_in_range_fires_after_the_same_time_at_any_detector_rate(rate_hz):
+    """"Three messages in a row" was 0.2 s at 10 a second and 0.55 s at 3.6: on
+    2026-11-20 the yellow ball was in range for two messages at 3.6 a second and the
+    robot arrived before the third."""
+    from nav_fleet.missions import REACTION_HOLD_S, ReactionRule
+    fired_at = _feed(ReactionRule(), rate_hz, 2.0)
+    assert fired_at is not None
+    assert REACTION_HOLD_S <= fired_at <= REACTION_HOLD_S + 1.0 / rate_hz + 1e-9
+
+
+def test_one_message_never_fires_however_long_ago_it_was():
+    from nav_fleet.missions import ReactionRule
+    rule = ReactionRule()
+    assert rule.update({'red'}, {'red': 'x'}, 0.0) is None
+    # the same ball seen again much later is a NEW sighting, not a long one
+    assert rule.update({'red'}, {'red': 'x'}, 5.0) is None
+
+
+def test_a_message_without_the_ball_starts_the_time_again():
+    from nav_fleet.missions import ReactionRule
+    rule, watched = ReactionRule(), {'red': 'x'}
+    assert rule.update({'red'}, watched, 0.0) is None
+    assert rule.update({'red'}, watched, 0.2) is None
+    assert rule.update(set(), watched, 0.3) is None            # glimpse lost
+    assert rule.update({'red'}, watched, 0.4) is None
+    assert rule.update({'red'}, watched, 0.6) is None          # only 0.2 s since 0.4
+    assert rule.update({'red'}, watched, 0.7) == 'red'
+
+
+def test_only_a_watched_color_can_fire():
+    from nav_fleet.missions import ReactionRule
+    rule = ReactionRule()
+    for i in range(10):
+        assert rule.update({'yellow'}, {'red': 'x'}, i * 0.1) is None

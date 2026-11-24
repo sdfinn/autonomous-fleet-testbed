@@ -38,7 +38,7 @@ from nav_fleet import failure_bag
 from nav_fleet.detection import CAMERA_BY_WIDTH, GAZEBO_CAMERA, HAZARD, from_detector_msg
 from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.image_io import image_msg_to_png
-from nav_fleet.missions import (MISSIONS, REACTION_FRAMES, REACTION_RANGE_M,
+from nav_fleet.missions import (MISSIONS, REACTION_RANGE_M, ReactionRule,
                                 validate_mission)
 from nav_fleet.nav_runner import NavRunner
 from nav_fleet.semantic_map import SEMANTIC_MAP
@@ -172,10 +172,11 @@ class MissionRunner(Node):
         return True
 
     def _detection_cb(self, msg):
-        """Count consecutive in-range frames per watched color (trigger definition A).
+        """Feed each detector message to the leg's ReactionRule (missions.py): a watched
+        color must stay in range for a set time, not a set number of messages.
 
-        Empty detector frames arrive too (the detector publishes every frame), so a
-        lost glimpse resets the count with no timing heuristics needed."""
+        Empty detector messages arrive too (the detector publishes for every picture),
+        so a lost glimpse ends the run at once."""
         if self._watch is None:
             return
         # Diagnostic escape hatch (2026-08-13): a real-hardware run kept getting a
@@ -207,13 +208,11 @@ class MissionRunner(Node):
             if (d.kind == HAZARD and color in w['reactions'] and d.distance_m is not None
                     and d.distance_m <= REACTION_RANGE_M[color]):
                 in_range.add(color)
-        for color in w['reactions']:
-            if color in in_range:
-                w['counts'][color] = w['counts'].get(color, 0) + 1
-                if w['counts'][color] >= REACTION_FRAMES and w['triggered'] is None:
-                    w['triggered'] = color
-            else:
-                w['counts'][color] = 0
+        # The picture's own time, so the rule means the same at any detector rate.
+        stamp_s = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        fired = w['rule'].update(in_range, w['reactions'], stamp_s)
+        if fired is not None and w['triggered'] is None:
+            w['triggered'] = fired
 
     def _print_leg_truth(self, name, label):
         """Sim-only per-leg audit trail (Task 13 §5): where the robot PHYSICALLY is right
@@ -254,7 +253,7 @@ class MissionRunner(Node):
                 self._clear_costmaps()  # marks accumulate across the session — clear per leg
                 x, y = SEMANTIC_MAP[step.location]
                 if step.reactions:
-                    self._watch = {'reactions': step.reactions, 'counts': {},
+                    self._watch = {'reactions': step.reactions, 'rule': ReactionRule(),
                                    'triggered': None}
                     ok = self.nav.send_goal(
                         x, y, timeout=NAV_TIMEOUT_S, yaw=step.yaw,
