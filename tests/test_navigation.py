@@ -99,3 +99,57 @@ def test_topic_hz(metrics):
     m = metrics.collect(duration=5.0)
     assert m['odom_hz'] >= 45.0
     assert m['scan_hz'] >= 9.0
+
+
+# --- BR-03: a recovery, once triggered, completes within 10 s (2026-11-23) ---
+RECOVERY_LIMIT_S = 10.0
+
+
+def _run_recovery(node, action_type, name, goal):
+    """Send one recovery goal straight to Nav2's behavior server and wait for it.
+    Returns (status, seconds). Asked directly, not through a blocked drive, so the
+    test says one thing: the recovery itself runs and ends."""
+    import time
+
+    from rclpy.action import ActionClient
+    client = ActionClient(node, action_type, name)
+    try:
+        assert client.wait_for_server(timeout_sec=20.0), f'{name}: no action server'
+        start = time.monotonic()
+        send = client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(node, send, timeout_sec=5.0)
+        handle = send.result()
+        assert handle is not None and handle.accepted, f'{name}: goal not accepted'
+        result = handle.get_result_async()
+        rclpy.spin_until_future_complete(node, result, timeout_sec=RECOVERY_LIMIT_S + 20.0)
+        assert result.done(), f'{name}: no result after {RECOVERY_LIMIT_S + 20.0:.0f} s'
+        return result.result().status, time.monotonic() - start
+    finally:
+        client.destroy()
+
+
+def test_recovery_timeout(nav_runner):
+    """BR-03: Nav2's own recoveries, back up and spin, succeed and end within 10 s.
+
+    Until 2026-11-23 this requirement had no test: every recovery failed with "Pose
+    Goes Off Grid" (the behavior server's copy of the local costmap was in the wrong
+    frame, fixed 2026-08-12 and never re-tested) and Nav2's behavior tree had no
+    recoveries in it. They are what follows an obstacle hold now, so they are pinned.
+    Runs after the drive above: the robot stands in open floor in the bedroom."""
+    from action_msgs.msg import GoalStatus
+    from builtin_interfaces.msg import Duration
+    from geometry_msgs.msg import Point
+    from nav2_msgs.action import BackUp, Spin
+
+    allowance = Duration(sec=int(RECOVERY_LIMIT_S))
+    # The same two moves, same sizes, as navigate_to_pose_recovery.xml.
+    status, took = _run_recovery(
+        nav_runner, BackUp, '/robot_001/backup',
+        BackUp.Goal(target=Point(x=0.30), speed=0.15, time_allowance=allowance))
+    assert status == GoalStatus.STATUS_SUCCEEDED, f'BackUp ended with status {status}'
+    assert took <= RECOVERY_LIMIT_S, f'BackUp took {took:.1f} s'
+    status, took = _run_recovery(
+        nav_runner, Spin, '/robot_001/spin',
+        Spin.Goal(target_yaw=1.57, time_allowance=allowance))
+    assert status == GoalStatus.STATUS_SUCCEEDED, f'Spin ended with status {status}'
+    assert took <= RECOVERY_LIMIT_S, f'Spin took {took:.1f} s'

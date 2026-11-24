@@ -53,7 +53,7 @@ below; read those commits before designing that fix.
 **`~/wayfarer/docs/transfer/`** holds notes written there FOR this repo (sim findings
 that may apply to the Rover). `ls` it when debugging a nav/doorway/costmap/harness
 issue here; treat each as a sim-only hypothesis to verify against this repo's code.
-First note (2026-11-15, doorway): this repo's `tools/mission2_day.py`
+First note (2026-11-15, doorway): this repo's `tools/mission2_run.py`
 `_judge_and_log_leg` ignores the mission's own `ok` flag, so a failed navigate leg
 can still be judged PASS (verified true here 2026-11-16; not fixed).
 
@@ -82,7 +82,7 @@ Detail: `docs/sessions/2026-11-23.md` (15 sections), `docs/detection-history.md`
 - **Mission names (Mike): one sequence for both projects, never per release**
   (`docs/terminology.md`): 1 doorway photo; 2 yellow and red; 3 green ball, front and
   back (wayfarer only); 4 is it tidy; 5 is it tidy with names; 6+ next. It is
-  "Mission 2", never "Mission 2 day"; the rename of the tool/flag/CI names in this repo
+  "Mission 2", never "Mission 2"; the rename of the tool/flag/CI names in this repo
   is proposed (mapping in the 2026-11-23 chat), not done.
 - **A floor "go" means with video (mast camera) and monitoring.**
 - **RF-DETR (`object_detector`) is the only detector**: real robot, local simulator,
@@ -224,7 +224,7 @@ gyro vs lidar heading 9-13 deg apart after several spins.
 **Two projects, one workstation (2026-11-22).** This repo runs on ROS domain 0,
 wayfarer on 42. Every by-name kill on the workstation goes through
 `tools/proc_sweep.py` (`ci.yml` x3, `hil_stage.sh` teardown,
-`mission2_day.sweep_orphans`): it signals only processes started on our own domain
+`mission2_run.sweep_orphans`): it signals only processes started on our own domain
 (`/proc/<pid>/environ`; unset counts as 0) and never its own shell. Use it instead of
 `pkill -f`. Wayfarer scoped its sweeps the same day; both pipelines ran at the same
 time and both were green (runs `45060191707` here, `45060634456` there).

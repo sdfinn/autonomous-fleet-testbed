@@ -43,9 +43,9 @@ def test_real_config_declares_hil_stage_matching_ci():
     assert scenarios == ["mission2_no_ball", "mission2_yellow", "mission2_red"]
 
 
-def test_real_config_declares_real_stage_matching_mission2_day():
+def test_real_config_declares_real_stage_matching_mission2_run():
     """RealRobotStartup.md's validation gate (docker-brain unification, 2026-08) —
-    matches the mission2 day's 3 legs, which mission_runner.py --day self-reports
+    matches the Mission 2's 3 legs, which mission_runner.py --mission2 self-reports
     (no ground-truth judging on the real robot). Superseded the old bedroom_nav/
     test_navigation.py BR-01 gate — see CLAUDE.md's 2026-08-01 decision history."""
     runner_type, scenarios = load_stage("real")

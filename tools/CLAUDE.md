@@ -344,7 +344,7 @@ Claude is working with files under this directory.
   pinned to the literal string `'Describe this image.'` — a more elaborate prompt was
   live-tested and produced a broken 2-token response from this exact model; don't
   "improve" it without re-testing against a real photo first. Spawned as a detached
-  subprocess (`python -m tools.vlm_canary <photo> <run_context>`) by `mission2_day.py`
+  subprocess (`python -m tools.vlm_canary <photo> <run_context>`) by `mission2_run.py`
   — that file imports nothing from here, so a broken import here can't break it.
   `generate_test_report.py`'s `build_job_summary()` surfaces a result via
   `find_vlm_canary_results()`, reusing `find_run_photos()`'s already-resolved paths as
@@ -421,8 +421,8 @@ Claude is working with files under this directory.
 - `pipeline_matrix.py` — Session 17 Piece 6 (2026-07-21): `load_stage(stage)` reads
   `config/pipeline_matrix.yaml`, the single declared source for which
   `(runner_type, scenarios)` belong to which report stage — consumed by
-  `generate_test_report.py --stage {sim,hil,real}` and `mission2_day.py`'s
-  day-summary loop. **`real` stage added 2026-07-28** (`runner_type=real_robot`,
+  `generate_test_report.py --stage {sim,hil,real}` and `mission2_run.py`'s
+  summary loop. **`real` stage added 2026-07-28** (`runner_type=real_robot`,
   `scenarios=[bedroom_nav]`) for `RealRobotStartup.md`'s validation gate.
   **Decided (2026-07-28, Mike):** BR-01 nav-only is the gate, deliberately — not a
   real run of `mission_runner`'s full `mission1`. Settled, no plan to change it.
@@ -444,8 +444,8 @@ Claude is working with files under this directory.
   file handler that always captures DEBUG+ regardless (post-mortem forensics stay
   generous even on a quiet console). `build_env_manifest(**fields)` /`git_sha()` log a
   run's environment context (git sha, power mode, runner type, ...) alongside its
-  events. `mission2_day.py` is fully migrated (its log lands at
-  `STATE_DIR/mission2_day.log`, uploaded in Stage 4's evidence artifact); `NavRunner`/
+  events. `mission2_run.py` is fully migrated (its log lands at
+  `STATE_DIR/mission2_run.log`, uploaded in Stage 4's evidence artifact); `NavRunner`/
   `MissionRunner` are NOT being switched to this (they already use ROS's own
   `self.get_logger()`, which already persists to `~/.ros/log`) — instead, both nodes'
   `__init__` now call `self.get_logger().set_level(resolve_level())` (2026-07-21;
@@ -475,16 +475,16 @@ Claude is working with files under this directory.
   2026-07-21.) **`reports/photos/` is now a persistent absolute path, not
   checkout-relative — Session 17 Piece 4 final-review fix (2026-07-21):** the exact
   same bug class Foundation fixed for `FLEET_DB`, found independently in THREE places
-  (`nav_fleet/mission_runner.py`, `tools/mission2_day.py`, `tools/generate_test_report.py`
+  (`nav_fleet/mission_runner.py`, `tools/mission2_run.py`, `tools/generate_test_report.py`
   each had their own relative `reports/photos` default). Since `actions/checkout@v4`
   wipes each CI job's workspace clean, no run's photos ever reached
   `stage-5-reports-*`'s checkout to be embedded — all three now import `PHOTO_DIR`
   from `tools.telemetry_logger` (sibling directory of `DB_PATH`, the same persistent
   `~/fleet-ci-data/` location). `reports/failure_bags/` (S17 Piece 3) is now included
   in the `hil-mission-evidence` CI artifact upload — found during the same final
-  review: `mission2_day.py`'s `_pull_failure_bags` scp'd bags back to the workstation,
+  review: `mission2_run.py`'s `_pull_failure_bags` scp'd bags back to the workstation,
   but `ci.yml` never actually uploaded them, so they existed locally but were never
-  visible on GitHub. **This absolute-path fix broke `mission2_day.py`'s photo
+  visible on GitHub. **This absolute-path fix broke `mission2_run.py`'s photo
   pull-back the very next CI run** — see root CLAUDE.md's "Making a path absolute
   breaks every OTHER place..." Gotcha for the regression and its 2026-07-22 fix.
 - **Telemetry database — `~/fleet-ci-data/fleet_runs.db`** (env var `FLEET_DB` to

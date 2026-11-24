@@ -1,6 +1,6 @@
 """Single declared source for which scenarios belong to which CI report stage
 (Session 17 Piece 6). Backed by config/pipeline_matrix.yaml — see that file's
-header for the consumers and why the mission2_day.py execution sequence itself
+header for the consumers and why the mission2_run.py execution sequence itself
 stays hardcoded Python while only the scenario name list is declared here.
 """
 

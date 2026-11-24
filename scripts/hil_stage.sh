@@ -7,10 +7,10 @@
 #   power-mode        set nvpmodel mode $POWER_MODE_ID on the Jetson and print it
 #   sync <sha>        fetch+checkout <sha> on the Jetson (no build — the checkout only identifies which commit is under test)
 #   run               HIL STACK GATE (Task 13b): clean STATE_DIR, then sim-up (workstation
-#                     Gazebo). Nav2 bring-up happens later inside the container as part of day(). NO mission, NO retry — a mission failure
+#                     Gazebo). Nav2 bring-up happens later inside the container as part of mission2(). NO mission, NO retry — a mission failure
 #                     must be RED (the in-process nav_runner cold-goal retry, Task 13a, is the
 #                     only retry left; harness-level whole-mission retries were removed).
-#   day               THE Mission 2 day (Task 13d): runs tools/mission2_day.py in HIL mode
+#   mission2          Mission 2 (Task 13d): runs tools/mission2_run.py in HIL mode
 #                     against the stack `run` brought up — no_ball -> yellow (swap to red
 #                     during its return) -> red (stays). The mission executes on the Jetson;
 #                     ball ops + ground-truth judging stay workstation-side. Judged verdicts +
@@ -178,7 +178,7 @@ clean_state() {
   # artifact and can even satisfy a judge's photo-presence check with stale data. Wipe first.
   mkdir -p "$STATE_DIR"
   rm -f "$STATE_DIR"/*.png "$STATE_DIR"/*.out "$STATE_DIR"/*.json \
-        "$STATE_DIR"/mission2_day.log "$STATE_DIR"/nav2_container_*.log 2>/dev/null || true
+        "$STATE_DIR"/mission2_run.log "$STATE_DIR"/nav2_container_*.log 2>/dev/null || true
 }
 
 sim_up() {
@@ -230,8 +230,8 @@ run() {
   detector_up gazebo
 }
 
-day() {
-  # THE Mission 2 day (Task 13d) — tools/mission2_day.py in HIL mode against the stack `run`
+mission2() {
+  # Mission 2 (Task 13d) — tools/mission2_run.py in HIL mode against the stack `run`
   # brought up. The mission runs on the Jetson inside the container via container_entrypoint.sh;
   # ball ops + ground-truth judging + telemetry all stay workstation-side. The orchestrator scps
   # each run's photos to reports/photos/ AND STATE_DIR (CI evidence) and prints per-run judged
@@ -243,8 +243,8 @@ day() {
   live_power_label="$(real_power_mode_label)"
   RUNNER_TYPE=hil_jetson POWER_MODE="${live_power_label}" JETSON_IP="${JETSON_IP}" \
     JETSON_USER="${JETSON_USER}" STATE_DIR="${STATE_DIR}" \
-    PYTHONUNBUFFERED=1 python3 -u -m tools.mission2_day --executor jetson --no-launch \
-      --hold-s "${DAY_HOLD_S:-0}"
+    PYTHONUNBUFFERED=1 python3 -u -m tools.mission2_run --executor jetson --no-launch \
+      --hold-s "${MISSION2_HOLD_S:-0}"
 }
 
 DETECTOR_LOG_REMOTE='/tmp/hil_object_detector.log'
@@ -494,7 +494,7 @@ smoke() {
 smoke_ci() {
   # CI-only counterpart to smoke() — non-interactive (no -t, no operator prompt):
   # SMOKE_BALL_OPS=gz makes tools/smoke_test.py place the ball itself via GzBallOps,
-  # same mechanism mission2_day.py's own CI regression already uses. Never used from
+  # same mechanism mission2_run.py's own CI regression already uses. Never used from
   # a human bench session — that's smoke(), above. USE_SIM_TIME=true so
   # sensors_only_launch.py skips esp32_driver/ldlidar_ros2/depthai-ros entirely and
   # relies on the WORKSTATION's Gazebo bridge reaching the Jetson over DDS — the
@@ -530,7 +530,7 @@ teardown() {
     # ball_detector added 2026-07-26 (second-round code review, same day): confirmed LIVE
     # orphans on the Jetson (2 stale processes, oldest ~2h) — its cmdline contains
     # "nav_fleet", not "nav2", so it matched NONE of the four sweep sites in the repo
-    # (this one, ci.yml's stage-2 sweep, mission2_day.py's _SWEEP_PATTERNS, and the
+    # (this one, ci.yml's stage-2 sweep, mission2_run.py's _SWEEP_PATTERNS, and the
     # verification pgrep that prints "clean — no orphans remain"). Not cosmetic: extra
     # publishers on /robot_001/detections raise the effective detection frame rate, which
     # shortens REACTION_FRAMES's time-to-trigger — a silent confound on Mission 2's
@@ -595,14 +595,14 @@ restore_checkout() {
   echo '=== [restore-checkout] Jetson repo back on main (fast-forwarded when reachable) ==='
 }
 
-cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|day|teardown|restore-checkout|smoke <sha>|smoke-ci <sha>}"
+cmd="${1:?usage: hil_stage.sh discover|power-mode|sync <sha>|run|mission2|teardown|restore-checkout|smoke <sha>|smoke-ci <sha>}"
 shift || true
 case "$cmd" in
   discover)         discover ;;
   power-mode)       power_mode ;;
   sync)             sync "$@" ;;
   run)              run ;;
-  day)              day ;;
+  mission2)         mission2 ;;
   teardown)         teardown ;;
   restore-checkout) restore_checkout ;;
   smoke)            smoke "$@" ;;

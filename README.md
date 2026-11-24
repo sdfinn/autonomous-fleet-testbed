@@ -37,7 +37,7 @@ flowchart TD
     S0 --> S1["Stage 1\nlint + unit tests"]
     S1 --> S2["Stage 2\nGazebo sim nav tests\n(x86 GPU runner)"]
     S2 --> S3["Stage 3\nnative arm64 build\n(Jetson runner)"]
-    S3 --> S4["Stage 4\nhardware-in-the-loop\nMission 2 day (real Jetson)"]
+    S3 --> S4["Stage 4\nhardware-in-the-loop\nMission 2 (real Jetson)"]
     S2 --> S5a["Stage 5\nworkstation reports"]
     S4 --> S5b["Stage 5\nHIL reports"]
     S4 -.-> S6["Stage 6\nreal-robot deploy\n(future)"]

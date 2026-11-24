@@ -7,7 +7,7 @@ robot — the same env-var-driven pattern as POWER_MODE_ID/HIL_CONTAINER/FLEET_D
 optional file handler always captures DEBUG+ regardless of the console level, so a
 file log is generous for post-mortem forensics even on a quiet console.
 
-Usage: call configure() once near process start (mission_runner.main(), mission2_day's
+Usage: call configure() once near process start (mission_runner.main(), mission2_run's
 main(), etc.); every module then calls get_logger(__name__) and logs normally — child
 loggers propagate up to the 'fleet' root, which owns the handlers.
 """

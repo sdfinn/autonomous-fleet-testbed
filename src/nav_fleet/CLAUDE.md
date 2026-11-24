@@ -23,7 +23,7 @@ Claude is working with files under this directory.
   window to disk. `mission_runner.py`'s `main()` starts it before `rclpy.init()`,
   calls `snapshot()` only on FAIL/crash, and keeps the bag (`reports/failure_bags/`)
   only if that snapshot succeeded — zero disk cost on a passing mission. Prints
-  `failure bag kept: <path>` on keep; `mission2_day.py`'s `JetsonExecutor` scrapes
+  `failure bag kept: <path>` on keep; `mission2_run.py`'s `JetsonExecutor` scrapes
   that line and `scp -r`s the bag back from the Jetson (mirrors the existing
   `_pull_photos` pattern).
 - `nav_fleet/image_io.py` — Session 15: `take_picture` action primitive support
@@ -135,9 +135,9 @@ Claude is working with files under this directory.
   **Removal lags too** (found same evening): a REMOVED model lingers in rendered camera
   frames for seconds — back-to-back tests reacted to the previous test's "ghost" ball.
   Hence `BALL_REMOVAL_SETTLE_S = 3.0` after `remove_ball`/`BallOps.settle()` in
-  `tools/mission2_harness.py` (consumed by `tools/mission2_day.py`; the old
+  `tools/mission2_harness.py` (consumed by `tools/mission2_run.py`; the old
   standalone `tests/test_mission2.py` this originally referenced was removed
-  2026-08-01 as redundant with `mission2_day.py`'s in-process stage-2 run).
+  2026-08-01 as redundant with `mission2_run.py`'s in-process stage-2 run).
 - **`pkill -f`/`pgrep -f` SELF-MATCH: the pattern matches the invoking shell's own command
   line.** Bit twice on 2026-07-17: a teardown containing `pkill -INT -f "ros2 launch …"`
   plus a relaunch of that same string SIGINT'd its own shell (exit 144) and never killed the
@@ -179,7 +179,7 @@ Claude is working with files under this directory.
   scenario is renamed `mission2_no_ball` (was `mission2_nominal`) — old telemetry rows keep
   their old name, only new rows use the new one. Marker (0.9, 3.90) / ball (1.2, 3.90) now
   sit EAST of the dresser (Mike's GUI review, 2026-07-18) — see `semantic_map.py`'s
-  `sphere_approach`/`MARKER_XY` comments for the clearance math. `tools/mission2_day.py` is
+  `sphere_approach`/`MARKER_XY` comments for the clearance math. `tools/mission2_run.py` is
   THE single day orchestrator — it is stage-4's only Mission 2 step, the GUI demo command,
   and the future real-robot-day runner, all running the SAME sequence (no_ball -> yellow ->
   red). Ball placement is pluggable (`GzBallOps` for sim/HIL, `OperatorBallOps` for a human
@@ -196,11 +196,11 @@ Claude is working with files under this directory.
   PR #5, not yet merged): the day is now ONE continuous execution, not 3 externally-invoked
   scenario calls.** Supersedes both the old per-scenario architecture AND Piece 8's
   persistent-container fix below (which became unnecessary once there's only one
-  invocation per day). `mission_runner.py` gained `MissionRunner.run_mission2_day()`
+  invocation per day). `mission_runner.py` gained `MissionRunner.run_mission2_parts()`
   (loops `run_mission('mission2')` 3x in one process, collects each leg's
-  checklist/photos/reaction_events) and a `--day` CLI mode (prints one
-  `MISSION2_DAY_RESULT:<json>` line). `tools/mission2_day.py`'s `InProcessExecutor`/
-  `JetsonExecutor` both implement `run_day() -> list[dict]` — `JetsonExecutor.run_day()`
+  checklist/photos/reaction_events) and a `--mission2` CLI mode (prints one
+  `MISSION2_RESULT:<json>` line). `tools/mission2_run.py`'s `InProcessExecutor`/
+  `JetsonExecutor` both implement `run_mission2() -> list[dict]` — `JetsonExecutor.run_mission2()`
   is now a SINGLE `docker run --rm`/bare-SSH call for the whole day (Piece 8's
   `_start_container`/`close()`/`HIL_CONTAINER_NAME`/`docker exec`-into-a-persistent-
   container machinery was REMOVED, not kept dormant, since one call/day has nothing
@@ -212,7 +212,7 @@ Claude is working with files under this directory.
   no thread and no ball_ops calls at all: **no prompting of any kind** — Mike's explicit
   call, "it's up to the human to place the balls at the correct time themselves,
   watching the robot," `OperatorBallOps.place`/`.remove` (the old `input()`-prompting
-  methods) were removed as unreachable). `_judge_and_log_leg`/`run_day()` (top-level)
+  methods) were removed as unreachable). `_judge_and_log_leg`/`run_mission2()` (top-level)
   replace the old `run_no_ball`/`run_yellow`/`run_red`, feeding `judge_*`/
   `log_variant_row`/`home_pair_similarity` (unchanged signatures — frozen by design)
   from post-hoc `GroundTruthLog` lookups instead of live point-in-time polls.
@@ -294,15 +294,15 @@ Claude is working with files under this directory.
   pose (see `HOME_PAIR_MAX_DIFF` in `tools/mission2_harness.py` for why photo similarity
   alone can't police this).
 - **stage-4-hil runs ONLY the deployment mission** — the day orchestrator
-  (`tools/mission2_day.py`), invoked via `scripts/hil_stage.sh day`. Mission 1 stays in
+  (`tools/mission2_run.py`), invoked via `scripts/hil_stage.sh mission2`. Mission 1 stays in
   stage-2 (sim regression, `tests/test_mission_run.py`); it is no longer run on hardware as
   a warm-up. `hil_stage.sh run` is now just the stack-up gate (sim + Nav2, no mission, no
   retry) — a mission failure must surface RED, so all harness-level whole-mission retries
   were removed (the in-process cold-goal retry above is the only retry left anywhere).
-- **GUI-watched Mission 2 day, the command sequence:** bring the HIL stack up with
+- **GUI-watched Mission 2, the command sequence:** bring the HIL stack up with
   `scripts/hil_stage.sh run`, view it with the scrubbed-env `gz sim -g` recipe above (the
-  snap/glibc GUI-crash workaround), then run `DAY_HOLD_S=10 scripts/hil_stage.sh day` — the
-  env var reaches `tools/mission2_day.py --hold-s` and keeps the robot in place after the
+  snap/glibc GUI-crash workaround), then run `MISSION2_HOLD_S=10 scripts/hil_stage.sh mission2` — the
+  env var reaches `tools/mission2_run.py --hold-s` and keeps the robot in place after the
   final red run so an observer sees an unambiguous "done" instead of the process exiting
   mid-frame.
 - **Attaching the GUI (`gz sim -g`) PAUSES the simulation** (found 2026-11-23, a watched
@@ -329,7 +329,7 @@ Claude is working with files under this directory.
   silently tests a faster Jetson than CI does (this masked the 15W axis during the
   2026-07-19 yellow-bug forensics).
 - **Container-mode HIL image tag: verified locally before the day starts, since S17 Piece
-  2's container preflight (`JetsonExecutor._require_image_local`, `tools/mission2_day.py`).**
+  2's container preflight (`JetsonExecutor._require_image_local`, `tools/mission2_run.py`).**
   The sign-off false start hit this: a wrong `HIL_IMAGE` tag → GHCR pull denied → `docker
   run` dies in ~2s → looked exactly like three silent mission failures with no clue why.
   Now `JetsonExecutor.__init__` SSHes a `docker image inspect` check before any mission

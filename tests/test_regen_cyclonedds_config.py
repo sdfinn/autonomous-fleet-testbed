@@ -65,5 +65,5 @@ def test_only_the_real_robot_is_put_on_loopback():
     """CI's Jetson stage runs Gazebo on the workstation and the mission on the Jetson:
     those two machines must talk over Ethernet. Loopback there would cut them apart."""
     assert 'CYCLONEDDS_SCOPE' in (REPO / 'scripts' / 'robot_boot.sh').read_text()
-    for name in ('scripts/hil_stage.sh', 'tools/mission2_day.py', '.github/workflows/ci.yml'):
+    for name in ('scripts/hil_stage.sh', 'tools/mission2_run.py', '.github/workflows/ci.yml'):
         assert 'CYCLONEDDS_SCOPE' not in (REPO / name).read_text(), name

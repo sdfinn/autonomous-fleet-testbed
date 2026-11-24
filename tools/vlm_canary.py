@@ -7,7 +7,7 @@ docs/superpowers/specs/2026-07-30-cuda-canary-vlm-red-ball-design.md.
 
 Run standalone: python -m tools.vlm_canary <photo_path> <run_context>
 
-Spawned as a fully detached, fire-and-forget subprocess by tools/mission2_day.py right
+Spawned as a fully detached, fire-and-forget subprocess by tools/mission2_run.py right
 after a red-reaction photo is already saved — this process is never awaited by its
 caller, so any failure here (Ollama not running, model not pulled) can only ever land
 in this module's own log row, never propagate to the mission.
@@ -29,7 +29,7 @@ def _result_summary_path(db_path: str = DB_PATH) -> str:
     """Alongside the sqlite DB — a small, single-result JSON snapshot of the LAST
     classify_photo() call, overwritten each time (at most one red reaction per HIL/sim
     day, so 'last' is unambiguous). Exists so a caller running this ON THE JETSON
-    (mission2_day.py's JetsonExecutor, 2026-07-31) can have the WORKSTATION pull back
+    (mission2_run.py's JetsonExecutor, 2026-07-31) can have the WORKSTATION pull back
     just this one small file over SCP afterward, instead of merging a whole remote
     sqlite DB — the Jetson's own local vlm_canary_log write above is invisible to
     every report/dashboard tool, which all read the workstation's copy."""

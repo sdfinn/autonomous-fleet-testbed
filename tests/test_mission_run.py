@@ -342,13 +342,13 @@ def test_mission2_no_trigger_completes_normally(runner, monkeypatch):
     assert runner.reaction_events == []
 
 
-# ── main() --day branch: failure-bag capture (S17 review fix, 2026-07-25) ──────────────────
-# Pre-fix, main()'s --day block exited via `raise SystemExit(0)` before ever reaching the
+# ── main() --mission2 branch: failure-bag capture (S17 review fix, 2026-07-25) ──────────────────
+# Pre-fix, main()'s --mission2 block exited via `raise SystemExit(0)` before ever reaching the
 # one-shot path's failure-bag start/snapshot/stop code below it — since HIL only runs via
-# --day now, no HIL run could ever produce a failure bag. rclpy.init/try_shutdown and
+# --mission2 now, no HIL run could ever produce a failure bag. rclpy.init/try_shutdown and
 # MissionRunner are fully stubbed here (no live node needed) so these tests are fast and
 # deterministic, independent of the module's session-scoped ros_context fixture.
-class _FakeDayLogger:
+class _FakeMission2Logger:
     def info(self, *a, **k):
         pass
 
@@ -358,12 +358,12 @@ def _fake_leg(ok):
             'reaction_events': []}
 
 
-def test_day_mode_captures_failure_bag_on_failing_leg(monkeypatch, capsys):
+def test_mission2_mode_captures_failure_bag_on_failing_leg(monkeypatch, capsys):
     class _FakeRunner:
         def get_logger(self):
-            return _FakeDayLogger()
+            return _FakeMission2Logger()
 
-        def run_mission2_day(self):
+        def run_mission2_parts(self):
             return [_fake_leg(True), _fake_leg(False), _fake_leg(True)]
 
     monkeypatch.setattr(mission_runner_module, 'MissionRunner', _FakeRunner)
@@ -384,7 +384,7 @@ def test_day_mode_captures_failure_bag_on_failing_leg(monkeypatch, capsys):
     monkeypatch.setattr(mission_runner_module.failure_bag, 'snapshot', fake_snapshot)
     monkeypatch.setattr(mission_runner_module.failure_bag, 'stop',
                         lambda proc, bag_path, keep: bag_calls.update(stop_keep=keep))
-    monkeypatch.setattr(sys, 'argv', ['mission_runner', '--day'])
+    monkeypatch.setattr(sys, 'argv', ['mission_runner', '--mission2'])
 
     with pytest.raises(SystemExit) as exc_info:
         mission_runner_module.main()
@@ -396,13 +396,13 @@ def test_day_mode_captures_failure_bag_on_failing_leg(monkeypatch, capsys):
     assert 'failure bag kept: /tmp/fake_bag' in capsys.readouterr().out
 
 
-def test_day_mode_skips_failure_bag_when_all_legs_pass(monkeypatch, capsys):
+def test_mission2_mode_skips_failure_bag_when_all_legs_pass(monkeypatch, capsys):
     """A fully-passing day must NOT snapshot — zero disk cost on the common case."""
     class _FakeRunner:
         def get_logger(self):
-            return _FakeDayLogger()
+            return _FakeMission2Logger()
 
-        def run_mission2_day(self):
+        def run_mission2_parts(self):
             return [_fake_leg(True), _fake_leg(True), _fake_leg(True)]
 
     monkeypatch.setattr(mission_runner_module, 'MissionRunner', _FakeRunner)
@@ -419,7 +419,7 @@ def test_day_mode_skips_failure_bag_when_all_legs_pass(monkeypatch, capsys):
     monkeypatch.setattr(mission_runner_module.failure_bag, 'snapshot', _boom_snapshot)
     monkeypatch.setattr(mission_runner_module.failure_bag, 'stop',
                         lambda proc, bag_path, keep: bag_calls.update(stop_keep=keep))
-    monkeypatch.setattr(sys, 'argv', ['mission_runner', '--day'])
+    monkeypatch.setattr(sys, 'argv', ['mission_runner', '--mission2'])
 
     with pytest.raises(SystemExit) as exc_info:
         mission_runner_module.main()
@@ -429,16 +429,16 @@ def test_day_mode_skips_failure_bag_when_all_legs_pass(monkeypatch, capsys):
     assert 'failure bag kept' not in capsys.readouterr().out
 
 
-def test_day_mode_captures_failure_bag_and_reraises_on_crash(monkeypatch, capsys):
-    """A crash mid-day (run_mission2_day() itself raising) must still snapshot before
+def test_mission2_mode_captures_failure_bag_and_reraises_on_crash(monkeypatch, capsys):
+    """A crash mid-day (run_mission2_parts() itself raising) must still snapshot before
     the exception propagates — re-raised, not swallowed, so the process's own
-    non-zero exit (--day mode never prints 'Mission mission2:') is exactly what
+    non-zero exit (--mission2 mode never prints 'Mission mission2:') is exactly what
     JetsonExecutor._log_startup_crash_if_needed reads as a crash."""
     class _FakeRunner:
         def get_logger(self):
-            return _FakeDayLogger()
+            return _FakeMission2Logger()
 
-        def run_mission2_day(self):
+        def run_mission2_parts(self):
             raise RuntimeError('boom')
 
     monkeypatch.setattr(mission_runner_module, 'MissionRunner', _FakeRunner)
@@ -453,7 +453,7 @@ def test_day_mode_captures_failure_bag_and_reraises_on_crash(monkeypatch, capsys
                         lambda: bag_calls.update(snapshotted=True) or True)
     monkeypatch.setattr(mission_runner_module.failure_bag, 'stop',
                         lambda proc, bag_path, keep: bag_calls.update(stop_keep=keep))
-    monkeypatch.setattr(sys, 'argv', ['mission_runner', '--day'])
+    monkeypatch.setattr(sys, 'argv', ['mission_runner', '--mission2'])
 
     with pytest.raises(RuntimeError, match='boom'):
         mission_runner_module.main()
@@ -463,7 +463,7 @@ def test_day_mode_captures_failure_bag_and_reraises_on_crash(monkeypatch, capsys
     assert 'failure bag kept: /tmp/fake_bag' in capsys.readouterr().out
 
 
-def test_log_mission2_day_self_report_logs_one_row_per_leg_from_self_reported_ok(
+def test_log_mission2_self_report_logs_one_row_per_leg_from_self_reported_ok(
         monkeypatch):
     """Real-robot-only telemetry (MISSION2_SELF_REPORT=1, container_entrypoint.sh):
     each leg's PASS/FAIL comes from its OWN self-reported 'ok' (Nav2 goal
@@ -481,7 +481,7 @@ def test_log_mission2_day_self_report_logs_one_row_per_leg_from_self_reported_ok
         {'ok': False, 'photos': []},
         {'ok': True, 'photos': ['/home/mike/fleet-ci-data/photos/b.png']},
     ]
-    mission_runner_module._log_mission2_day_self_report(results)
+    mission_runner_module._log_mission2_self_report(results)
 
     assert [row['scenario'] for row in logged] == [
         'mission2_no_ball', 'mission2_yellow', 'mission2_red']

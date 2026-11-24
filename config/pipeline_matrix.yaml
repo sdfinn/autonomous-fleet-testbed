@@ -4,10 +4,10 @@
 #   - tools/generate_test_report.py's --stage flag (used by ci.yml's
 #     stage-5-reports-sim / stage-5-reports-hw steps instead of a hand-typed
 #     --scenario list)
-#   - tools/mission2_day.py's day-summary loop (the hil.scenarios list here,
+#   - tools/mission2_run.py's summary loop (the hil.scenarios list here,
 #     minus the "mission2_" prefix, replaces a separately hardcoded tuple)
 #
-# The mission2_day.py EXECUTION sequence itself (run_no_ball -> run_yellow ->
+# The mission2_run.py EXECUTION sequence itself (run_no_ball -> run_yellow ->
 # run_red) stays hardcoded Python on purpose — each variant's choreography is
 # genuinely different (ball placement timing, judge logic), not interchangeable
 # data. Only the scenario NAME list is declared here.
@@ -22,7 +22,7 @@ hil:
 
 # Real robot (RealRobotStartup.md). Changed 2026-08 (docker-brain unification):
 # RealRobotStartup.md's 2026-08-01 rewrite already moved the real-robot validation
-# target from BR-01/bedroom_nav to the mission2 day (no_ball -> yellow -> red,
+# target from BR-01/bedroom_nav to the Mission 2 (no_ball -> yellow -> red,
 # self-reported per Task 2 above, no ground-truth judging) — this list was never
 # updated to match at the time. Fixed now: tools.fleet_status --stage real and
 # tools.generate_test_report --stage real both read this list directly, and would

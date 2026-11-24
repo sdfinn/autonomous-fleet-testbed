@@ -35,10 +35,10 @@ Two axes of pluggability keep the SAME sequence usable across sim, CI/HIL, and t
 
 Run from the repo root against a freshly-built workspace:
 
-    python -m tools.mission2_day                  # sim, headless judged self-test (CI-style)
-    python -m tools.mission2_day --hold-s 10       # sim GUI-watch rehearsal (separate gz -g)
-    python -m tools.mission2_day --ball-ops operator   # robot-day dry run (no gz, human handles ball timing)
-    python -m tools.mission2_day --executor jetson --no-launch   # HIL: mission on the Jetson
+    python -m tools.mission2_run                  # sim, headless judged self-test (CI-style)
+    python -m tools.mission2_run --hold-s 10       # sim GUI-watch rehearsal (separate gz -g)
+    python -m tools.mission2_run --ball-ops operator   # real-robot dry run (no gz, human handles ball timing)
+    python -m tools.mission2_run --executor jetson --no-launch   # HIL: mission on the Jetson
                                                    # (stack brought up by scripts/hil_stage.sh)
 
 The GUI-watched run (Mike observing) is intentionally NOT executed by CI/self-tests — this
@@ -66,7 +66,7 @@ from tools.mission2_harness import (BALL_AT_SPHERE_XY, BALL_REMOVAL_SETTLE_S,
 from tools.pipeline_matrix import load_stage
 from tools.telemetry_logger import PHOTO_DIR as _PHOTO_DIR, log_run
 
-log = get_logger('mission2_day')
+log = get_logger('mission2_run')
 
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 PHOTO_DIR = pathlib.Path(_PHOTO_DIR)  # persistent across jobs (Piece 4 final-review fix) — was
@@ -100,7 +100,7 @@ LEFTOVER_BALL_NAMES = ('ball_yellow', 'ball_red')
 
 class BallOps:
     """Placement of the reaction ball. Two implementations: Gazebo (sim) and operator
-    (the on-robot day). `concurrent` says whether a ball swap can happen WHILE the robot is
+    (on the real robot). `concurrent` says whether a ball swap can happen WHILE the robot is
     driving (True for gz — a subprocess call; False for a human, who swaps after the robot
     is home)."""
     concurrent = False
@@ -157,7 +157,7 @@ class GzBallOps(BallOps):
 
 class OperatorBallOps(BallOps):
     """Robot day: the operator's hands are the actuator, not Gazebo. `concurrent = False`
-    means run_day()'s choreography thread never starts for this mode — Mike's explicit
+    means run_mission2()'s choreography thread never starts for this mode — Mike's explicit
     call (2026-07-24, S17 Piece 9 rewrite): no delays, no prompting; it's up to the human
     to place/swap the ball at the correct time while the day runs. A marker class only —
     `.place()`/`.remove()` are unreachable (nothing calls them), so they're left
@@ -169,44 +169,44 @@ class OperatorBallOps(BallOps):
 class MissionExecutor:
     #: Whether this executor spawns its OWN VLM canary internally (JetsonExecutor,
     #: 2026-07-31: classifies ON THE JETSON, using its own Ollama install — the actual
-    #: point of an "on-device" canary). When True, run_day() (module-level) skips its
+    #: point of an "on-device" canary). When True, run_mission2() (module-level) skips its
     #: own workstation-side _maybe_spawn_vlm_canary() call for this executor, so the
     #: same red-reaction photo isn't classified twice by two different machines.
     spawns_own_vlm_canary = False
 
-    def run_day(self):
+    def run_mission2(self):
         """Run the WHOLE day (3 legs: no_ball, yellow, red) in one call and return the 3
-        leg dicts MissionRunner.run_mission2_day() produces (t_start/t_end/ok/checklist/
+        leg dicts MissionRunner.run_mission2_parts() produces (t_start/t_end/ok/checklist/
         photos/reaction_events) — same shape whether the mission ran in-process or on the
         Jetson."""
         raise NotImplementedError
 
     def close(self):
         """Tear down any day-level resources. No-op by default — S17 Piece 9's single
-        continuous run_day() call removed the only real user this ever had
+        continuous run_mission2() call removed the only real user this ever had
         (JetsonExecutor's now-removed persistent container, Piece 8)."""
 
 
 class InProcessExecutor(MissionExecutor):
     """Sim day: run the mission in-process on the workstation via a live MissionRunner —
-    one continuous run_mission2_day() call replaces the old 3 separately-invoked run()s."""
+    one continuous run_mission2_parts() call replaces the old 3 separately-invoked run()s."""
 
     def __init__(self, runner):
         self.runner = runner
 
-    def run_day(self):
-        return self.runner.run_mission2_day()
+    def run_mission2(self):
+        return self.runner.run_mission2_parts()
 
 
 class JetsonExecutor(MissionExecutor):
-    """HIL day: run the WHOLE day on the Jetson over SSH with ONE `--day` invocation of
+    """HIL: run all of Mission 2 on the Jetson over SSH with ONE `--mission2` invocation of
     mission_runner.py (S17 Piece 9) — replaces the old per-scenario SSH call (and, before
     that, the long-lived-container machinery from Piece 8, which existed only to amortize
-    3 `docker run`s/day; with a single `run_day()` call there is only ONE docker
+    3 `docker run`s/day; with a single `run_mission2()` call there is only ONE docker
     invocation/day either way now, so that machinery is gone too — see the module-level
-    JetsonExecutor docstring history in mission2_day.py's git log for Piece 8 if needed).
+    JetsonExecutor docstring history in mission2_run.py's git log for Piece 8 if needed).
     The Jetson has no Gazebo, so ground truth (reaction truth_xy, home-arrival comparisons)
-    comes from the workstation-side GroundTruthLog run_day() (top-level function) collects
+    comes from the workstation-side GroundTruthLog run_mission2() (top-level function) collects
     for the whole call — not from anything this class does. Photos are scp'd back to
     reports/photos/ AND STATE_DIR."""
 
@@ -248,7 +248,7 @@ class JetsonExecutor(MissionExecutor):
                 f'on the Jetson / the CI run env instead of constructing one from '
                 f'git rev-parse.')
 
-    def run_day(self):
+    def run_mission2(self):
         cmd = (
             "docker run --rm --name hil_mission2 --network host --ipc host "
             "-v $HOME/autonomous-fleet-testbed/reports:/ros2_ws/reports "
@@ -259,11 +259,11 @@ class JetsonExecutor(MissionExecutor):
             "-e NAV2_MAP_FILE=living_room.yaml "
             # ROBOT_MODE is required by container_entrypoint.sh (2026-08-06 smoke-test
             # plan, Task 8) — mission, always: this executor only ever runs the daily
-            # mission2 day, never the bench smoke test (that's hil_stage.sh smoke-ci).
+            # Mission 2, never the bench smoke test (that's hil_stage.sh smoke-ci).
             "-e ROBOT_MODE=mission "
             f"-e RUNNER_TYPE=hil_jetson -e POWER_MODE={POWER_MODE_LABEL} "
             f"{self.image} bash /ros2_ws/scripts/container_entrypoint.sh")
-        out_path = os.path.join(self.state_dir, 'day.out')
+        out_path = os.path.join(self.state_dir, 'mission2.out')
         dispatch_time = time.time()
         log.info(f'[timing] ssh dispatch for the day at {dispatch_time:.3f}')
         # 1080s (18 min): comfortable headroom over Nav2 bring-up (up to 120s, now
@@ -280,11 +280,11 @@ class JetsonExecutor(MissionExecutor):
                  f'(+{time.time() - dispatch_time:.3f}s total)')
         log_text = proc.stdout + proc.stderr
         pathlib.Path(out_path).write_text(log_text)
-        # raw ssh output — verbose; the MISSION2_DAY_RESULT line below is the summary.
+        # raw ssh output — verbose; the MISSION2_RESULT line below is the summary.
         log.debug(log_text.rstrip())
         self._log_startup_crash_if_needed(log_text, proc.returncode)
         self._pull_failure_bags(log_text)  # before result parsing — succeeds even on crash
-        results = self._parse_day_result(log_text)
+        results = self._parse_result(log_text)
         for leg in results:
             # Must fire BEFORE _pull_photos_from_paths overwrites leg['photos'] with
             # workstation-local copies below — this needs the ORIGINAL Jetson-side path.
@@ -339,13 +339,13 @@ class JetsonExecutor(MissionExecutor):
             except Exception as exc:
                 log.warning(f'vlm canary (on-Jetson): could not spawn probe for {rel}: {exc}')
 
-    def _parse_day_result(self, log_text):
+    def _parse_result(self, log_text):
         import json
         for line in log_text.splitlines():
-            if line.startswith('MISSION2_DAY_RESULT:'):
-                return json.loads(line[len('MISSION2_DAY_RESULT:'):])
-        raise RuntimeError('no MISSION2_DAY_RESULT line found in Jetson output — '
-                            'process likely crashed before printing it; see day.out')
+            if line.startswith('MISSION2_RESULT:'):
+                return json.loads(line[len('MISSION2_RESULT:'):])
+        raise RuntimeError('no MISSION2_RESULT line found in Jetson output — '
+                            'process likely crashed before printing it; see mission2.out')
 
     def _pull_photos_from_paths(self, remote_paths):
         """scp each already-known remote photo path (from the day JSON's own 'photos'
@@ -519,7 +519,7 @@ class GroundTruthLog:
     get_ground_truth_xy() polls (truth_start/truth_a/truth_b/_ReactionPoller), all of
     which assumed a call boundary to poll AROUND. One thread now logs continuously;
     judging looks up 'ground truth near timestamp T' post-hoc against this log,
-    using the leg-boundary/reaction timestamps mission_runner.py's --day mode already
+    using the leg-boundary/reaction timestamps mission_runner.py's --mission2 mode already
     embeds in its JSON result."""
 
     def __init__(self):
@@ -597,13 +597,13 @@ class OutboundDetector:
 def run_ground_truth_log_only(stop_evt, poll_s=0.3):
     """S17 review fix (2026-07-25): ground-truth LOGGING must run regardless of
     `ball_ops.concurrent` — only the actual ball placement/swap ACTIONS are gated on
-    that flag. Pre-fix, run_day() only ever started a background thread `if
+    that flag. Pre-fix, run_mission2() only ever started a background thread `if
     ball_ops.concurrent:` (run_ball_choreography), which is the ONLY thing that
     populated a GroundTruthLog — so operator mode (the real-robot day, non-concurrent
     ball ops) never logged any ground truth at all, and every judge_* function reads
     "no ground truth" as an unconditional FAIL. This is the operator-mode counterpart
     to run_ball_choreography's own polling loop, minus every ball_ops call — used by
-    run_day() whenever `ball_ops.concurrent` is False so a GroundTruthLog is ALWAYS
+    run_mission2() whenever `ball_ops.concurrent` is False so a GroundTruthLog is ALWAYS
     populated, in every mode."""
     truth_log = GroundTruthLog()
     while not stop_evt.is_set():
@@ -619,8 +619,8 @@ def run_ball_choreography(ball_ops, ball_xy, stop_evt, poll_s=0.3):
     Sequences the SAME 2 actions today's design already does — place yellow behind
     the robot during leg 1's retreat, swap yellow->red during leg 2's retreat — but
     now driven by ONE continuous ground-truth poll loop spanning the single blocking
-    run_day() call, since there's no longer a per-leg call boundary to scope a
-    separate thread to. Concurrent-only (gz mode) — run_day() only calls this function
+    run_mission2() call, since there's no longer a per-leg call boundary to scope a
+    separate thread to. Concurrent-only (gz mode) — run_mission2() only calls this function
     `if ball_ops.concurrent:`; operator mode instead runs run_ground_truth_log_only()
     (S17 review fix, 2026-07-25), which shares this function's polling/logging loop but
     makes no ball_ops calls at all, leaving human ball placement/swap timing fully
@@ -684,10 +684,10 @@ def run_ball_choreography(ball_ops, ball_xy, stop_evt, poll_s=0.3):
 
 def hil_variant_names():
     """The HIL day's variant names, declared once in config/pipeline_matrix.yaml
-    (as full 'mission2_*' scenario names, stripped here to the bare form run_day's
+    (as full 'mission2_*' scenario names, stripped here to the bare form run_mission2's
     results dict uses) — replaces a separately hardcoded tuple that could silently
     drift out of sync with ci.yml's --stage hil report scoping (Piece 6). Also the
-    declared ORDER run_day() zips against MissionRunner.run_mission2_day()'s 3
+    declared ORDER run_mission2() zips against MissionRunner.run_mission2_parts()'s 3
     returned leg dicts — unchanged by this task, ['no_ball', 'yellow', 'red']."""
     _, scenarios = load_stage('hil')
     return [s.removeprefix('mission2_') for s in scenarios]
@@ -732,10 +732,10 @@ def _judge_and_log_leg(name, leg, ball_xy, gt_log, ref_photos_from_prev=None):
 
 
 def _spawn_vlm_warmup():
-    """Fire-and-forget throwaway inference call, spawned once per mission2_day.py
+    """Fire-and-forget throwaway inference call, spawned once per mission2_run.py
     invocation — sim (InProcessExecutor) or HIL (JetsonExecutor) alike, since the VLM
     canary always classifies workstation-side regardless of executor (
-    _maybe_spawn_vlm_canary runs after executor.run_day() returns control to THIS
+    _maybe_spawn_vlm_canary runs after executor.run_mission2() returns control to THIS
     process either way, using an already-local photo path). Originally a manual,
     per-day practice (`ollama run moondream:1.8b "..."` by hand before a HIL/sim day,
     2026-07-30 design spec) — automated here since CI has no human to run it. Never
@@ -825,14 +825,14 @@ def ingest_vlm_canary_from_jetson(jetson_ip, state_dir=None, db_path=None):
     log.info(f'vlm canary (on-Jetson): ingested result for {local_photo_path}')
 
 
-def run_day(executor, ball_ops, ball_xy, hold_s):
+def run_mission2(executor, ball_ops, ball_xy, hold_s):
     """S17 Piece 9: ONE continuous mission execution, 3 separately-judged/logged
     legs (Mike's explicit design, 2026-07-24) — no scenario-named functions, no
     per-call SSH/process boundary. A background thread runs for the WHOLE call and
     ALWAYS ends up populating a GroundTruthLog — judging happens in a loop after the
     single call returns.
 
-    `ball_ops.concurrent == False` (OperatorBallOps, robot-day dry run): only the
+    `ball_ops.concurrent == False` (OperatorBallOps, real-robot dry run): only the
     ball ACTIONS are skipped — run_ground_truth_log_only() still runs so judging has
     real ground truth (S17 review fix, 2026-07-25: pre-fix, operator mode started NO
     thread at all, so every leg FAILed unconditionally on "no ground truth", even on
@@ -847,8 +847,8 @@ def run_day(executor, ball_ops, ball_xy, hold_s):
     day finishing, so judge_red's two "is the robot still stationary" samples
     (t_end and t_end + 2.0) both clamp to the same last sample and the check can
     never fail — a vacuous check, not a real one. This wait is real time, once per
-    run_day() call (not per leg)."""
-    log.info('\n=== Mission 2 day: one continuous run, 3 legs ===')
+    run_mission2() call (not per leg)."""
+    log.info('\n=== Mission 2: one continuous run, 3 legs ===')
     stop_evt = threading.Event()
     gt_log_holder = {}
 
@@ -865,7 +865,7 @@ def run_day(executor, ball_ops, ball_xy, hold_s):
     gt_thread = threading.Thread(target=_run, daemon=True)
     gt_thread.start()
     try:
-        legs = executor.run_day()
+        legs = executor.run_mission2()
     finally:
         time.sleep(2.5)   # let the gt thread keep sampling past the day's nominal end
         stop_evt.set()
@@ -876,7 +876,7 @@ def run_day(executor, ball_ops, ball_xy, hold_s):
     results = {}
     for name, leg in zip(names, legs):
         results[name] = _judge_and_log_leg(name, leg, ball_xy, gt_log)
-        # JetsonExecutor spawns its OWN on-device canary internally (run_day() above,
+        # JetsonExecutor spawns its OWN on-device canary internally (run_mission2() above,
         # before photos get pulled back) — skip the workstation-side spawn so the same
         # red-reaction photo isn't classified twice by two different machines.
         if not executor.spawns_own_vlm_canary:
@@ -898,14 +898,14 @@ def main():
                              'stay workstation-side either way.')
     parser.add_argument('--ball-ops', choices=['gz', 'operator'], default='gz',
                         help='gz = Gazebo spawn/remove (sim/HIL); operator = human places/swaps '
-                             'unprompted (robot-day dry run)')
+                             'unprompted (real-robot dry run)')
     parser.add_argument('--hold-s', type=float, default=0.0,
                         help='seconds to hold after the red run so an observer sees "done" '
                              '(default 0 = headless self-test; use ~10 for a watched run)')
     parser.add_argument('--no-launch', action='store_true',
                         help='assume the stack is already up (do not launch/teardown it). '
                              'Implied by --executor jetson (hil_stage.sh owns the HIL stack).')
-    parser.add_argument('--log', default='/tmp/mission2_day_sim.log')
+    parser.add_argument('--log', default='/tmp/mission2_run_sim.log')
     parser.add_argument('--ingest-vlm-canary', action='store_true',
                         help='pull back and log the Jetson\'s own on-device VLM canary '
                              'result (JetsonExecutor spawns it directly on the Jetson) — '
@@ -915,7 +915,7 @@ def main():
     args = parser.parse_args()
 
     pathlib.Path(STATE_DIR).mkdir(parents=True, exist_ok=True)
-    configure(log_file=os.path.join(STATE_DIR, 'mission2_day.log'))
+    configure(log_file=os.path.join(STATE_DIR, 'mission2_run.log'))
 
     if args.ingest_vlm_canary:
         ingest_vlm_canary_from_jetson(os.environ.get('JETSON_IP'))
@@ -950,7 +950,7 @@ def main():
             runner = MissionRunner()
             executor = InProcessExecutor(runner)
         try:
-            ok = run_day(executor, ball_ops, ball_xy, args.hold_s)
+            ok = run_mission2(executor, ball_ops, ball_xy, args.hold_s)
         finally:
             if runner is not None:
                 runner.nav.destroy_node()
@@ -962,7 +962,7 @@ def main():
     finally:
         if not no_launch:
             shutdown_stack(proc)
-    log.info(f'\nMission 2 day: {"PASS" if ok else "FAIL"}')
+    log.info(f'\nMission 2: {"PASS" if ok else "FAIL"}')
     raise SystemExit(0 if ok else 1)
 
 

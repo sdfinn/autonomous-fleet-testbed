@@ -38,7 +38,7 @@ from vision_msgs.msg import Detection2DArray
 
 from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.image_io import image_msg_to_png, image_msg_to_rgb
-from tools.mission2_day import GzBallOps, SPAWN_APPEAR_SETTLE_S
+from tools.mission2_run import GzBallOps, SPAWN_APPEAR_SETTLE_S
 from tools.mission2_harness import spawn_lidar_ball
 from tools.telemetry_logger import PHOTO_DIR
 from tools import smoke_test_log
@@ -172,7 +172,7 @@ def check_topic(node, topic, msg_type, hz_min, degenerate_fn, window_s=3.0):
 
 
 class OperatorPlaceBallOps:
-    """Bench smoke test: lighter than mission2_day.py's BallOps contract (design spec
+    """Bench smoke test: lighter than mission2_run.py's BallOps contract (design spec
     §3) — a single place() only, no remove()/swap choreography needed. The operator's
     hands are the actuator; smoke_test.py waits for them."""
 

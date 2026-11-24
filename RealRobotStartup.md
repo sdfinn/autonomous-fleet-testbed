@@ -8,7 +8,7 @@ needs to reach it. Written to be followed close to verbatim.
 **Rewritten 2026-08-01** — supersedes the earlier version in full. Two things changed
 from the ground up, both worth knowing before reading further:
 
-1. **The validation target is the mission2 day (no_ball → yellow → red), not BR-01/
+1. **The validation target is the Mission 2 (no_ball → yellow → red), not BR-01/
    `test_navigation.py`.** This is the same 3-leg day `stage-2-gazebo` and `stage-4-hil`
    already run in sim/HIL — same judging, same telemetry shape. `sim_vs_real_comparison.py`
    and its correlation-≥70% gate are dropped entirely for R1; getting/reviewing logs and
@@ -82,7 +82,7 @@ physically pulling it back out (Part B3), a real repeated cost, not one-time.
   sudo find ~/fleet-ci-data -type d -exec chmod g+s {} \;
   ```
 - [ ] (Optional but recommended) Run one more full HIL day as a "last known good"
-  checkpoint before touching anything physical: `scripts/hil_stage.sh day`.
+  checkpoint before touching anything physical: `scripts/hil_stage.sh mission2`.
 
 ### A2. Physical transplant into the Waveshare UGV-PT
 
@@ -749,7 +749,7 @@ in one follow-up commit, both re-reviewed independently clean ("Ready to push: Y
 - [ ] Run `scripts/robot_boot.sh` **manually over SSH** first — don't install the
   systemd unit yet. Watch it: image-present check → container starts → DDS regen →
   Nav2/EKF come up (inside the container) → "Managed nodes are
-  active" ×2 → `mission_runner --day` starts, self-reporting each leg's PASS/FAIL
+  active" ×2 → `mission_runner --mission2` starts, self-reporting each leg's PASS/FAIL
   (no ground-truth judging — the real robot has none). Place the yellow ball, then the
   red ball, at the right moments (see A7) and confirm the whole day runs to
   completion.
@@ -769,7 +769,7 @@ in one follow-up commit, both re-reviewed independently clean ("Ready to push: Y
 
 ### A7. Validate the mission with balls placed manually
 
-Ball timing matches exactly what sim/HIL already do (`tools/mission2_day.py`'s own
+Ball timing matches exactly what sim/HIL already do (`tools/mission2_run.py`'s own
 choreography, just done by hand instead of `spawn_ball`/`remove_ball`) — **no
 prompting exists in operator mode; watch the robot and act on your own judgment**:
 
@@ -780,7 +780,7 @@ prompting exists in operator mode; watch the robot and act on your own judgment*
 - [ ] The robot reacts to yellow (stops ~0.8 m short, photographs it) and heads home
   again.
 - [ ] **While the robot is heading home** on that leg's return, swap the ball for
-  **red**, same way (see `tools/mission2_day.py`'s `run_ball_choreography`/
+  **red**, same way (see `tools/mission2_run.py`'s `run_ball_choreography`/
   `BALL_AT_SPHERE_XY` if you need to double check the exact sequence and marker
   coordinates).
 - [ ] The final leg reacts to red and the day ends — the mission_runner process
@@ -849,7 +849,7 @@ with your own eyes-on confirmation; the systemd unit is installed and enabled;
   documented heading.
 - [ ] Power on. That's it — `robot-mission.service` handles everything from there:
   waits for WiFi, regenerates the DDS config, brings up the container (which runs
-  Nav2/EKF inside), and runs the mission2 day with operator ball
+  Nav2/EKF inside), and runs the Mission 2 with operator ball
   placement. Step back and watch; place the balls per A7's timing when the moment comes.
 - [ ] Ground-truth check by eye, every time.
 
@@ -909,7 +909,7 @@ One Jetson, no separate CI runner — this is a physical swap, every time:
 - [ ] `sudo systemctl disable robot-mission.service` before testing (so a HIL day
   doesn't collide with the boot-time unit trying to start its own mission at the same
   time) — `sudo systemctl enable` it again before B4's reinstall.
-- [ ] Re-run `scripts/hil_stage.sh day` / the normal CI pipeline as usual.
+- [ ] Re-run `scripts/hil_stage.sh mission2` / the normal CI pipeline as usual.
 - [ ] Re-check `~/fleet-ci-data` ownership before the next real-robot run (the
   container runs as root and will re-poison the directory with root-owned files —
   see A1's check).

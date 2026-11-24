@@ -19,7 +19,7 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, Imu, LaserScan
 from unittest.mock import MagicMock, patch
 
-from tools.mission2_day import GzBallOps
+from tools.mission2_run import GzBallOps
 from tools.mission2_harness import LIDAR_BALL_SDF
 from vision_msgs.msg import Detection2DArray, Detection2D, ObjectHypothesisWithPose
 

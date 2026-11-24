@@ -10,7 +10,7 @@
 # appropriate launch arguments, wait for it to report ready, run one mission2
 # day, exit. One-shot — no long-lived container, no docker exec.
 #
-# Env vars the CALLER (tools/mission2_day.py's JetsonExecutor for HIL,
+# Env vars the CALLER (tools/mission2_run.py's JetsonExecutor for HIL,
 # scripts/robot_boot.sh for the real robot, scripts/hil_stage.sh smoke/smoke-ci for
 # the bench smoke test) must set via `docker run -e`:
 #   ROBOT_MODE          'mission' or 'smoke_test' — REQUIRED, no implicit default
@@ -20,12 +20,12 @@
 #   NAV2_MAP_FILE       filename under src/nav_fleet/maps/
 #                       (living_room.yaml or bedroom_real.yaml) — mission mode only
 # Optional (mission mode):
-#   MISSION2_SELF_REPORT=1   real-robot only — mission_runner.py --day logs its
+#   MISSION2_SELF_REPORT=1   real-robot only — mission_runner.py --mission2 logs its
 #                            own self-reported PASS/FAIL per leg (no ground
 #                            truth, no judging — that harness never runs in this
 #                            container). HIL must NOT set this: the
 #                            workstation's JetsonExecutor judges from the
-#                            printed MISSION2_DAY_RESULT line instead.
+#                            printed MISSION2_RESULT line instead.
 #   RUNNER_TYPE, POWER_MODE  passed through to telemetry (unchanged convention)
 # Optional (smoke_test mode only):
 #   Branches on USE_SIM_TIME (final-review C1, 2026-08-11):
@@ -67,7 +67,7 @@ export ROS_DOMAIN_ID=0
 # GraphicsMagick (nav2 map_server's image loader) SIGSEGVs on the Jetson's ARM build
 # under threading — killed Nav2 twice on 2026-07-18 (see hil_stage.sh's own comment
 # near its JENV for the full story — that copy still exists there; it was only
-# tools/mission2_day.py's now-dead copy that got deleted). Carried over here since map_server
+# tools/mission2_run.py's now-dead copy that got deleted). Carried over here since map_server
 # now runs inside this container instead of nav2_up()'s old bare host process — this
 # is the ONLY place that workaround needs to live now.
 export MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1
@@ -118,8 +118,8 @@ case "$ROBOT_MODE" in
       count=$(grep -c 'Managed nodes are active' "$NAV2_LOG" 2>/dev/null || true)
       count="${count:-0}"
     done
-    echo "=== [container-entrypoint] Nav2 active — starting mission2 day ==="
-    python3 -m nav_fleet.mission_runner --day
+    echo "=== [container-entrypoint] Nav2 active — starting Mission 2 ==="
+    python3 -m nav_fleet.mission_runner --mission2
     ;;
 
   smoke_test)

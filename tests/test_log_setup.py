@@ -37,8 +37,8 @@ def test_resolve_level_falls_back_to_info_on_garbage():
 
 
 def test_get_logger_returns_namespaced_logger():
-    logger = get_logger('mission2_day')
-    assert logger.name == 'fleet.mission2_day'
+    logger = get_logger('mission2_run')
+    assert logger.name == 'fleet.mission2_run'
 
 
 def test_get_logger_forces_propagation_true():

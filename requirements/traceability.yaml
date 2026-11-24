@@ -16,11 +16,9 @@ requirements:
   - id: BR-03
     description: "Recovery behavior completes within 10s if triggered"
     tests:
-      # Genuinely not implemented — recovery behaviors (spin/backup) are broken
-      # ("Pose Goes Off Grid" on every attempt, root cause not yet found). Tracked as
-      # deferred work in Release1Todo.md Session 16+. This requirement stays failing
-      # (not skipped — it's a real gap, not a profile limitation) until that's fixed;
-      # stage-0's traceability step has continue-on-error for this reason.
+      # Tested since 2026-11-23: back up and spin are sent to Nav2's behavior server in
+      # the simulator and must each succeed within 10 s. Before that, every recovery
+      # failed ("Pose Goes Off Grid") and this requirement had no test.
       - tests/test_navigation.py::test_recovery_timeout
   - id: BR-04
     description: "/robot_001/odom publishes at >= 50 Hz"

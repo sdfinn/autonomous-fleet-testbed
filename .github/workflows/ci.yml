@@ -81,25 +81,9 @@ jobs:
         run: pip install -r requirements-ci.txt
 
       - name: Traceability gate
-        # BR-03 (recovery behavior) has no test and can't yet — recovery (spin/backup) is
-        # genuinely broken ("Pose Goes Off Grid" on every attempt), tracked as deferred work
-        # in Release1Todo.md Session 16+. continue-on-error reports this honestly as a real,
-        # tracked gap (not silently skipped via robot-profile skip_requirements, which is for
-        # hardware capability differences, not implementation gaps) without blocking every
-        # downstream stage on a known issue. Removing continue-on-error (and this gate
-        # becoming a real, enforcing check) is explicit Release 2 scope, tied to BR-03's
-        # recovery-behavior work landing then — not a Release 1 to-do, don't pull it forward.
-        #
-        # mkdir fix (2026-08-01): `reports/` is gitignored (generated-artifacts only), so a
-        # fresh actions/checkout@v4 never has it on disk — the `>` redirect below used to fail
-        # with "No such file or directory" BEFORE check_traceability.py ever ran, since the
-        # very first commit that added this step. continue-on-error masked it as a silent
-        # green no-op instead of a crash, so the traceability-report artifact has never once
-        # actually been produced by CI. This mkdir is a pure mechanical fix — it makes the
-        # step run and actually upload real (7/8-coverage, BR-03-missing) output instead of
-        # crashing before it starts. It changes nothing about continue-on-error or blocking
-        # behavior, so it carries no Release 1 risk.
-        continue-on-error: true
+        # An enforcing gate since 2026-11-23: every requirement has a test (BR-03, recovery,
+        # was the last gap; tests/test_navigation.py::test_recovery_timeout). It ran with
+        # continue-on-error until then. `reports/` is gitignored, so it is created here.
         run: |
           mkdir -p reports
           python tools/check_traceability.py \
@@ -344,8 +328,8 @@ jobs:
             tests/test_sim_wheel_hold.py -v --timeout=480 \
             --cov=tools --cov=src/nav_fleet/nav_fleet --cov-report=
 
-      - name: Run Mission 2 day (in-process — VLM canary x86 coverage)
-        # tools/mission2_day.py's run_day() is now the ONLY place Mission 2's 3
+      - name: Run Mission 2 (in-process — VLM canary x86 coverage)
+        # tools/mission2_run.py's run_mission2() is now the ONLY place Mission 2's 3
         # legs (no_ball/yellow/red) actually run in this stage — the old standalone
         # tests/test_mission2.py per-scenario tests were removed (2026-08-01) as
         # redundant: same 3 legs, same judging, but this in-process run also covers
@@ -360,27 +344,27 @@ jobs:
         # tests). This also gives stage-5-reports-sim a real `runs` row to join the
         # VLM canary result against via find_run_photos()/find_vlm_canary_results().
         env:
-          STATE_DIR: /tmp/stage2_mission2_day
+          STATE_DIR: /tmp/stage2_mission2_run
         run: |
           source /opt/ros/jazzy/setup.bash
           source install/setup.bash
           source ~/fleet-env/bin/activate
           # coverage run -a appends to the SAME .coverage data file the pytest step
           # above wrote (both run from repo root — no explicit COVERAGE_FILE needed),
-          # so stage 2's coverage picture includes the VLM-canary/mission-day code
+          # so stage 2's coverage picture includes the VLM-canary/Mission 2 code
           # path, not just what the pytest integration tests themselves touch.
-          coverage run -a -m tools.mission2_day --executor inprocess --no-launch
+          coverage run -a -m tools.mission2_run --executor inprocess --no-launch
 
-      - name: Show mission2_day log tail on failure
+      - name: Show mission2_run log tail on failure
         if: failure()
-        run: tail -n 80 /tmp/stage2_mission2_day/mission2_day.log 2>/dev/null || true
+        run: tail -n 80 /tmp/stage2_mission2_run/mission2_run.log 2>/dev/null || true
 
-      - name: Upload mission2_day log
+      - name: Upload mission2_run log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stage2-mission2-day-log-${{ github.run_number }}
-          path: /tmp/stage2_mission2_day/mission2_day.log
+          path: /tmp/stage2_mission2_run/mission2_run.log
           if-no-files-found: warn
 
       # Real-robot driver + bench smoke-test regression (2026-08-06, Task 10 of the
@@ -469,7 +453,7 @@ jobs:
 
       # Combined stage-1+stage-2 coverage (2026-08-01, pure-local) — see the matching
       # comment in stage-1-quality. This stage's .coverage already includes both the
-      # pytest integration tests AND the mission2_day in-process run (coverage run -a
+      # pytest integration tests AND the mission2_run in-process run (coverage run -a
       # above appended to it) — saved and uploaded the same way for the coverage-
       # report job (below) to combine with stage-1's data for the real merged total.
       - name: Save stage-2 coverage data
@@ -570,7 +554,7 @@ jobs:
             --commit-sha "${{ github.sha }}" --ci-run-number "${{ github.run_number }}"
 
   stage-4-hil:
-    name: "Stage 4 — HIL: Gazebo (x86) ↔ Nav2 + Mission 2 day (no_ball + yellow + red, real Jetson)"
+    name: "Stage 4 — HIL: Gazebo (x86) ↔ Nav2 + Mission 2 (no_ball + yellow + red, real Jetson)"
     # Replaces the prior Isaac Sim job (retired 2026-07 — Session 16; scripts stay in
     # git/on disk). One job on the x86 runner drives the Jetson over SSH as a lab
     # instrument — see docs/session15-hil-ci-stage-design.md for every decision
@@ -581,7 +565,7 @@ jobs:
     runs-on: [self-hosted, x86, gpu, rtx5080]
     needs: stage-3-arm64
     # Budget arithmetic (Task 13b/d: Mission 1 dropped from stage-4 — it stays as stage-2
-    # regression, tests/test_mission_run.py; stage-4 runs ONLY the Mission 2 day). One `run`
+    # regression, tests/test_mission_run.py; stage-4 runs ONLY the Mission 2). One `run`
     # gate brings the stack up ONCE; the `day` orchestrator reuses it for all three runs:
     #   run gate: clean + sim 60 + nav2 120 = ~3 min (no mission, no retry).
     #   day: no_ball round trip ~3 (out+back+3 photos) + yellow ~2.5 (out+react+back, with the
@@ -653,8 +637,8 @@ jobs:
       - name: Bring up the HIL stack (sim on x86 → Nav2 on the Jetson — gate only, Task 13b)
         run: scripts/hil_stage.sh run
 
-      - name: "Mission 2 day (HIL orchestrator: no_ball → yellow → red, Task 13d)"
-        run: scripts/hil_stage.sh day
+      - name: "Mission 2 (HIL orchestrator: no_ball → yellow → red, Task 13d)"
+        run: scripts/hil_stage.sh mission2
 
       - name: Run smoke-test machinery regression (HIL container)
         # Real-robot driver + bench smoke-test regression (2026-08-06, Task 10):
@@ -714,7 +698,7 @@ jobs:
           # this line never aborts the step either way.
           [ -f install/setup.bash ] && source install/setup.bash || true
           source ~/fleet-env/bin/activate
-          python -m tools.mission2_day --ingest-vlm-canary || true
+          python -m tools.mission2_run --ingest-vlm-canary || true
 
       - name: Upload mission evidence artifact
         if: always()
@@ -724,8 +708,8 @@ jobs:
           path: |
             /tmp/hil_stage/*.png
             /tmp/hil_stage/sim.log
-            /tmp/hil_stage/mission2_day.log
-            /tmp/hil_stage/day.out
+            /tmp/hil_stage/mission2_run.log
+            /tmp/hil_stage/mission2.out
             /tmp/hil_stage/nav2_container_*.log
             /tmp/hil_stage/vlm_canary_last_result.json
             reports/photos/*.png

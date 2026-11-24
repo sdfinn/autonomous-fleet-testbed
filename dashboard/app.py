@@ -464,7 +464,7 @@ with tab6:
     st.subheader('Code Coverage Trend')
     st.caption(
         'Logged by the coverage-report CI job (tools.coverage_log) — stage-1 (unit, '
-        'no ROS) and stage-2 (integration, live Gazebo, includes the mission2_day/ '
+        'no ROS) and stage-2 (integration, live Gazebo, includes the mission2_run/ '
         'VLM-canary path) are measured separately, then merged via `coverage combine` '
         'for the real total. Pure-local, no third-party site (2026-08-01).'
     )

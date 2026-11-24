@@ -61,14 +61,14 @@ CLEAR_COSTMAP_SERVICES = (
     '/robot_001/local_costmap/clear_entirely_local_costmap',
 )
 
-# Mirrors tools.mission2_day.hil_variant_names()'s declared order
+# Mirrors tools.mission2_run.hil_variant_names()'s declared order
 # (config/pipeline_matrix.yaml) — duplicated here, not imported, because this file
-# is ROBOT code and must never import tools.mission2_day (which pulls in
+# is ROBOT code and must never import tools.mission2_run (which pulls in
 # tools.mission2_harness — ball positions/judge logic robot code must never see).
-MISSION2_DAY_LEG_NAMES = ('no_ball', 'yellow', 'red')
+MISSION2_PART_NAMES = ('no_ball', 'yellow', 'red')
 
 
-def _log_mission2_day_self_report(results):
+def _log_mission2_self_report(results):
     """Real-robot-only telemetry (MISSION2_SELF_REPORT=1, set by
     scripts/container_entrypoint.sh's caller for the real-robot context only —
     never for HIL): log each leg's SELF-reported PASS/FAIL (leg['ok'], from Nav2's
@@ -77,9 +77,9 @@ def _log_mission2_day_self_report(results):
     are the accepted substitute, and analysis of the resulting logs/photos happens
     after, not in real time). HIL never sets MISSION2_SELF_REPORT — its judged
     verdict comes from the workstation's own ground-truth check instead
-    (tools.mission2_day, which stays workstation-side precisely because it needs
+    (tools.mission2_run, which stays workstation-side precisely because it needs
     Gazebo)."""
-    for name, leg in zip(MISSION2_DAY_LEG_NAMES, results):
+    for name, leg in zip(MISSION2_PART_NAMES, results):
         log_run(
             scenario=f'mission2_{name}',
             steps=1,
@@ -373,7 +373,7 @@ class MissionRunner(Node):
                 return False
         return True
 
-    def run_mission2_day(self, legs=3):
+    def run_mission2_parts(self, legs=3):
         """S17 Piece 9 (Mike, 2026-07-24): run mission2 `legs` times in one process —
         replaces 3 externally-invoked processes/SSH calls with one continuous
         execution. Each repetition's own checklist/new-photos/reaction-events are
@@ -381,7 +381,7 @@ class MissionRunner(Node):
         already used) so the day's 3 separately-judged/logged rows are unaffected —
         only the execution boundary moves, not the judging granularity. Deliberately
         NOT a generic 'legs' concept in the mission model (missions.py is untouched);
-        this is Mission-2-specific day orchestration living where it always has."""
+        this is Mission-2-specific orchestration living where it always has."""
         results = []
         for _ in range(legs):
             self.reaction_events.clear()
@@ -437,21 +437,21 @@ def _log_mission(name, ok, runner, crashed=False):
 def main():
     parser = argparse.ArgumentParser(description='Run a named mission against Nav2.')
     parser.add_argument('mission', nargs='?', default=None, choices=sorted(MISSIONS))
-    parser.add_argument('--day', action='store_true',
+    parser.add_argument('--mission2', action='store_true',
                         help='S17 Piece 9: run mission2 3x in one process, print one '
                              'combined JSON result instead of exiting after one '
-                             'mission — replaces mission2_day.py calling this 3x over '
+                             'mission — replaces mission2_run.py calling this 3x over '
                              'SSH.')
     args = parser.parse_args()
 
-    if args.day:
+    if args.mission2:
         import json
         # Started before rclpy.init() — same reasoning as the one-shot path below:
         # an independent OS process, not an rclpy node; snapshot-mode writes NOTHING
         # to disk until snapshot() is called, so this costs nothing on an all-PASS day.
         # Pre-fix (S17 review, 2026-07-25): this branch exited via `raise SystemExit(0)`
         # before ever reaching the one-shot path's failure-bag code below — since HIL
-        # only runs via --day now, no HIL run could ever produce a failure bag.
+        # only runs via --mission2 now, no HIL run could ever produce a failure bag.
         bag_proc, bag_path = failure_bag.start('mission2')
         rclpy.init()
         runner = None
@@ -459,16 +459,16 @@ def main():
             runner = MissionRunner()
             runner.get_logger().info(build_env_manifest(
                 git_sha=git_sha(), power_mode=os.environ.get('POWER_MODE')))
-            results = runner.run_mission2_day()
-            print('MISSION2_DAY_RESULT:' + json.dumps(results))
+            results = runner.run_mission2_parts()
+            print('MISSION2_RESULT:' + json.dumps(results))
             if os.environ.get('MISSION2_SELF_REPORT') == '1':
-                _log_mission2_day_self_report(results)
+                _log_mission2_self_report(results)
             bag_kept = any(not leg['ok'] for leg in results) and failure_bag.snapshot()
             if bag_kept:
                 print(f'failure bag kept: {bag_path}')
             failure_bag.stop(bag_proc, bag_path, keep=bag_kept)
         except Exception:
-            # A crash mid-day (construction, or anywhere inside run_mission2_day) is
+            # A crash mid-day (construction, or anywhere inside run_mission2_parts) is
             # exactly the "can't reproduce it, need evidence" case this bag exists for
             # (failure_bag.py's docstring) — snapshot before the exception propagates.
             # Re-raised (not swallowed): mrc != 0 with no 'Mission mission2:' line in
@@ -483,12 +483,12 @@ def main():
         finally:
             rclpy.try_shutdown()
         raise SystemExit(0)
-        # ^ exit code is informational only here — mission2_day.py judges PASS/FAIL
+        # ^ exit code is informational only here — mission2_run.py judges PASS/FAIL
         # itself from ground truth, same as today; a leg's own self-report 'ok' is
         # not the verdict (see judge_* functions) — always exit 0 if the process
         # itself didn't crash, so the workstation always gets to parse the JSON.
     if args.mission is None:
-        parser.error('mission is required unless --day is given')
+        parser.error('mission is required unless --mission2 is given')
 
     # Started before rclpy.init() — an independent OS process, not an rclpy node; a
     # snapshot-mode recorder writes NOTHING to disk until snapshot() below is called,

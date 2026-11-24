@@ -1,15 +1,15 @@
 # Copyright 2026 Mike
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for tools/mission2_day.py's pure logic (S17 review CR-22): the day
+"""Unit tests for tools/mission2_run.py's pure logic (S17 review CR-22): the day
 orchestrator is THE stage-4 gate, and its output parsing + retreat detection were
 previously untested.
 
 Rewritten for S17 Piece 9 (2026-07-24/25): the old per-scenario `run(ball_xy, color)`
 executor interface (and its ExecResult/`_parse_checklist` log-scraping) is gone,
-replaced by `run_day() -> list[dict]` — one call returns all 3 legs'
+replaced by `run_mission2() -> list[dict]` — one call returns all 3 legs'
 t_start/t_end/ok/checklist/photos/reaction_events at once (the shape
-MissionRunner.run_mission2_day() produces). JetsonExecutor's persistent-container
-machinery (Piece 8) is also gone: with one `run_day()` call there is only ONE docker
+MissionRunner.run_mission2_parts() produces). JetsonExecutor's persistent-container
+machinery (Piece 8) is also gone: with one `run_mission2()` call there is only ONE docker
 invocation/day either way now, so container-mode HIL goes back to a plain
 `docker run --rm` for the single call, not `docker exec` into a long-lived container."""
 import json
@@ -21,14 +21,14 @@ import pytest
 import re
 import signal
 
-import tools.mission2_day as mission2_day_module
-from tools.mission2_day import (GroundTruthLog, InProcessExecutor, JetsonExecutor,
+import tools.mission2_run as mission2_run_module
+from tools.mission2_run import (GroundTruthLog, InProcessExecutor, JetsonExecutor,
                                  MissionExecutor, OutboundDetector, RetreatDetector,
-                                 hil_variant_names, run_day, sweep_orphans)
+                                 hil_variant_names, run_mission2, sweep_orphans)
 
 
 def _leg(t_start=0.0, t_end=1.0, ok=True, checklist=None, photos=None, reaction_events=None):
-    """One MissionRunner.run_mission2_day()-shaped leg dict — matches the real field
+    """One MissionRunner.run_mission2_parts()-shaped leg dict — matches the real field
     names/types exactly (checklist rows are JSON lists, not tuples, since they cross a
     json.dumps/json.loads boundary on the Jetson path)."""
     return {
@@ -115,11 +115,11 @@ def test_run_ball_choreography_second_wait_requires_a_real_outbound_climb_first(
         def settle(self):
             pass
 
-    monkeypatch.setattr(mission2_day_module, 'get_ground_truth_xy', fake_get_xy)
-    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(mission2_run_module, 'get_ground_truth_xy', fake_get_xy)
+    monkeypatch.setattr(mission2_run_module.time, 'sleep', lambda s: None)
 
     ball_ops = FakeBallOps()
-    truth_log = mission2_day_module.run_ball_choreography(
+    truth_log = mission2_run_module.run_ball_choreography(
         ball_ops, (1.2, 3.9), stop_evt, poll_s=0.0)
 
     assert ball_ops.place_labels[0] == ('yellow', 'leg1_return')     # first retreat: unaffected
@@ -133,7 +133,7 @@ def test_run_ball_choreography_second_wait_requires_a_real_outbound_climb_first(
 
 
 def test_ground_truth_log_nearest_returns_closest_sample():
-    log = mission2_day_module.GroundTruthLog()
+    log = mission2_run_module.GroundTruthLog()
     log.record(10.0, (1.0, 2.0))
     log.record(10.5, (1.5, 2.5))
     log.record(11.0, (2.0, 3.0))
@@ -143,14 +143,14 @@ def test_ground_truth_log_nearest_returns_closest_sample():
 
 
 def test_ground_truth_log_nearest_empty_returns_none():
-    log = mission2_day_module.GroundTruthLog()
+    log = mission2_run_module.GroundTruthLog()
     assert log.nearest(10.0) is None
 
 
 def test_ground_truth_log_closest_approach_between_finds_local_minimum():
     """For reaction-point recovery: the closest approach to a KNOWN target xy,
     restricted to a time window (one leg's own approach, not a different leg's)."""
-    log = mission2_day_module.GroundTruthLog()
+    log = mission2_run_module.GroundTruthLog()
     log.record(0.0, (0.0, 0.0))
     log.record(1.0, (0.0, 3.0))    # closest to (0, 4) in this window
     log.record(2.0, (0.0, 1.0))
@@ -168,12 +168,12 @@ def test_in_process_executor_run_day_delegates_to_runner():
     calls = []
 
     class FakeRunner:
-        def run_mission2_day(self):
+        def run_mission2_parts(self):
             calls.append('called')
             return [_leg(), _leg(), _leg()]
 
     ex = InProcessExecutor(FakeRunner())
-    legs = ex.run_day()
+    legs = ex.run_mission2()
     assert calls == ['called']
     assert len(legs) == 3
 
@@ -219,10 +219,10 @@ def test_jetson_executor_construction_never_starts_a_container(monkeypatch):
         return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
 
     monkeypatch.setattr(subprocess, 'run', fake_run)
-    mission2_day_module.JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
+    mission2_run_module.JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
 
     assert not any('docker run' in c[-1] for c in calls if c and c[0] == 'ssh')
-    assert not hasattr(mission2_day_module, 'HIL_CONTAINER_NAME')
+    assert not hasattr(mission2_run_module, 'HIL_CONTAINER_NAME')
 
 
 def test_close_is_a_noop(monkeypatch):
@@ -241,12 +241,12 @@ def test_close_is_a_noop(monkeypatch):
     assert 'close' not in JetsonExecutor.__dict__   # confirms no override was reintroduced
 
 
-# ── JetsonExecutor.run_day() ─────────────────────────────────────────────────────────────────
-def _day_result_stdout(legs):
-    return 'MISSION2_DAY_RESULT:' + json.dumps(legs) + '\n'
+# ── JetsonExecutor.run_mission2() ─────────────────────────────────────────────────────────────────
+def _result_stdout(legs):
+    return 'MISSION2_RESULT:' + json.dumps(legs) + '\n'
 
 
-def test_run_day_dispatches_the_container_entrypoint(monkeypatch, tmp_path):
+def test_run_mission2_dispatches_the_container_entrypoint(monkeypatch, tmp_path):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     legs = [_leg(), _leg(), _leg()]
     calls = []
@@ -255,15 +255,15 @@ def test_run_day_dispatches_the_container_entrypoint(monkeypatch, tmp_path):
         calls.append(cmd)
         if cmd[0] == 'timeout':
             return subprocess.CompletedProcess(cmd, returncode=0,
-                                                stdout=_day_result_stdout(legs), stderr='')
+                                                stdout=_result_stdout(legs), stderr='')
         return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
 
     monkeypatch.setattr(subprocess, 'run', fake_run)
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_pull_photos_from_paths',
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_pull_photos_from_paths',
                         lambda self, paths: list(paths))
     ex = JetsonExecutor('10.42.0.217', str(tmp_path))
 
-    ex.run_day()
+    ex.run_mission2()
 
     ssh_cmd = next(c for c in calls if 'ssh' in c and 'timeout' in c)
     assert 'docker run --rm' in ssh_cmd[-1]
@@ -275,12 +275,12 @@ def test_run_day_dispatches_the_container_entrypoint(monkeypatch, tmp_path):
     # container_entrypoint.sh's ROBOT_MODE is now required (2026-08-06 smoke-test
     # plan, Task 8) — without this, every HIL mission run dies immediately with
     # "ROBOT_MODE must be set". mission mode, always — this executor only ever
-    # runs the daily mission2 day, never the bench smoke test.
+    # runs the daily Mission 2, never the bench smoke test.
     assert '-e ROBOT_MODE=mission' in ssh_cmd[-1]
     assert 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef' in ssh_cmd[-1]
 
 
-def test_run_day_pulls_photos_per_leg_and_failure_bags(monkeypatch, tmp_path):
+def test_run_mission2_pulls_photos_per_leg_and_failure_bags(monkeypatch, tmp_path):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
     legs = [_leg(photos=['/home/mike/fleet-ci-data/photos/a.png']),
             _leg(photos=['/home/mike/fleet-ci-data/photos/b.png']),
@@ -290,7 +290,7 @@ def test_run_day_pulls_photos_per_leg_and_failure_bags(monkeypatch, tmp_path):
     def fake_run(cmd, **kwargs):
         if cmd[0] == 'timeout':
             return subprocess.CompletedProcess(cmd, returncode=0,
-                                                stdout=_day_result_stdout(legs), stderr='')
+                                                stdout=_result_stdout(legs), stderr='')
         return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
 
     def fake_pull(self, paths):
@@ -298,10 +298,10 @@ def test_run_day_pulls_photos_per_leg_and_failure_bags(monkeypatch, tmp_path):
         return [f'local/{p.rsplit("/", 1)[-1]}' for p in paths]
 
     monkeypatch.setattr(subprocess, 'run', fake_run)
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_pull_photos_from_paths', fake_pull)
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_pull_photos_from_paths', fake_pull)
     ex = JetsonExecutor('10.42.0.217', str(tmp_path))
 
-    result = ex.run_day()
+    result = ex.run_mission2()
 
     assert pulled == [['/home/mike/fleet-ci-data/photos/a.png'],
                        ['/home/mike/fleet-ci-data/photos/b.png'], []]
@@ -310,7 +310,7 @@ def test_run_day_pulls_photos_per_leg_and_failure_bags(monkeypatch, tmp_path):
     assert result[2]['photos'] == []
 
 
-def test_run_day_raises_when_no_result_line_found(monkeypatch, tmp_path):
+def test_run_mission2_raises_when_no_result_line_found(monkeypatch, tmp_path):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
 
     def fake_run(cmd, **kwargs):
@@ -319,25 +319,25 @@ def test_run_day_raises_when_no_result_line_found(monkeypatch, tmp_path):
             stdout='', stderr='Traceback ...\nModuleNotFoundError\n')
 
     monkeypatch.setattr(subprocess, 'run', fake_run)
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_require_image_local',
                         lambda self: None)
     ex = JetsonExecutor('10.42.0.217', str(tmp_path))
 
-    with pytest.raises(RuntimeError, match='no MISSION2_DAY_RESULT'):
-        ex.run_day()
+    with pytest.raises(RuntimeError, match='no MISSION2_RESULT'):
+        ex.run_mission2()
 
 
-def test_parse_day_result_recovers_the_json_line():
+def test_parse_result_recovers_the_json_line():
     legs = [_leg(), _leg(), _leg()]
     ex = JetsonExecutor.__new__(JetsonExecutor)   # bypass __init__ — pure parsing test
-    log_text = 'some noise\n' + _day_result_stdout(legs) + 'trailer\n'
-    assert ex._parse_day_result(log_text) == legs
+    log_text = 'some noise\n' + _result_stdout(legs) + 'trailer\n'
+    assert ex._parse_result(log_text) == legs
 
 
-def test_parse_day_result_raises_when_missing():
+def test_parse_result_raises_when_missing():
     ex = JetsonExecutor.__new__(JetsonExecutor)
-    with pytest.raises(RuntimeError, match='no MISSION2_DAY_RESULT'):
-        ex._parse_day_result('no result line here\n')
+    with pytest.raises(RuntimeError, match='no MISSION2_RESULT'):
+        ex._parse_result('no result line here\n')
 
 
 # ── Photo path translation (2026-07-22 regression + container fix, now list-driven) ─────────
@@ -348,7 +348,7 @@ def test_pull_photos_container_mode_translates_root_prefix_to_tilde(monkeypatch,
     HOME, per the image's missing USER directive), mapped to JETSON_USER's real home via
     the container-run bind mount — the scp path must be JETSON_USER's home, not root's."""
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module, 'PHOTO_DIR', tmp_path)
+    monkeypatch.setattr(mission2_run_module, 'PHOTO_DIR', tmp_path)
     calls = []
 
     def fake_run(cmd, **kwargs):
@@ -365,8 +365,8 @@ def test_pull_photos_container_mode_translates_root_prefix_to_tilde(monkeypatch,
 
 def test_pull_photos_from_paths_empty_list_makes_no_scp_call(monkeypatch, tmp_path):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module, 'PHOTO_DIR', tmp_path)
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+    monkeypatch.setattr(mission2_run_module, 'PHOTO_DIR', tmp_path)
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_require_image_local',
                         lambda self: None)
 
     def _boom(*a, **k):
@@ -384,7 +384,7 @@ def test_jetson_executor_spawns_own_vlm_canary_flag_is_true():
 
 def test_spawn_vlm_warmup_on_jetson_dispatches_ssh_command(monkeypatch):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_require_image_local',
                         lambda self: None)
     captured = {}
 
@@ -404,7 +404,7 @@ def test_spawn_vlm_warmup_on_jetson_dispatches_ssh_command(monkeypatch):
 
 def test_spawn_vlm_warmup_on_jetson_logs_warning_on_failure_without_raising(monkeypatch):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_require_image_local',
                         lambda self: None)
 
     def _boom(*a, **k):
@@ -417,7 +417,7 @@ def test_spawn_vlm_warmup_on_jetson_logs_warning_on_failure_without_raising(monk
 
 def test_spawn_vlm_canary_on_jetson_dispatches_ssh_with_remote_path(monkeypatch):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_require_image_local',
                         lambda self: None)
     captured = {}
 
@@ -441,7 +441,7 @@ def test_spawn_vlm_canary_on_jetson_dispatches_ssh_with_remote_path(monkeypatch)
 
 def test_spawn_vlm_canary_on_jetson_does_nothing_without_a_red_reaction(monkeypatch):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_require_image_local',
                         lambda self: None)
 
     def _boom(*a, **k):
@@ -456,7 +456,7 @@ def test_spawn_vlm_canary_on_jetson_does_nothing_without_a_red_reaction(monkeypa
 
 def test_spawn_vlm_canary_on_jetson_logs_warning_on_failure_without_raising(monkeypatch):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_require_image_local',
                         lambda self: None)
 
     def _boom(*a, **k):
@@ -470,7 +470,7 @@ def test_spawn_vlm_canary_on_jetson_logs_warning_on_failure_without_raising(monk
     ex._spawn_vlm_canary_on_jetson(leg)  # must not raise
 
 
-def test_run_day_spawns_canary_on_jetson_before_pulling_photos_back(monkeypatch, tmp_path):
+def test_run_mission2_spawns_canary_on_jetson_before_pulling_photos_back(monkeypatch, tmp_path):
     """The on-Jetson spawn must see the ORIGINAL remote path — it has to fire before
     _pull_photos_from_paths overwrites leg['photos'] with workstation-local copies."""
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
@@ -482,7 +482,7 @@ def test_run_day_spawns_canary_on_jetson_before_pulling_photos_back(monkeypatch,
     def fake_run(cmd, **kwargs):
         if cmd[0] == 'timeout':
             return subprocess.CompletedProcess(cmd, returncode=0,
-                                                stdout=_day_result_stdout(legs), stderr='')
+                                                stdout=_result_stdout(legs), stderr='')
         return subprocess.CompletedProcess(cmd, returncode=0, stdout='', stderr='')
 
     def fake_spawn(self, leg):
@@ -492,35 +492,35 @@ def test_run_day_spawns_canary_on_jetson_before_pulling_photos_back(monkeypatch,
         return ['local/pulled.png' for _ in paths]
 
     monkeypatch.setattr(subprocess, 'run', fake_run)
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_spawn_vlm_canary_on_jetson',
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_spawn_vlm_canary_on_jetson',
                         fake_spawn)
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_pull_photos_from_paths',
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_pull_photos_from_paths',
                         fake_pull)
     ex = JetsonExecutor('10.42.0.217', str(tmp_path))
 
-    result = ex.run_day()
+    result = ex.run_mission2()
 
     assert seen_paths == ['/home/mike/fleet-ci-data/photos/mission2_reaction_red_1.png']
     assert result[0]['photos'] == ['local/pulled.png']
 
 
-def test_run_day_skips_workstation_side_canary_for_jetson_executor(monkeypatch):
-    """The top-level run_day() must not ALSO spawn a workstation-side canary for a
+def test_run_mission2_skips_workstation_side_canary_for_jetson_executor(monkeypatch):
+    """The top-level run_mission2() must not ALSO spawn a workstation-side canary for a
     Jetson-executed leg — JetsonExecutor already classified it, on-device, itself."""
-    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg', lambda *a, **k: True)
-    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(mission2_run_module, '_judge_and_log_leg', lambda *a, **k: True)
+    monkeypatch.setattr(mission2_run_module.time, 'sleep', lambda s: None)
 
     def _boom(*a, **k):
         raise AssertionError('workstation-side canary must not fire for a Jetson executor')
-    monkeypatch.setattr(mission2_day_module, '_maybe_spawn_vlm_canary', _boom)
+    monkeypatch.setattr(mission2_run_module, '_maybe_spawn_vlm_canary', _boom)
 
     class FakeJetsonExecutor:
         spawns_own_vlm_canary = True
 
-        def run_day(self):
+        def run_mission2(self):
             return [_leg(), _leg(), _leg()]
 
-    ok = run_day(FakeJetsonExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
+    ok = run_mission2(FakeJetsonExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
     assert ok is True
 
 
@@ -540,12 +540,12 @@ def test_ingest_vlm_canary_from_jetson_logs_result_with_photo_dir_path(
     import json as _json
     import sqlite3
 
-    from tools.mission2_day import ingest_vlm_canary_from_jetson
+    from tools.mission2_run import ingest_vlm_canary_from_jetson
     photo_dir = tmp_path / 'photo_dir'
     photo_dir.mkdir()
     state_dir = tmp_path / 'state_dir'
     state_dir.mkdir()
-    monkeypatch.setattr(mission2_day_module, 'PHOTO_DIR', photo_dir)
+    monkeypatch.setattr(mission2_run_module, 'PHOTO_DIR', photo_dir)
 
     photo_dir_red_photo = photo_dir / "mission2_reaction_red_20260731_080109.png"
     photo_dir_red_photo.write_bytes(b'fake png bytes')
@@ -583,7 +583,7 @@ def test_ingest_vlm_canary_from_jetson_no_op_when_scp_fails(monkeypatch, tmp_pat
     not an error — must not raise, must not write anything."""
     import os
 
-    from tools.mission2_day import ingest_vlm_canary_from_jetson
+    from tools.mission2_run import ingest_vlm_canary_from_jetson
     db = str(tmp_path / "t.db")
 
     def fake_scp(cmd, **kwargs):
@@ -601,7 +601,7 @@ def test_pull_failure_bags_scps_the_directory_recursively(monkeypatch, tmp_path)
     directory back — a single-file scp (the photo pattern) would silently miss the
     .mcap files inside it."""
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module, 'FAILURE_BAG_DIR', tmp_path)
+    monkeypatch.setattr(mission2_run_module, 'FAILURE_BAG_DIR', tmp_path)
     captured = {}
 
     def fake_run(cmd, **kwargs):
@@ -621,8 +621,8 @@ def test_pull_failure_bags_scps_the_directory_recursively(monkeypatch, tmp_path)
 
 def test_pull_failure_bags_no_bag_line_makes_no_scp_call(monkeypatch, tmp_path):
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module, 'FAILURE_BAG_DIR', tmp_path)
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+    monkeypatch.setattr(mission2_run_module, 'FAILURE_BAG_DIR', tmp_path)
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_require_image_local',
                         lambda self: None)
 
     def _boom(*a, **k):
@@ -638,10 +638,10 @@ def test_no_startup_crash_row_on_clean_exit(monkeypatch):
     """mrc == 0 (script completed normally, whatever the mission result) — never
     synthesize a row; mission_runner.py's own _log_mission already handled it."""
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_require_image_local',
                         lambda self: None)
     captured = []
-    monkeypatch.setattr(mission2_day_module, 'log_run', lambda **kw: captured.append(kw))
+    monkeypatch.setattr(mission2_run_module, 'log_run', lambda **kw: captured.append(kw))
     ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
     ex._log_startup_crash_if_needed('Mission mission2: FAIL\n', mrc=0)
     assert captured == []
@@ -652,10 +652,10 @@ def test_no_startup_crash_row_when_completion_line_present(monkeypatch):
     SystemExit(0 if ok else 1)`) — the completion print line is the real signal that
     _log_mission already ran, not the exit code alone."""
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_require_image_local',
                         lambda self: None)
     captured = []
-    monkeypatch.setattr(mission2_day_module, 'log_run', lambda **kw: captured.append(kw))
+    monkeypatch.setattr(mission2_run_module, 'log_run', lambda **kw: captured.append(kw))
     ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
     ex._log_startup_crash_if_needed('...\nMission mission2: FAIL\n', mrc=1)
     assert captured == []
@@ -666,10 +666,10 @@ def test_startup_crash_row_logged_when_process_died_before_completion_line(monke
     ran (e.g. an import-time crash). Synthesize the FAIL row ourselves so the
     workstation DB has SOME record instead of the attempt being invisible."""
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_require_image_local',
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_require_image_local',
                         lambda self: None)
     captured = []
-    monkeypatch.setattr(mission2_day_module, 'log_run', lambda **kw: captured.append(kw))
+    monkeypatch.setattr(mission2_run_module, 'log_run', lambda **kw: captured.append(kw))
     ex = JetsonExecutor('10.42.0.217', '/tmp/hil_stage')
     ex._log_startup_crash_if_needed(
         'Traceback (most recent call last):\nModuleNotFoundError: ...\n', mrc=1)
@@ -683,7 +683,7 @@ def test_startup_crash_row_logged_when_process_died_before_completion_line(monke
 
 
 def test_hil_variant_names_matches_the_declared_pipeline_matrix():
-    """Piece 6: run_day's summary loop must iterate the SAME variant names declared in
+    """Piece 6: run_mission2's summary loop must iterate the SAME variant names declared in
     config/pipeline_matrix.yaml's hil.scenarios (minus the 'mission2_' prefix), not a
     separately hardcoded tuple that could silently drift out of sync with it."""
     assert hil_variant_names() == ['no_ball', 'yellow', 'red']
@@ -693,7 +693,7 @@ def test_sweep_orphans_never_matches_the_gui_viewer_only_process(monkeypatch):
     """Piece 7 (found during a live timed GUI run, 2026-07-22): sweep_orphans() used to
     pkill a bare 'gz sim' pattern, which matches BOTH the headless server ('gz sim -s -r
     world.sdf') AND the separate GUI viewer ('gz sim -g') — killing an observer's viewer
-    within seconds of every mission2_day run starting, since launch_stack() sweeps before
+    within seconds of every mission2_run run starting, since launch_stack() sweeps before
     it launches. None of the patterns swept may match a viewer-only cmdline; at least one
     must still match the real server cmdline."""
     patterns, signals = [], []
@@ -701,9 +701,9 @@ def test_sweep_orphans_never_matches_the_gui_viewer_only_process(monkeypatch):
     def fake_sweep(pats, sig):
         patterns.extend(pats)
         signals.append(sig)
-        return mission2_day_module.proc_sweep.Found([], [])
+        return mission2_run_module.proc_sweep.Found([], [])
 
-    monkeypatch.setattr(mission2_day_module.proc_sweep, 'sweep', fake_sweep)
+    monkeypatch.setattr(mission2_run_module.proc_sweep, 'sweep', fake_sweep)
 
     sweep_orphans()
 
@@ -733,12 +733,12 @@ def test_judge_and_log_leg_fills_truth_xy_only_when_missing(monkeypatch):
 
     captured = {}
     monkeypatch.setattr(
-        mission2_day_module, 'judge_yellow',
+        mission2_run_module, 'judge_yellow',
         lambda ball_xy, events, photos, truth_start, final, sim=None: captured.update(
             events=events) or [])
-    monkeypatch.setattr(mission2_day_module, 'log_variant_row', lambda *a, **k: None)
+    monkeypatch.setattr(mission2_run_module, 'log_variant_row', lambda *a, **k: None)
 
-    mission2_day_module._judge_and_log_leg('yellow', leg, (1.2, 3.9), gt_log)
+    mission2_run_module._judge_and_log_leg('yellow', leg, (1.2, 3.9), gt_log)
 
     yellow_event = captured['events'][0]
     red_event = captured['events'][1]
@@ -761,13 +761,13 @@ def test_judge_and_log_leg_routes_to_the_right_judge(monkeypatch, name, judge_na
                 called.append(fn_name)
                 return []
             return _fn
-        monkeypatch.setattr(mission2_day_module, fn_name, _make(fn_name))
+        monkeypatch.setattr(mission2_run_module, fn_name, _make(fn_name))
     logged = []
-    monkeypatch.setattr(mission2_day_module, 'log_variant_row',
+    monkeypatch.setattr(mission2_run_module, 'log_variant_row',
                         lambda variant, seed, ok, runner=None, home_photo_similarity=None,
                                photos=None: logged.append((variant, ok)))
 
-    ok = mission2_day_module._judge_and_log_leg(name, leg, (1.2, 3.9), gt_log)
+    ok = mission2_run_module._judge_and_log_leg(name, leg, (1.2, 3.9), gt_log)
 
     assert called == [judge_name]
     assert ok is True
@@ -777,20 +777,20 @@ def test_judge_and_log_leg_routes_to_the_right_judge(monkeypatch, name, judge_na
 def test_judge_and_log_leg_ok_false_when_judge_reports_fails(monkeypatch):
     gt_log = GroundTruthLog()
     leg = _leg()
-    monkeypatch.setattr(mission2_day_module, 'judge_no_ball',
+    monkeypatch.setattr(mission2_run_module, 'judge_no_ball',
                         lambda *a, **k: ['some failure'])
     logged = []
-    monkeypatch.setattr(mission2_day_module, 'log_variant_row',
+    monkeypatch.setattr(mission2_run_module, 'log_variant_row',
                         lambda variant, seed, ok, runner=None, home_photo_similarity=None,
                                photos=None: logged.append(ok))
 
-    ok = mission2_day_module._judge_and_log_leg('no_ball', leg, (1.2, 3.9), gt_log)
+    ok = mission2_run_module._judge_and_log_leg('no_ball', leg, (1.2, 3.9), gt_log)
 
     assert ok is False
     assert logged == [False]
 
 
-# ── run_day() (top-level orchestration) ──────────────────────────────────────────────────────
+# ── run_mission2() (top-level orchestration) ──────────────────────────────────────────────────────
 class _FakeBallOps:
     def __init__(self, concurrent):
         self.concurrent = concurrent
@@ -802,40 +802,40 @@ class _FakeBallOps:
 
 
 def _fake_log_only(stop_evt, poll_s=0.3):
-    """Fast stand-in for run_ground_truth_log_only, used by every run_day() test below
+    """Fast stand-in for run_ground_truth_log_only, used by every run_mission2() test below
     that isn't specifically exercising Fix 1's operator-mode wiring — avoids each of
     these tests picking up a real ~2.5s wait (Fix 5) plus real subprocess/gz polling."""
     stop_evt.wait(timeout=5)
     return GroundTruthLog()
 
 
-def test_run_day_operator_mode_never_starts_the_choreography_thread(monkeypatch):
-    """Decision 2: OperatorBallOps.concurrent is False, so run_day() must never call
+def test_run_mission2_operator_mode_never_starts_the_choreography_thread(monkeypatch):
+    """Decision 2: OperatorBallOps.concurrent is False, so run_mission2() must never call
     run_ball_choreography (and therefore never call any ball_ops.place()/.remove()) —
     only the BALL ACTIONS are gated on concurrent. Ground-truth LOGGING is a separate,
-    always-on concern (Fix 1, see test_run_day_operator_mode_populates_ground_truth_log
+    always-on concern (Fix 1, see test_run_mission2_operator_mode_populates_ground_truth_log
     below) — this test stubs run_ground_truth_log_only to keep it fast/deterministic."""
     def _boom(*a, **k):
         raise AssertionError('run_ball_choreography must not run in operator mode')
-    monkeypatch.setattr(mission2_day_module, 'run_ball_choreography', _boom)
-    monkeypatch.setattr(mission2_day_module, 'run_ground_truth_log_only', _fake_log_only)
-    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg', lambda *a, **k: True)
-    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(mission2_run_module, 'run_ball_choreography', _boom)
+    monkeypatch.setattr(mission2_run_module, 'run_ground_truth_log_only', _fake_log_only)
+    monkeypatch.setattr(mission2_run_module, '_judge_and_log_leg', lambda *a, **k: True)
+    monkeypatch.setattr(mission2_run_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
         spawns_own_vlm_canary = False
 
-        def run_day(self):
+        def run_mission2(self):
             return [_leg(), _leg(), _leg()]
 
-    ok = run_day(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
+    ok = run_mission2(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
     assert ok is True
 
 
-def test_run_day_operator_mode_populates_ground_truth_log(monkeypatch):
+def test_run_mission2_operator_mode_populates_ground_truth_log(monkeypatch):
     """Fix 1 (S17 review, 2026-07-25): operator mode (ball_ops.concurrent == False,
     the real-robot day) must still end up with a NON-EMPTY GroundTruthLog fed to
-    judging — pre-fix, run_day() started NO background thread at all in this mode
+    judging — pre-fix, run_mission2() started NO background thread at all in this mode
     (the only thing that ever populated a GroundTruthLog was the ball-choreography
     thread, which is concurrent-only), so every judge_* call saw "no ground truth"
     and FAILed unconditionally, even on a mission that ran fine."""
@@ -850,24 +850,24 @@ def test_run_day_operator_mode_populates_ground_truth_log(monkeypatch):
         raise AssertionError('run_ball_choreography (and its ball_ops actions) must '
                               'not run in operator mode')
 
-    monkeypatch.setattr(mission2_day_module, 'run_ground_truth_log_only', fake_log_only)
-    monkeypatch.setattr(mission2_day_module, 'run_ball_choreography', _boom)
-    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(mission2_run_module, 'run_ground_truth_log_only', fake_log_only)
+    monkeypatch.setattr(mission2_run_module, 'run_ball_choreography', _boom)
+    monkeypatch.setattr(mission2_run_module.time, 'sleep', lambda s: None)
 
     captured = {}
 
     def fake_judge(name, leg, ball_xy, gtl):
         captured[name] = gtl
         return True
-    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg', fake_judge)
+    monkeypatch.setattr(mission2_run_module, '_judge_and_log_leg', fake_judge)
 
     class FakeExecutor:
         spawns_own_vlm_canary = False
 
-        def run_day(self):
+        def run_mission2(self):
             return [_leg(), _leg(), _leg()]
 
-    ok = run_day(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
+    ok = run_mission2(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
 
     assert ok is True
     assert captured['no_ball'] is gt_log
@@ -886,15 +886,15 @@ def test_run_ground_truth_log_only_records_until_stop_evt_set(monkeypatch):
             stop_evt.set()
         return (float(calls['i']), float(calls['i']))
 
-    monkeypatch.setattr(mission2_day_module, 'get_ground_truth_xy', fake_get_xy)
-    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(mission2_run_module, 'get_ground_truth_xy', fake_get_xy)
+    monkeypatch.setattr(mission2_run_module.time, 'sleep', lambda s: None)
 
-    log = mission2_day_module.run_ground_truth_log_only(stop_evt, poll_s=0.0)
+    log = mission2_run_module.run_ground_truth_log_only(stop_evt, poll_s=0.0)
 
     assert len(log._samples) == 3
 
 
-def test_run_day_gz_mode_starts_and_joins_the_choreography_thread(monkeypatch):
+def test_run_mission2_gz_mode_starts_and_joins_the_choreography_thread(monkeypatch):
     started = []
 
     def fake_choreography(ball_ops, ball_xy, stop_evt, poll_s=0.3):
@@ -902,58 +902,58 @@ def test_run_day_gz_mode_starts_and_joins_the_choreography_thread(monkeypatch):
         stop_evt.wait(timeout=5)
         return GroundTruthLog()
 
-    monkeypatch.setattr(mission2_day_module, 'run_ball_choreography', fake_choreography)
-    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg', lambda *a, **k: True)
-    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(mission2_run_module, 'run_ball_choreography', fake_choreography)
+    monkeypatch.setattr(mission2_run_module, '_judge_and_log_leg', lambda *a, **k: True)
+    monkeypatch.setattr(mission2_run_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
         spawns_own_vlm_canary = False
 
-        def run_day(self):
+        def run_mission2(self):
             return [_leg(), _leg(), _leg()]
 
     ball_ops = _FakeBallOps(concurrent=True)
-    ok = run_day(FakeExecutor(), ball_ops, (1.2, 3.9), hold_s=0)
+    ok = run_mission2(FakeExecutor(), ball_ops, (1.2, 3.9), hold_s=0)
     assert ball_ops.cleared == 1          # leftover balls are removed before the day starts
     assert started == [True]
     assert ok is True
 
 
-def test_run_day_judges_all_three_legs_in_declared_order(monkeypatch):
+def test_run_mission2_judges_all_three_legs_in_declared_order(monkeypatch):
     judged_names = []
-    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg',
+    monkeypatch.setattr(mission2_run_module, '_judge_and_log_leg',
                         lambda name, leg, ball_xy, gt_log: judged_names.append(name) or True)
-    monkeypatch.setattr(mission2_day_module, 'run_ground_truth_log_only', _fake_log_only)
-    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(mission2_run_module, 'run_ground_truth_log_only', _fake_log_only)
+    monkeypatch.setattr(mission2_run_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
         spawns_own_vlm_canary = False
 
-        def run_day(self):
+        def run_mission2(self):
             return [_leg(), _leg(), _leg()]
 
-    run_day(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
+    run_mission2(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
     assert judged_names == ['no_ball', 'yellow', 'red']
 
 
-def test_run_day_returns_false_if_any_leg_fails(monkeypatch):
+def test_run_mission2_returns_false_if_any_leg_fails(monkeypatch):
     results = iter([True, False, True])
-    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg',
+    monkeypatch.setattr(mission2_run_module, '_judge_and_log_leg',
                         lambda *a, **k: next(results))
-    monkeypatch.setattr(mission2_day_module, 'run_ground_truth_log_only', _fake_log_only)
-    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(mission2_run_module, 'run_ground_truth_log_only', _fake_log_only)
+    monkeypatch.setattr(mission2_run_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
         spawns_own_vlm_canary = False
 
-        def run_day(self):
+        def run_mission2(self):
             return [_leg(), _leg(), _leg()]
 
-    ok = run_day(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
+    ok = run_mission2(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
     assert ok is False
 
 
-def test_run_day_waits_before_stopping_the_gt_thread(monkeypatch):
+def test_run_mission2_waits_before_stopping_the_gt_thread(monkeypatch):
     """Fix 5 (S17 review, 2026-07-25): the finally block must give the ground-truth
     thread ~2.5 real seconds to keep sampling past the day's nominal end BEFORE
     signalling stop — otherwise (as found live on the x86 in-process executor) the
@@ -964,13 +964,13 @@ def test_run_day_waits_before_stopping_the_gt_thread(monkeypatch):
     internally too (`Thread._started`), so subclassing/patching threading.Event
     globally spuriously records ITS .set() call as well, which is exactly what a
     first attempt at this test hit (Thread._bootstrap_inner()'s `self._started.set()`
-    firing before run_day()'s own real time.sleep(2.5)/stop_evt.set() pair ever
+    firing before run_mission2()'s own real time.sleep(2.5)/stop_evt.set() pair ever
     runs — a false failure, not a real one). Source inspection sidesteps that
     entirely: it directly verifies the actual code shape, not a racy proxy for it."""
     import inspect
-    src = inspect.getsource(mission2_day_module.run_day)
+    src = inspect.getsource(mission2_run_module.run_mission2)
     finally_src = src[src.index('finally:'):]
-    assert finally_src.count('time.sleep(2.5)') == 1        # once per run_day() call
+    assert finally_src.count('time.sleep(2.5)') == 1        # once per run_mission2() call
     sleep_idx = finally_src.index('time.sleep(2.5)')
     stop_idx = finally_src.index('stop_evt.set()')
     assert sleep_idx < stop_idx                              # sleep happens BEFORE stop_evt.set()
@@ -983,23 +983,23 @@ def test_spawn_vlm_warmup_spawns_detached_warm_process(monkeypatch):
         captured['cmd'] = cmd
         captured['kwargs'] = kwargs
         return None
-    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', fake_popen)
+    monkeypatch.setattr(mission2_run_module.subprocess, 'Popen', fake_popen)
 
-    mission2_day_module._spawn_vlm_warmup()
+    mission2_run_module._spawn_vlm_warmup()
 
-    assert captured['cmd'] == [mission2_day_module.sys.executable, '-m',
+    assert captured['cmd'] == [mission2_run_module.sys.executable, '-m',
                                 'tools.vlm_canary', '--warm']
     assert captured['kwargs']['start_new_session'] is True
-    assert captured['kwargs']['stdout'] == mission2_day_module.subprocess.DEVNULL
-    assert captured['kwargs']['stderr'] == mission2_day_module.subprocess.DEVNULL
+    assert captured['kwargs']['stdout'] == mission2_run_module.subprocess.DEVNULL
+    assert captured['kwargs']['stderr'] == mission2_run_module.subprocess.DEVNULL
 
 
 def test_spawn_vlm_warmup_logs_warning_on_spawn_failure_without_raising(monkeypatch):
     def _boom(cmd, **kwargs):
         raise OSError('no such file or directory')
-    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', _boom)
+    monkeypatch.setattr(mission2_run_module.subprocess, 'Popen', _boom)
 
-    mission2_day_module._spawn_vlm_warmup()  # must not raise
+    mission2_run_module._spawn_vlm_warmup()  # must not raise
 
 
 def test_maybe_spawn_vlm_canary_spawns_detached_process_on_red_reaction(monkeypatch):
@@ -1009,14 +1009,14 @@ def test_maybe_spawn_vlm_canary_spawns_detached_process_on_red_reaction(monkeypa
         captured['cmd'] = cmd
         captured['kwargs'] = kwargs
         return None
-    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', fake_popen)
+    monkeypatch.setattr(mission2_run_module.subprocess, 'Popen', fake_popen)
 
     leg = _leg(photos=['/tmp/red_reaction_red_20260730_120000.png'],
                reaction_events=[{'color': 'red', 'reaction': 'photo_then_stop',
                                  'truth_xy': None}])
-    mission2_day_module._maybe_spawn_vlm_canary('red', leg)
+    mission2_run_module._maybe_spawn_vlm_canary('red', leg)
 
-    assert captured['cmd'][:3] == [mission2_day_module.sys.executable, '-m', 'tools.vlm_canary']
+    assert captured['cmd'][:3] == [mission2_run_module.sys.executable, '-m', 'tools.vlm_canary']
     assert captured['cmd'][3] == '/tmp/red_reaction_red_20260730_120000.png'
     assert captured['cmd'][4] == 'red'
     assert captured['kwargs']['start_new_session'] is True
@@ -1025,59 +1025,59 @@ def test_maybe_spawn_vlm_canary_spawns_detached_process_on_red_reaction(monkeypa
 def test_maybe_spawn_vlm_canary_does_nothing_without_a_red_reaction(monkeypatch):
     def _boom(cmd, **kwargs):
         raise AssertionError('must not spawn when there was no red reaction')
-    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', _boom)
+    monkeypatch.setattr(mission2_run_module.subprocess, 'Popen', _boom)
 
     leg = _leg(photos=['/tmp/mission2_marker_20260730_120000.png'], reaction_events=[])
-    mission2_day_module._maybe_spawn_vlm_canary('no_ball', leg)  # must not raise
+    mission2_run_module._maybe_spawn_vlm_canary('no_ball', leg)  # must not raise
 
 
 def test_maybe_spawn_vlm_canary_ignores_yellow_reactions(monkeypatch):
     def _boom(cmd, **kwargs):
         raise AssertionError('must not spawn for a yellow-only reaction')
-    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', _boom)
+    monkeypatch.setattr(mission2_run_module.subprocess, 'Popen', _boom)
 
     leg = _leg(photos=['/tmp/yellow_reaction_yellow_20260730_120000.png'],
                reaction_events=[{'color': 'yellow', 'reaction': 'photo_then_home',
                                  'truth_xy': None}])
-    mission2_day_module._maybe_spawn_vlm_canary('yellow', leg)  # must not raise
+    mission2_run_module._maybe_spawn_vlm_canary('yellow', leg)  # must not raise
 
 
 def test_maybe_spawn_vlm_canary_logs_warning_on_spawn_failure_without_raising(monkeypatch):
     def _boom(cmd, **kwargs):
         raise OSError('no such file or directory')
-    monkeypatch.setattr(mission2_day_module.subprocess, 'Popen', _boom)
+    monkeypatch.setattr(mission2_run_module.subprocess, 'Popen', _boom)
 
     leg = _leg(photos=['/tmp/red_reaction_red_20260730_120000.png'],
                reaction_events=[{'color': 'red', 'reaction': 'photo_then_stop',
                                  'truth_xy': None}])
-    mission2_day_module._maybe_spawn_vlm_canary('red', leg)  # must not raise
+    mission2_run_module._maybe_spawn_vlm_canary('red', leg)  # must not raise
 
 
-def test_run_day_calls_maybe_spawn_vlm_canary_once_per_leg(monkeypatch):
-    """Integration check: run_day() itself wires the hook in, for every leg —
-    doesn't assert on judging/telemetry, which the existing run_day tests already
+def test_run_mission2_calls_maybe_spawn_vlm_canary_once_per_leg(monkeypatch):
+    """Integration check: run_mission2() itself wires the hook in, for every leg —
+    doesn't assert on judging/telemetry, which the existing run_mission2 tests already
     cover; monkeypatches _judge_and_log_leg exactly like
-    test_run_day_operator_mode_never_starts_the_choreography_thread does."""
+    test_run_mission2_operator_mode_never_starts_the_choreography_thread does."""
     calls = []
-    monkeypatch.setattr(mission2_day_module, '_judge_and_log_leg', lambda *a, **k: True)
-    monkeypatch.setattr(mission2_day_module, '_maybe_spawn_vlm_canary',
+    monkeypatch.setattr(mission2_run_module, '_judge_and_log_leg', lambda *a, **k: True)
+    monkeypatch.setattr(mission2_run_module, '_maybe_spawn_vlm_canary',
                         lambda name, leg: calls.append(name))
-    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(mission2_run_module.time, 'sleep', lambda s: None)
 
     class FakeExecutor:
         spawns_own_vlm_canary = False
 
-        def run_day(self):
+        def run_mission2(self):
             return [_leg(), _leg(), _leg()]
 
-    ok = run_day(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
+    ok = run_mission2(FakeExecutor(), _FakeBallOps(concurrent=False), (1.2, 3.9), hold_s=0)
     assert ok is True
     assert calls == ['no_ball', 'yellow', 'red']
 
 
 
 # ── One detector everywhere (2026-11-23) ────────────────────────────────────────────────────
-def test_run_day_gives_the_container_no_detector_settings(monkeypatch, tmp_path):
+def test_run_mission2_gives_the_container_no_detector_settings(monkeypatch, tmp_path):
     """The RF-DETR node runs on the Jetson outside the container (hil_stage.sh run). The
     hand-written detector and its color profiles are gone."""
     monkeypatch.setenv('HIL_IMAGE', 'ghcr.io/sdfinn/autonomous-fleet-testbed:deadbeef')
@@ -1085,13 +1085,13 @@ def test_run_day_gives_the_container_no_detector_settings(monkeypatch, tmp_path)
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
-        out = _day_result_stdout([_leg(), _leg(), _leg()]) if cmd[0] == 'timeout' else ''
+        out = _result_stdout([_leg(), _leg(), _leg()]) if cmd[0] == 'timeout' else ''
         return subprocess.CompletedProcess(cmd, returncode=0, stdout=out, stderr='')
 
     monkeypatch.setattr(subprocess, 'run', fake_run)
-    monkeypatch.setattr(mission2_day_module.JetsonExecutor, '_pull_photos_from_paths',
+    monkeypatch.setattr(mission2_run_module.JetsonExecutor, '_pull_photos_from_paths',
                         lambda self, paths: list(paths))
-    JetsonExecutor('10.42.0.217', str(tmp_path)).run_day()
+    JetsonExecutor('10.42.0.217', str(tmp_path)).run_mission2()
 
     ssh_cmd = next(c for c in calls if 'ssh' in c and 'timeout' in c)
     assert 'HSV_CONFIG_FILE' not in ssh_cmd[-1] and 'BALL_DETECTOR' not in ssh_cmd[-1]
@@ -1099,8 +1099,8 @@ def test_run_day_gives_the_container_no_detector_settings(monkeypatch, tmp_path)
 
 def test_every_sweep_covers_the_detector_node():
     """A leftover detector publishes on /robot_001/detections beside the next run's own."""
-    assert any('object_detector' in pat for pat in mission2_day_module._SWEEP_PATTERNS)
-    assert 'object_detector' in mission2_day_module._LEFTOVER_PATTERN
+    assert any('object_detector' in pat for pat in mission2_run_module._SWEEP_PATTERNS)
+    assert 'object_detector' in mission2_run_module._LEFTOVER_PATTERN
 
 
 # ── A day that dies must not leave a ball behind; a day starts from a clean world ───────────
@@ -1127,9 +1127,9 @@ def test_ball_sequence_places_nothing_when_the_day_ends_before_the_robot_moves(m
         stop_evt.set()                       # the day ends while the first wait is on
         return (-1.276, 1.2)
 
-    monkeypatch.setattr(mission2_day_module, 'get_ground_truth_xy', robot_never_moves)
-    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
-    mission2_day_module.run_ball_choreography(FakeBallOps(), (1.2, 3.9), stop_evt, poll_s=0.0)
+    monkeypatch.setattr(mission2_run_module, 'get_ground_truth_xy', robot_never_moves)
+    monkeypatch.setattr(mission2_run_module.time, 'sleep', lambda s: None)
+    mission2_run_module.run_ball_choreography(FakeBallOps(), (1.2, 3.9), stop_evt, poll_s=0.0)
     assert calls == []
 
 
@@ -1137,16 +1137,16 @@ def test_gz_ball_ops_clear_removes_only_balls_that_are_really_in_the_world(monke
     """Gazebo's remove service answers "true" for a model that is not there, so the
     world's own model list decides what counts as a leftover."""
     removed = []
-    monkeypatch.setattr(mission2_day_module, 'remove_ball', removed.append)
-    monkeypatch.setattr(mission2_day_module.time, 'sleep', lambda s: None)
-    monkeypatch.setattr(mission2_day_module, 'world_model_names',
+    monkeypatch.setattr(mission2_run_module, 'remove_ball', removed.append)
+    monkeypatch.setattr(mission2_run_module.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(mission2_run_module, 'world_model_names',
                         lambda: ['floor', 'robot_001', 'ball_red'])
-    assert mission2_day_module.GzBallOps().clear() == ['ball_red']
+    assert mission2_run_module.GzBallOps().clear() == ['ball_red']
     assert removed == ['ball_red']
 
     removed.clear()
-    monkeypatch.setattr(mission2_day_module, 'world_model_names', lambda: ['floor', 'robot_001'])
-    assert mission2_day_module.GzBallOps().clear() == [] and removed == []
+    monkeypatch.setattr(mission2_run_module, 'world_model_names', lambda: ['floor', 'robot_001'])
+    assert mission2_run_module.GzBallOps().clear() == [] and removed == []
 
-    monkeypatch.setattr(mission2_day_module, 'world_model_names', lambda: None)   # no Gazebo
-    assert mission2_day_module.GzBallOps().clear() == [] and removed == []
+    monkeypatch.setattr(mission2_run_module, 'world_model_names', lambda: None)   # no Gazebo
+    assert mission2_run_module.GzBallOps().clear() == [] and removed == []
