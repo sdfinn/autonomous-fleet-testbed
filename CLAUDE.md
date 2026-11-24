@@ -75,12 +75,15 @@ Detail: `docs/sessions/2026-11-23.md` (15 sections), `docs/detection-history.md`
 - **The robot's own messaging is on loopback** (`CYCLONEDDS_SCOPE=local`, set by
   `robot_boot.sh` for both halves; CI's Jetson stage stays on the network). The
   Jetson's WiFi address changed mid-mission again (2026-11-20, 2026-11-23) and the
-  processes could no longer hear each other. NOT yet shown: a run carrying on with
-  WiFi off. The operator watch still pauses/ends an attended run on link loss; Mike
-  wants "carry on and keep logging" as the rule.
-- **Names (Mike): it is "Mission 2", never "Mission 2 day".** Mission 1 doorway photo;
-  Mission 2 yellow and red; Mission 3 green ball, front and back (wayfarer only);
-  Mission 4 (maybe) "is it tidy". The rename across this repo is proposed, not done.
+  processes could no longer hear each other. PROVEN on the stand the same evening: a
+  run carried on through 35 s with the WiFi switched off, no messaging error in any
+  log. The operator watch still pauses/ends an attended run on link loss; Mike wants
+  "carry on and keep logging" as the rule (next).
+- **Mission names (Mike): one sequence for both projects, never per release**
+  (`docs/terminology.md`): 1 doorway photo; 2 yellow and red; 3 green ball, front and
+  back (wayfarer only); 4 is it tidy; 5 is it tidy with names; 6+ next. It is
+  "Mission 2", never "Mission 2 day"; the rename of the tool/flag/CI names in this repo
+  is proposed (mapping in the 2026-11-23 chat), not done.
 - **A floor "go" means with video (mast camera) and monitoring.**
 - **RF-DETR (`object_detector`) is the only detector**: real robot, local simulator,
   CI's simulator stage, CI's Jetson stage, all three smoke-test paths. The hand-written
@@ -150,16 +153,14 @@ Detail: `docs/sessions/2026-11-23.md` (15 sections), `docs/detection-history.md`
   shut down; 6 of 8 under load before, 16 of 16 after). CI stage 1 has
   `--timeout=180` per test and `timeout-minutes: 20`.
 
-**NEXT (Mike, 2026-11-23 close; `docs/sessions/2026-11-23.md` "Next"):** (1) prove
-loopback on the stand: a run with WiFi switched off partway (operator watch off for
-that run); (2) the link-loss rule: carry on and keep logging; (3) mast camera on every
-run from `robot_boot.sh`; (4) the "day" rename and mission names 1-4 once Mike has
-marked up the chart; (5) a floor run with a box that truly blocks; (6) rest of Release
-1: telemetry transfer step (57 real-robot rows sit on the Jetson, 0 on the
-workstation), `sim_vs_real_comparison.py`, `r1-complete`; start-pose check; reaction
-rule in seconds. Release 2 not started; a simple brain built here is under
-consideration. Class names stay the model's own labels ("sports ball"); our own
-`yellow_ball`/`red_ball` keep the underscore.
+**NEXT (Mike, 2026-11-23 close; `docs/sessions/2026-11-23.md` "Next"):** (1) the
+link-loss rule: carry on and keep logging when the operator's link is lost, "pause" as
+an option; (2) mast camera on every run from `robot_boot.sh`; (3) the "day" rename;
+(4) a floor run with a box that truly blocks; (5) rest of Release 1: telemetry
+transfer step (57 real-robot rows on the Jetson, 0 on the workstation),
+`sim_vs_real_comparison.py`, `r1-complete`; start-pose check; reaction rule in seconds.
+Release 2 not started; a simple brain built here is under consideration. Class names
+stay the model's own labels ("sports ball"); `yellow_ball`/`red_ball` keep the underscore.
 
 **2026-11-22 session** (`docs/sessions/2026-11-22.md`, `docs/detection-history.md`; the
 full paragraph is in `docs/claude-history.md`, "Moved from CLAUDE.md 2026-11-23"):

@@ -65,6 +65,25 @@ For the brain, two more distinctions:
   fixed list of choices) and **brain-led** (the brain chooses the plan from a request
   in plain English).
 
+## The missions, by number (Mike, 2026-11-23)
+
+One sequence for both projects. A mission keeps its number for good; a new mission
+takes the next one. A release says which missions it delivers; there is no "Release 2,
+Mission 1".
+
+| Mission | What the robot does | Exists today |
+|---|---|---|
+| **Mission 1** | Drives to the doorway, takes a picture, comes home | Both projects |
+| **Mission 2** | Yellow and red balls. Drives toward the floor marker watching for balls: red, photo and stop; yellow, photo and home; no ball, photo of the marker and home. Judged in three parts: no ball, yellow, red | Both projects |
+| **Mission 3** | Finds the green ball, photographs it from in front and from behind, comes home | Wayfarer |
+| **Mission 4** | Is it tidy: goes to an area and says whether anything is there | Planned |
+| **Mission 5** | Is it tidy, with names: also says what is there, with a photo of each | Planned |
+| **Mission 6 and on** | The next mission, for example an inventory of where the dog toys are in the whole house | Not numbered yet |
+
+Say "Mission 2", never "Mission 2 day": "day" was this project's word for running the
+three parts in one go, and it is dropped. The parts are "parts", not "legs".
+Wayfarer's `go_home` is a building block, not a mission, and has no number.
+
 ## Words to avoid
 
 - **"Model" by itself.** The detector, the describer and the brain are all models. Say
