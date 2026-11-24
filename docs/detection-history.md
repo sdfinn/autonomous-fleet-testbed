@@ -621,3 +621,14 @@ page existed, "vision model" meant the describer.
   2026-11-23): the hand-written detector and its measured profile; the comments carry
   the numbers.
 - `docs/cameras.md`: both cameras, and the plans that use them together.
+
+### 2026-11-23, evening: the reaction rule counts seconds, not messages
+
+The mission script used to react after "3 detector messages in a row with the ball in
+range". How long that is depended on the detector's rate: 0.2 s at the simulator's 10
+messages a second, 0.4 s at the real robot's 5, 0.55 s at the 3.6 of the hand-written
+detector (2026-11-20: yellow in range for two messages, the robot arrived before the
+third). Now: in range for 0.3 s of picture time (the message's own time stamp), in at
+least 2 messages, with no gap over 0.6 s (`missions.ReactionRule`). Shown in the
+simulator only so far. The real robot's record to date, brought to the workstation the
+same evening: no ball 85%, red 85%, yellow 75% of 20 runs each (simulator 95-96%).

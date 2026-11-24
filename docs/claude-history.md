@@ -2627,3 +2627,16 @@ The 2026-11-22 session paragraph, verbatim as it stood in CLAUDE.md on 2026-11-2
   decided). The list of goals (down) and events (up) is drafted:
   `docs/goals-and-events.md`, with milestones M1-M6. It shows the install is blocked
   by Nav2's `Spin`/`BackUp` failing on the real robot and by holds nobody listens to.
+
+### Moved the evening of 2026-11-23: the Release 1 order of 2026-11-20 (all six items since built)
+
+**To finish Release 1, in order (order proposed at close, not confirmed):** (1) robot
+messaging on loopback and a link-loss policy per run (pause-and-resume / carry on /
+carry on then come home); a dry run with the WiFi down proves it; (2) one real-robot
+row per run in the telemetry DB (it has 603 local and 411 hil_jetson rows and ZERO
+real_robot rows, so the dashboard and drift detection are blind to the real robot and
+R1's last checkbox, `tools/sim_vs_real_comparison.py` then the `r1-complete` tag, has
+nothing to compare); (3) go around (6d, with 6c back away) in the simulator on the box
+bench, then the dresser; (4) start-pose check before the first goal; (5) reaction rule
+in seconds, not frames, so yellow fires, then one timeboxed floor run; (6) record the mast camera on every run, one run folder with a summary, later a
+debug switch on `robot_boot.sh`.

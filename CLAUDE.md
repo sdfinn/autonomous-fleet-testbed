@@ -60,7 +60,26 @@ can still be judged PASS (verified true here 2026-11-16; not fixed).
 ## Current status — START HERE (last real work 2026-11-23)
 
 **2026-11-23 session: item A done, item B merged, first floor runs on all of it.**
-Detail: `docs/sessions/2026-11-23.md` (15 sections), `docs/detection-history.md`.
+Detail: `docs/sessions/2026-11-23.md` (16 sections), `docs/detection-history.md`.
+- **Evening: Release 1's code is in (`e9ddb2c`, `b3a3d4c`); NO floor run on it yet.**
+  (a) **A lost link no longer stops a mission:** `ROBOT_BOOT_LINK_LOSS=carry_on` is the
+  default (no operator watch, SIGHUP ignored, the script writes `console_<ts>.log` and a
+  `tail` shows it); `pause` is the rule of 2026-11-19. While the link is down NOTHING
+  remote can stop the robot. Proven on the stand: SSH killed mid-drive, all still
+  running 26 s later. (b) **Mast video on every run** (`tools/mast_record.py`,
+  `mast_<ts>.avi`, stopped last). (c) **Reaction rule in seconds:** in range 0.3 s of
+  picture time, 2+ messages (`missions.ReactionRule`). (d) **Start-pose check**
+  (`start_pose.py`): share of lidar points that land on the map from the believed
+  pose, pass mark 75%, calibrated on real scans (home 0.90/0.98; 30 cm sideways
+  0.26/0.44); blind to a shift ALONG the hallway. It refused a stand run (18%): the
+  stand must be ON THE HOME SPOT or `ROBOT_BOOT_NO_START_POSE_CHECK=1`. (e)
+  **`python -m tools.pull_robot_runs`** brings the Jetson's `real_robot` rows here (60
+  so far); `sim_vs_real_comparison` compares by `runner_type`: simulator 95-96%, real
+  robot 85/85/75% (no ball/red/yellow). A new kind of row needs
+  `tools/validate_telemetry.py` to know it (CI's report stages went red). (f) **BR-03
+  has a test** (`test_recovery_timeout`); the traceability gate enforces. (g) **The
+  "day" rename is done:** `tools/mission2_run.py`, `mission_runner --mission2`,
+  `MISSION2_RESULT:`, `hil_stage.sh mission2`, `MISSION2_HOLD_S`.
 - **Floor, afternoon (`reports/robot_boot_20261123_*`):** a full Mission 2 on the merged
   code; past a box against the door jamb twice (38 cm planning circle, Mike's number;
   re-planning every second). **The first box run TOUCHED the box:** Nav2's pause to
@@ -77,13 +96,11 @@ Detail: `docs/sessions/2026-11-23.md` (15 sections), `docs/detection-history.md`
   Jetson's WiFi address changed mid-mission again (2026-11-20, 2026-11-23) and the
   processes could no longer hear each other. PROVEN on the stand the same evening: a
   run carried on through 35 s with the WiFi switched off, no messaging error in any
-  log. The operator watch still pauses/ends an attended run on link loss; Mike wants
-  "carry on and keep logging" as the rule (next).
+  log.
 - **Mission names (Mike): one sequence for both projects, never per release**
   (`docs/terminology.md`): 1 doorway photo; 2 yellow and red; 3 green ball, front and
-  back (wayfarer only); 4 is it tidy; 5 is it tidy with names; 6+ next. It is
-  "Mission 2", never "Mission 2"; the rename of the tool/flag/CI names in this repo
-  is proposed (mapping in the 2026-11-23 chat), not done.
+  back (wayfarer only); 4 is it tidy; 5 is it tidy with names; 6+ next. Never
+  "Mission 2 day".
 - **A floor "go" means with video (mast camera) and monitoring.**
 - **RF-DETR (`object_detector`) is the only detector**: real robot, local simulator,
   CI's simulator stage, CI's Jetson stage, all three smoke-test paths. The hand-written
@@ -153,13 +170,10 @@ Detail: `docs/sessions/2026-11-23.md` (15 sections), `docs/detection-history.md`
   shut down; 6 of 8 under load before, 16 of 16 after). CI stage 1 has
   `--timeout=180` per test and `timeout-minutes: 20`.
 
-**NEXT (Mike, 2026-11-23 close; `docs/sessions/2026-11-23.md` "Next"):** (1) the
-link-loss rule: carry on and keep logging when the operator's link is lost, "pause" as
-an option; (2) mast camera on every run from `robot_boot.sh`; (3) the "day" rename;
-(4) a floor run with a box that truly blocks; (5) rest of Release 1: telemetry
-transfer step (57 real-robot rows on the Jetson, 0 on the workstation),
-`sim_vs_real_comparison.py`, `r1-complete`; start-pose check; reaction rule in seconds.
-Release 2 not started; a simple brain built here is under consideration. Class names
+**NEXT (Mike, 2026-11-23 close; `docs/sessions/2026-11-23.md` "Next"):** (1) the floor
+run on the evening's code: robot on the home spot, a plain Mission 2, then a box that
+truly blocks; (2) `pull_robot_runs` and the comparison after it; (3) `r1-complete` if
+clean (Mike's call), demo video. Release 2 not started; a simple brain built here is under consideration. Class names
 stay the model's own labels ("sports ball"); `yellow_ball`/`red_ball` keep the underscore.
 
 **2026-11-22 session** (`docs/sessions/2026-11-22.md`, `docs/detection-history.md`; the
@@ -200,16 +214,6 @@ and give me an inventory of where all the dog toys are"; ball-detection polish i
 timeboxed. And: "if this is supposed to be an autonomous vehicle, loss of wifi should
 not be fatal."
 
-**To finish Release 1, in order (order proposed at close, not confirmed):** (1) robot
-messaging on loopback and a link-loss policy per run (pause-and-resume / carry on /
-carry on then come home); a dry run with the WiFi down proves it; (2) one real-robot
-row per run in the telemetry DB (it has 603 local and 411 hil_jetson rows and ZERO
-real_robot rows, so the dashboard and drift detection are blind to the real robot and
-R1's last checkbox, `tools/sim_vs_real_comparison.py` then the `r1-complete` tag, has
-nothing to compare); (3) go around (6d, with 6c back away) in the simulator on the box
-bench, then the dresser; (4) start-pose check before the first goal; (5) reaction rule
-in seconds, not frames, so yellow fires, then one timeboxed floor run; (6) record the mast camera on every run, one run folder with a summary, later a
-debug switch on `robot_boot.sh`.
 **First items of Release 2 (Mike's decision, 2026-11-20):** the joystick that came with
 the robot (never set up; ask him what it is), a whole-house map driven with it, and a
 trained detector (decided 2026-11-22, above; keep `docs/detection-history.md` current). Automatic
@@ -217,8 +221,8 @@ trained detector (decided 2026-11-22, above; keep `docs/detection-history.md` cu
 step. **US spelling in all new text (Mike, 2026-11-20).**
 Still owed: 6b act on a slip verdict, 6e guard spins, operator-watch give-up in a real
 mission, closed-loop turn rate.
-Also open: `robot_boot.sh` leaves the driver layer orphaned when DDS dies, exits 0 when
-every trip fails, and with no terminal does not shut down cleanly;
+Also open: `robot_boot.sh` leaves the driver layer orphaned when DDS dies and exits 0
+when every trip fails;
 `tests/test_esp32_driver.py` runs in no CI stage; battery "critical" does not latch;
 gyro vs lidar heading 9-13 deg apart after several spins.
 **Two projects, one workstation (2026-11-22).** This repo runs on ROS domain 0,
@@ -266,8 +270,8 @@ per-session detail is in `docs/sessions/`):**
 bring-up. Sim + HIL CI is green. The production path (`scripts/robot_boot.sh`: driver
 layer and RF-DETR detector bare-metal + Nav2/EKF/mission_runner in the arm64 container)
 boots, localizes on its own map, completes the nav-only mission with a home error of a
-few centimeters, holds for an obstacle, and has a proven stop when the Jetson dies. It
-has no go-around or stuck recovery, and only observes wheel slip.
+few centimeters, holds for an obstacle, re-plans around one, and has a proven stop when
+the Jetson dies. It only observes wheel slip.
 
 **Still open from the August punch list** (the Release 1 order above takes precedence):
 whether to restrict the lidar to the forward 180 deg, and the mast-edge leak (returns
@@ -277,8 +281,7 @@ before a goal is dispatched; whether the Jetson's ad-hoc diagnostic scripts
 `use_sim_time=true`, so a push proves nothing about the bare-metal driver path.
 
 **Older open items (still true):** driver-readiness 60s timeout never timed on a real
-cold boot under `robot-mission.service`; BR-03 (recovery) has no test, so stage-0's
-traceability gate keeps `continue-on-error: true`; `test_nav_runner.py` rclpy-teardown
+cold boot under `robot-mission.service`; `test_nav_runner.py` rclpy-teardown
 ordering bug (see Gotchas); Release 1→2 branching/`r1-complete` tag; self-hosted-runner
 CI docs.
 
@@ -501,8 +504,6 @@ scripts/robot_boot.sh                # real production mission path
   (see `tools/log_setup.get_logger()`).
 - Drift tests seeded with identical baseline values pass vacuously
   (`check_run()` skips zero-variance metrics) — seed real variance.
-- Stage-0 traceability gate keeps `continue-on-error: true` until BR-03 has a real
-  test; check occasionally that downstream stages still run.
 - `ci.yml` is **CRLF** — edit only with the Edit tool or GNU `sed -i`, never a Python
   read/write round-trip. `scripts/**` must stay in the `dorny/paths-filter` list.
 - `actions/upload-artifact@v4` silently skips dotfiles; coverage data files record
