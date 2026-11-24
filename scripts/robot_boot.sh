@@ -601,6 +601,7 @@ set -m
   -e RUNNER_TYPE=real_robot \
   -e ROBOT_MODE=mission \
   ${MISSION2_IGNORE_REACTIONS:+-e MISSION2_IGNORE_REACTIONS=1} \
+  ${ROBOT_BOOT_NO_START_POSE_CHECK:+-e MISSION_START_POSE_CHECK=off} \
   "$IMAGE" bash /ros2_ws/scripts/container_entrypoint.sh \
   2>&1 < /dev/null | tee "$LOG_DIR/robot_boot_${TS}.log") &
 MISSION_PID=$!

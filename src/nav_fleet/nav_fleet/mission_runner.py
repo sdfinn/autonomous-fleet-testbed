@@ -28,10 +28,15 @@ import pathlib
 import time
 import traceback
 
+import numpy as np
 import rclpy
+from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav2_msgs.srv import ClearEntireCostmap
+from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy,
+                       qos_profile_sensor_data)
+from sensor_msgs.msg import Image, LaserScan
 from vision_msgs.msg import Detection2DArray
 
 from nav_fleet import failure_bag
@@ -40,7 +45,9 @@ from nav_fleet.ground_truth import get_ground_truth_xy
 from nav_fleet.image_io import image_msg_to_png
 from nav_fleet.missions import (MISSIONS, REACTION_RANGE_M, ReactionRule,
                                 validate_mission)
+from nav_fleet import start_pose
 from nav_fleet.nav_runner import NavRunner
+from nav_fleet.path_guard import scan_points
 from nav_fleet.semantic_map import SEMANTIC_MAP
 from tools.log_setup import build_env_manifest, git_sha, resolve_level
 from tools.telemetry_logger import PHOTO_DIR as _PHOTO_DIR, log_run
@@ -115,6 +122,8 @@ class MissionRunner(Node):
         # bearing). Learned from the first picture's width in _image_cb: this process
         # is not told whether it is on the simulator or the real robot.
         self._camera = None
+        # None = not checked yet; then True/False for the rest of this process.
+        self._start_pose_ok = None
         # Per-waypoint verdict list (Task 13, Option B): one (label, verdict) per executed
         # step — 'PASS'/'FAIL'/'REACTION'. The mission verdict IS this checklist; main()
         # prints it as the round-trip audit trail.
@@ -243,10 +252,78 @@ class MissionRunner(Node):
             ok = self.take_picture(f'{name}_home_arrival') and ok
         return ok
 
+    def check_start_pose(self, timeout_s=20.0):
+        """Before the first goal of this process: does the lidar agree with the map from
+        the pose the robot believes it has? (nav_fleet.start_pose says why believing is
+        not enough.) Checked once; the answer holds for the rest of the process.
+        MISSION_START_POSE_CHECK=off skips it."""
+        if self._start_pose_ok is not None:
+            return self._start_pose_ok
+        if os.environ.get('MISSION_START_POSE_CHECK') == 'off':
+            self.get_logger().warning('start pose check: SKIPPED (MISSION_START_POSE_CHECK=off)')
+            self._start_pose_ok = True
+            return True
+        got = {'map': None, 'pose': None, 'scans': []}
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                             reliability=ReliabilityPolicy.RELIABLE)
+        subs = [
+            self.create_subscription(OccupancyGrid, '/robot_001/map',
+                                     lambda m: got.__setitem__('map', m), latched),
+            self.create_subscription(PoseWithCovarianceStamped, '/robot_001/amcl_pose',
+                                     lambda m: got.__setitem__('pose', m.pose.pose), latched),
+            self.create_subscription(LaserScan, '/robot_001/scan',
+                                     lambda m: got['scans'].append(m), qos_profile_sensor_data),
+        ]
+        deadline = time.time() + timeout_s
+        while time.time() < deadline and (
+                got['map'] is None or got['pose'] is None or len(got['scans']) < 5):
+            rclpy.spin_once(self, timeout_sec=0.1)
+        for sub in subs:
+            self.destroy_subscription(sub)
+        missing = [name for name in ('map', 'pose') if got[name] is None]
+        if len(got['scans']) < 5:
+            missing.append('lidar scans')
+        if missing:
+            self.get_logger().error(
+                f'start pose check: no {" / ".join(missing)} within {timeout_s:.0f} s — '
+                'cannot tell where the robot is; not starting')
+            self.failure_reason = 'start_pose_unchecked'
+            self._start_pose_ok = False
+            return False
+        info = got['map'].info
+        grid = np.asarray(got['map'].data, dtype=np.int16).reshape(info.height, info.width)
+        near = start_pose.near_occupied(grid, info.resolution, start_pose.TOLERANCE_M)
+        pose = got['pose']
+        believed = (pose.position.x, pose.position.y,
+                    start_pose.yaw_of((pose.orientation.z, pose.orientation.w)))
+        results = [start_pose.match_score(
+            scan_points(s.ranges, s.angle_min, s.angle_increment, s.range_min, s.range_max),
+            believed, near, info.resolution,
+            (info.origin.position.x, info.origin.position.y)) for s in got['scans'][:5]]
+        score = float(np.median([r[0] for r in results]))
+        points = int(np.median([r[1] for r in results]))
+        ok = score >= start_pose.MIN_MATCH and points >= start_pose.MIN_POINTS
+        where = f'({believed[0]:.2f}, {believed[1]:.2f}, {math.degrees(believed[2]):.0f} deg)'
+        if ok:
+            self.get_logger().info(
+                f'start pose check: ok — {score:.0%} of {points} lidar points match the '
+                f'map from {where} (pass mark {start_pose.MIN_MATCH:.0%})')
+        else:
+            self.get_logger().error(
+                f'start pose check: FAILED — only {score:.0%} of {points} lidar points '
+                f'match the map from {where} (pass mark {start_pose.MIN_MATCH:.0%}). The '
+                'robot is probably not where it was told it is, or is turned; not starting')
+            self.failure_reason = 'start_pose_mismatch'
+        self._start_pose_ok = ok
+        return ok
+
     def run_mission(self, name):
         steps = MISSIONS[name]
         validate_mission(steps)
         self.checklist = []
+        if not self.check_start_pose():
+            self.checklist.append(('start pose check (lidar against the map)', 'FAIL'))
+            return False
         for i, step in enumerate(steps, start=1):
             self.get_logger().info(f'[{name}] step {i}/{len(steps)}: {step.label}')
             if step.action == 'navigate':
