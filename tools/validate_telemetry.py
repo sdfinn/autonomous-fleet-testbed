@@ -38,8 +38,10 @@ class RunsModel(DataFrameModel):
     result: Series[str] = pa.Field(isin=["PASS", "FAIL", "STOPPED", "TIMEOUT"])
     # hil_jetson: Session 16 Task 13 ships the Jetson's HIL row into this DB — the
     # workstation schema first met that runner_type on the first shipped row (CI red).
+    # real_robot: the same thing again on 2026-11-23, when tools/pull_robot_runs.py first
+    # brought the real robot's rows here.
     runner_type: Series[str] = pa.Field(
-        isin=["qemu", "jetson", "local", "hil_jetson"], nullable=True)
+        isin=["qemu", "jetson", "local", "hil_jetson", "real_robot"], nullable=True)
     robot_type: Series[str] = pa.Field(nullable=True)
     robot_id: Series[str] = pa.Field(nullable=True)
     sim_engine: Series[str] = pa.Field(isin=["gazebo", "isaac", "real"], nullable=True)

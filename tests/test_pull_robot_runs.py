@@ -71,3 +71,12 @@ def test_the_read_asks_only_for_real_robot_rows_and_opens_the_database_read_only
     assert pr.fetch_remote_rows('jetson.local') == []
     assert seen['cmd'][-2:] == ['python3', '-'] and 'jetson.local' in seen['cmd']
     assert 'mode=ro' in seen['script'] and 'real_robot' in seen['script']
+
+
+def test_the_telemetry_schema_accepts_the_rows_this_tool_brings():
+    """CI's report stages validate the whole database: the first pull (2026-11-23) turned
+    them red because the schema had never met runner_type 'real_robot'."""
+    import pathlib
+    schema = (pathlib.Path(pr.__file__).parent / 'validate_telemetry.py').read_text()
+    line = next(ln for ln in schema.splitlines() if 'isin=["qemu"' in ln)
+    assert f'"{pr.RUNNER_TYPE}"' in line

@@ -890,6 +890,24 @@ explicitly R2 scope, not R1):
   full camera frames (the small theora video streams are kept), about 0.5 MB/s. The
   recorder starts before the drivers and is finalized on every exit path. If it cannot
   start, the mission does not run; `ROBOT_BOOT_NO_BAG=1 scripts/robot_boot.sh` skips it.
+- [ ] **Every run also records the mast camera (2026-11-23)** to
+  `robot_boot_logs/mast_<timestamp>.avi` (640x480, 10 pictures a second, stopped last so
+  it shows the wheels stopping) and keeps everything the script printed in
+  `console_<timestamp>.log`. No camera or no OpenCV: said, and the run carries on.
+  `ROBOT_BOOT_NO_MAST_VIDEO=1` skips it.
+- [ ] **A lost link does not stop a mission (2026-11-23).** Default
+  `ROBOT_BOOT_LINK_LOSS=carry_on`: no operator watch, a lost terminal is ignored, the
+  mission and the recordings continue. While the link is down NOTHING remote can stop
+  the robot: the power switch and the obstacle guard are what is left.
+  `ROBOT_BOOT_LINK_LOSS=pause` gives the older rule (pause after 2 s without the
+  operator, end the run 10 s later, a lost terminal stops the mission).
+- [ ] **Before the first goal the lidar must agree with the map (2026-11-23).** The
+  mission does not start when fewer than 75% of the lidar's points land on the map from
+  the home pose ("start pose check: FAILED"): set the robot on its home spot, facing
+  the right way. `ROBOT_BOOT_NO_START_POSE_CHECK=1` skips it.
+- [ ] **After a session of real runs:** `python -m tools.pull_robot_runs` on the
+  workstation brings the robot's result rows over; `python -m tools.sim_vs_real_comparison`
+  then compares them with the simulator's.
 - [ ] **Stopping a run by hand: Ctrl+C in the `robot_boot.sh` terminal (2026-11-17).**
   It removes the mission container (the driver's 200 ms watchdog then zeroes the
   wheels), finalizes the bag, and stops the driver layer, in that order.
