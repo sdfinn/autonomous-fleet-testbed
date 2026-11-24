@@ -238,10 +238,12 @@ def _finish(proc, timeout=40.0):
 @pytest.mark.parametrize('sig, expected_rc', [
     (signal.SIGINT, 130),    # Ctrl+C in the terminal
     (signal.SIGTERM, 143),   # systemctl stop robot-mission.service
-    (signal.SIGHUP, 129),    # the SSH session / terminal went away
+    (signal.SIGHUP, 129),    # the SSH session / terminal went away (rule "pause")
 ])
 def test_signal_stops_the_mission_and_finalizes_the_bag(boot_env, sig, expected_rc):
     env, events, _home = boot_env
+    if sig == signal.SIGHUP:
+        env['ROBOT_BOOT_LINK_LOSS'] = 'pause'    # under "carry on" a lost terminal stops nothing
     proc = _start(env)
     _wait_for_event(events, 'docker_run')
 
@@ -476,6 +478,8 @@ def attended_env(boot_env, tmp_path):
     _write_exec(tmp_path / 'stubs' / 'ping', FAKE_PING)
     (tmp_path / 'state' / 'operator_up').write_text('')
     env['SSH_CLIENT'] = '192.168.1.119 51234 22'
+    # The operator watch belongs to the "pause" rule; the default is "carry on".
+    env['ROBOT_BOOT_LINK_LOSS'] = 'pause'
     return env, events, home, tmp_path / 'state'
 
 
@@ -779,3 +783,113 @@ def test_the_old_network_messaging_can_be_asked_for_and_is_announced(boot_env):
     assert _event_line(events, 'regen') == 'regen scope=network'
     assert '-e CYCLONEDDS_SCOPE=network' in _docker_run_line(events)
     assert "messaging scope 'network'" in out
+
+
+# --- What a lost link does to a run: carry on by default (Mike, 2026-11-23) ---
+def test_by_default_a_lost_terminal_does_not_stop_the_mission(boot_env):
+    """A WiFi hiccup ended two missions a few meters from home. With the robot's own
+    messaging on loopback, the mission can finish without the link, so by default it
+    does: SIGHUP (the terminal went away) is not a stop. Ctrl+C still is."""
+    env, events, _home = boot_env
+    proc = _start(env)
+    _wait_for_event(events, 'docker_run')
+    os.killpg(proc.pid, signal.SIGHUP)
+    time.sleep(3.0)
+    assert proc.poll() is None, 'the script ended on SIGHUP under the default rule'
+    ev = _events(events)
+    assert 'docker_rm' not in ev[ev.index('docker_run'):]       # mission not removed
+    assert 'bag_sigint' not in ev                                # still recording
+    os.killpg(proc.pid, signal.SIGINT)
+    out = _finish(proc, timeout=30.0)
+    assert proc.returncode == 130, out
+    assert 'CARRY ON' in out
+
+
+def test_by_default_no_operator_watch_is_started_even_over_ssh(boot_env):
+    env, events, _home = boot_env
+    env['SSH_CLIENT'] = '192.168.1.119 51234 22'
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+    assert 'watch_start' not in _events(events)
+    assert 'operator_watch_required' not in _event_line(events, 'drivers_start')
+    assert 'link-loss rule: CARRY ON' in out
+
+
+def test_everything_the_script_says_is_also_kept_in_a_file(boot_env):
+    """Under "carry on" the terminal may be gone, so the script writes to a file and a
+    separate tail shows it; the file is the record."""
+    env, _events_file, home = boot_env
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+    logs = list((home / 'fleet-ci-data' / 'robot_boot_logs').glob('console_*.log'))
+    assert len(logs) == 1
+    text = logs[0].read_text()
+    assert 'driver layer up' in text and 'mission exited with 0' in text
+    assert 'mission exited with 0' in out                      # and the terminal saw it
+
+
+def test_an_unknown_link_loss_rule_is_refused(boot_env):
+    env, events, _home = boot_env
+    env['ROBOT_BOOT_LINK_LOSS'] = 'ignore'
+    proc = _start(env)
+    out = _finish(proc, timeout=30.0)
+    assert proc.returncode == 1 and 'must be carry_on or pause' in out
+    assert 'drivers_start' not in _events(events)
+
+
+# --- Mast camera video on every run (2026-11-23) ---
+FAKE_MAST_RECORDER = """import signal, sys, time, os
+open(os.environ['EVENTS'], 'a').write('mast_start ' + ' '.join(sys.argv[1:]) + '\\n')
+if os.environ.get('FAKE_MAST_DIES'):
+    sys.exit('mast_record: cannot open the camera')
+def stop(*_):
+    open(os.environ['EVENTS'], 'a').write('mast_sigint\\n'); sys.exit(0)
+signal.signal(signal.SIGINT, stop)
+print('mast_record: recording', flush=True)
+while True:
+    time.sleep(0.1)
+"""
+
+
+def _with_mast_camera(boot_env):
+    env, events, home = boot_env
+    tools = home / 'autonomous-fleet-testbed' / 'tools'
+    tools.mkdir()
+    (tools / 'mast_record.py').write_text(FAKE_MAST_RECORDER)
+    device = home / 'fake_mast_camera'
+    device.write_text('')
+    env['ROBOT_BOOT_MAST_DEVICE'] = str(device)
+    return env, events, home
+
+
+def test_the_mast_camera_records_every_run_and_is_stopped_last(boot_env):
+    env, events, home = _with_mast_camera(boot_env)
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+    ev = _events(events)
+    assert ev.index('mast_start') < ev.index('docker_run'), out
+    start = _event_line(events, 'mast_start')
+    assert str(home / 'fleet-ci-data' / 'robot_boot_logs' / 'mast_') in start
+    assert f"--device {env['ROBOT_BOOT_MAST_DEVICE']}" in start
+    # stopped by SIGINT (which finalizes the file), after the drivers, so it shows the stop
+    assert ev.index('mast_sigint') > ev.index('drivers_sigint'), out
+    assert 'mast camera video:' in out
+
+
+def test_a_recorder_that_cannot_start_does_not_stop_the_mission(boot_env):
+    env, events, _home = _with_mast_camera(boot_env)
+    env['FAKE_MAST_DIES'] = '1'
+    env['FAKE_MISSION_SECONDS'] = '1'
+    proc = _start(env)
+    out = _finish(proc)
+    assert proc.returncode == 0, out
+    assert 'did not start' in out and 'carrying on without video' in out
+    assert 'docker_run' in _events(events)
+
+
+def test_no_camera_means_no_video_and_says_so(boot_env):
+    env, events, _home = boot_env                       # no camera, no recorder script
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+    assert 'no mast camera video' in out
+    assert 'mast_start' not in _events(events)

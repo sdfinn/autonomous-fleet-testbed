@@ -46,6 +46,42 @@ LOG_DIR="$HOME/fleet-ci-data/robot_boot_logs"
 mkdir -p "$LOG_DIR"
 TS=$(date +%Y%m%dT%H%M%S)
 
+# --- What a lost link does to a run (Mike, 2026-11-23) ---
+#   ROBOT_BOOT_LINK_LOSS=carry_on   (default) the mission continues and keeps recording
+#                                   when the operator's link or this terminal is lost.
+#                                   No operator watch is started. While the link is down
+#                                   nothing remote can stop the robot: its power switch
+#                                   and the obstacle guard are what is left.
+#   ROBOT_BOOT_LINK_LOSS=pause      the rule of 2026-11-19: the operator watch pauses the
+#                                   robot after 2 s without the operator and ends the run
+#                                   10 s later; a lost terminal (SIGHUP) stops the mission.
+# Why the default changed: the robot's own messaging no longer depends on WiFi (loopback,
+# below), so a mission that is on track can finish without the link; twice a WiFi hiccup
+# ended one a few meters from home.
+LINK_LOSS="${ROBOT_BOOT_LINK_LOSS:-carry_on}"
+CONSOLE_TAIL_PID=""        # set just below; must not be reset later in this script
+case "$LINK_LOSS" in
+  carry_on|pause) ;;
+  *) echo "FATAL: ROBOT_BOOT_LINK_LOSS must be carry_on or pause, got '${LINK_LOSS}'" >&2; exit 1 ;;
+esac
+if [ "$LINK_LOSS" = "carry_on" ]; then
+  # A script whose terminal has gone cannot write to it: the next `echo` fails and, with
+  # `set -e`, ends the run. So this script writes to a file from here on, and a separate
+  # `tail` copies the file to the terminal for as long as there is one. The tail is its
+  # own process group (set -m) so a Ctrl+C aimed at the mission does not silence it.
+  CONSOLE_LOG="$LOG_DIR/console_${TS}.log"
+  : > "$CONSOLE_LOG"
+  exec 3>&1
+  exec >>"$CONSOLE_LOG" 2>&1
+  set -m
+  tail -n +1 -f "$CONSOLE_LOG" >&3 2>/dev/null &
+  CONSOLE_TAIL_PID=$!
+  set +m
+  # Until the full teardown below is installed, an early exit (a FATAL before anything
+  # is started) must still end the tail, or the terminal waits on it forever.
+  trap 'sleep 0.5; kill "$CONSOLE_TAIL_PID" 2>/dev/null || true' EXIT
+fi
+
 # --- Real-hardware driver layer, BARE-METAL (fixed 2026-08-10) ---
 echo "=== [robot-boot] starting the real driver layer bare-metal ==="
 set +u
@@ -108,6 +144,7 @@ MISSION_PID=""
 WATCH_PID=""
 WATCH_WAITER_PID=""
 DETECTOR_PID=""
+MAST_PID=""
 
 # SIGINT a background job, give it 15 s to exit by itself, then SIGKILL it.
 stop_job() {
@@ -162,6 +199,13 @@ cleanup() {
   if [ -n "$DETECTOR_PID" ]; then kill -INT -- "-$DETECTOR_PID" 2>/dev/null || true; fi
   stop_job "the RF-DETR detector" "$DETECTOR_PID"
   stop_job "the bare-metal driver layer" "$DRIVERS_PID"
+  # The mast video last of all, so it shows the wheels stopping. SIGINT finalizes the file.
+  stop_job "the mast camera recorder" "$MAST_PID"
+  # The copy of this script's output to the terminal (link-loss rule "carry on", below).
+  if [ -n "$CONSOLE_TAIL_PID" ]; then
+    sleep 0.5                                  # let it show the lines just written
+    kill "$CONSOLE_TAIL_PID" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 # `exit` inside a signal trap runs the EXIT trap above. 130/143 = the conventional
@@ -170,7 +214,13 @@ trap 'echo "=== [robot-boot] Ctrl+C -- stopping the mission ===" >&2; exit 130' 
 trap 'echo "=== [robot-boot] SIGTERM -- stopping the mission ===" >&2; exit 143' TERM
 # SIGHUP = the terminal went away (SSH session dropped, e.g. WiFi lost while the robot
 # is driving). Nobody can press Ctrl+C any more, so stop the same way.
-trap 'echo "=== [robot-boot] terminal lost (SIGHUP) -- stopping the mission ===" >&2; exit 129' HUP
+if [ "$LINK_LOSS" = "pause" ]; then
+  trap 'echo "=== [robot-boot] terminal lost (SIGHUP) -- stopping the mission ===" >&2; exit 129' HUP
+else
+  # "carry on": the terminal going away is not a reason to stop. Ignored, not handled:
+  # a handler would interrupt the `wait` for the mission at the bottom of this script.
+  trap '' HUP
+fi
 # SIGUSR1 = the operator watch ended while the mission was running (sent by the waiter
 # started next to the mission, below): either it gave up -- the operator's machine did
 # not come back -- or it died. Either way nobody is watching an attended run any more.
@@ -204,7 +254,9 @@ OPERATOR_IP=""
 OPERATOR_TIMEOUT_S="${ROBOT_BOOT_OPERATOR_TIMEOUT_S:-2}"
 OPERATOR_GIVE_UP_S="${ROBOT_BOOT_OPERATOR_GIVE_UP_S:-10}"
 WATCH_LOG=""
-if [ -n "${ROBOT_BOOT_NO_OPERATOR_WATCH:-}" ]; then
+if [ "$LINK_LOSS" != "pause" ]; then
+  echo "=== [robot-boot] link-loss rule: CARRY ON -- if the operator's link or this terminal is lost the mission continues and keeps recording; the only stop then is the robot's power switch (ROBOT_BOOT_LINK_LOSS=pause for the old rule) ==="
+elif [ -n "${ROBOT_BOOT_NO_OPERATOR_WATCH:-}" ]; then
   echo "=== [robot-boot] WARNING: ROBOT_BOOT_NO_OPERATOR_WATCH set -- a lost link will NOT stop this run ===" >&2
 else
   ssh_client="${SSH_CLIENT:-}"
@@ -421,6 +473,33 @@ until grep -q 'detector ready' "$DETECTOR_LOG" 2>/dev/null; do
   detector_waited=$((detector_waited + 1))
 done
 echo "=== [robot-boot] RF-DETR detector ready after ${detector_waited}s ($(grep -o 'detector ready.*first picture [0-9]* ms' "$DETECTOR_LOG" | tail -n 1)); log: $DETECTOR_LOG ==="
+
+# --- Mast camera video, on every run (2026-11-23) ---
+# The second camera, on the pan-tilt mast, recorded beside the mission: it shows what the
+# robot did. Not fatal when it cannot start (no camera, no OpenCV): said, and carried on.
+#   ROBOT_BOOT_NO_MAST_VIDEO=1      do not record
+#   ROBOT_BOOT_MAST_DEVICE=<path>   another camera device
+MAST_DEVICE="${ROBOT_BOOT_MAST_DEVICE:-/dev/v4l/by-id/usb-Xitech_USB_Camera_20250606105-video-index0}"
+if [ -n "${ROBOT_BOOT_NO_MAST_VIDEO:-}" ]; then
+  echo "=== [robot-boot] ROBOT_BOOT_NO_MAST_VIDEO set -- no mast camera video for this run ==="
+elif [ ! -e "$MAST_DEVICE" ] || [ ! -f "$REPO/tools/mast_record.py" ]; then
+  echo "=== [robot-boot] no mast camera video: ${MAST_DEVICE} or tools/mast_record.py is not there ===" >&2
+else
+  MAST_VIDEO="$LOG_DIR/mast_${TS}.avi"
+  MAST_LOG="$LOG_DIR/mast_${TS}.log"
+  set -m
+  python3 "$REPO/tools/mast_record.py" "$MAST_VIDEO" --device "$MAST_DEVICE" \
+    > "$MAST_LOG" 2>&1 < /dev/null &
+  MAST_PID=$!
+  set +m
+  sleep 2
+  if kill -0 "$MAST_PID" 2>/dev/null; then
+    echo "=== [robot-boot] mast camera video: ${MAST_VIDEO} ==="
+  else
+    echo "=== [robot-boot] WARNING: the mast camera recorder did not start ($(tail -n 1 "$MAST_LOG" 2>/dev/null)) -- carrying on without video ===" >&2
+    MAST_PID=""
+  fi
+fi
 
 # --- Operator pre-flight and watch (2026-11-19) ---
 # A link that is already bad is no link to start a floor run on: check before anything
