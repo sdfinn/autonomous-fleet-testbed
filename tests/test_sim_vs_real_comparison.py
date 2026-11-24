@@ -73,3 +73,35 @@ def test_main_defaults_to_the_shared_fleet_db(monkeypatch, tmp_path, capsys):
     assert fake_db in out
     assert "sim_mean:  1" in out
     assert "real_mean: 0.5" in out
+
+
+# --- Pass rate per scenario, simulator vs real robot (2026-11-23) ---
+def test_success_by_scenario_compares_only_scenarios_both_sides_ran(tmp_path):
+    """The real robot records only PASS or FAIL per mission part; rows are chosen by
+    where they ran (runner_type), because Jetson-in-CI rows also say sim_engine 'real'."""
+    import sqlite3
+
+    from tools.sim_vs_real_comparison import success_by_scenario
+    from tools.telemetry_logger import init_db
+    db = str(tmp_path / 'fleet.db')
+    init_db(db)
+    conn = sqlite3.connect(db)
+    rows = ([('mission2_yellow', 'PASS', 'local', 'gazebo')] * 9
+            + [('mission2_yellow', 'FAIL', 'local', 'gazebo')]
+            + [('mission2_yellow', 'PASS', 'real_robot', 'real')] * 3
+            + [('mission2_yellow', 'FAIL', 'real_robot', 'real')]
+            + [('mission2_yellow', 'PASS', 'hil_jetson', 'real')] * 50      # must not count
+            + [('bedroom_nav', 'PASS', 'local', 'gazebo')] * 4)              # sim only
+    conn.executemany(
+        'insert into runs (scenario, result, runner_type, sim_engine) values (?, ?, ?, ?)', rows)
+    conn.commit()
+    conn.close()
+    assert success_by_scenario(db) == [('mission2_yellow', 10, 0.9, 4, 0.75)]
+
+
+def test_success_by_scenario_is_empty_without_real_robot_rows(tmp_path):
+    from tools.sim_vs_real_comparison import success_by_scenario
+    from tools.telemetry_logger import init_db
+    db = str(tmp_path / 'fleet.db')
+    init_db(db)
+    assert success_by_scenario(db) == []

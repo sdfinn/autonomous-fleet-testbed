@@ -103,6 +103,42 @@ def compare_metrics(db_path: str, sim_engine: str = "gazebo", real_engine: str =
     return results
 
 
+def success_by_scenario(db_path: str, sim_runner: str = "local",
+                        real_runner: str = "real_robot") -> list:
+    """Pass rate of each scenario in the simulator and on the real robot, for the
+    scenarios BOTH have run. Rows are chosen by `runner_type` (where the run happened),
+    not by `sim_engine`: Jetson-in-CI rows also carry sim_engine 'real'.
+
+    Added 2026-11-23: the real robot grades itself and records only PASS or FAIL per
+    mission part, so the pass rate per part is what can honestly be compared today.
+    Returns [(scenario, sim_runs, sim_pass_rate, real_runs, real_pass_rate), ...]."""
+    conn = sqlite3.connect(db_path)
+    try:
+        def rates(runner):
+            return {scenario: (runs, passed / runs) for scenario, runs, passed in conn.execute(
+                "SELECT scenario, COUNT(*), SUM(result = 'PASS') FROM runs "
+                "WHERE runner_type = ? GROUP BY scenario", (runner,))}
+        sim, real = rates(sim_runner), rates(real_runner)
+    finally:
+        conn.close()
+    return [(name, sim[name][0], sim[name][1], real[name][0], real[name][1])
+            for name in sorted(set(sim) & set(real))]
+
+
+def print_success_by_scenario(rows: list) -> None:
+    print("\nPass rate by scenario (simulator vs real robot)")
+    print("-----------------------------------------------")
+    if not rows:
+        print("No scenario has been run both in the simulator and on the real robot.")
+        print("(Real-robot rows live on the Jetson: python -m tools.pull_robot_runs)")
+        return
+    print(f"{'scenario':<22}{'sim runs':>9}{'sim pass':>10}"
+          f"{'real runs':>11}{'real pass':>11}{'delta':>8}")
+    for name, sim_n, sim_rate, real_n, real_rate in rows:
+        print(f"{name:<22}{sim_n:>9}{sim_rate:>10.0%}{real_n:>11}{real_rate:>11.0%}"
+              f"{real_rate - sim_rate:>+8.0%}")
+
+
 def print_comparison(results: dict) -> None:
     print("Sim vs Real Comparison")
     print("-----------------------")
@@ -145,6 +181,7 @@ def main() -> None:
 
     results = compare_metrics(args.db, args.sim_engine, args.real_engine)
     print_comparison(results)
+    print_success_by_scenario(success_by_scenario(args.db))
 
 
 if __name__ == "__main__":
