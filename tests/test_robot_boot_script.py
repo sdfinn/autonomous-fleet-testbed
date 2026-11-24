@@ -147,7 +147,8 @@ def boot_env(tmp_path):
     for d in (repo / 'install', repo / 'scripts', stubs, state):
         d.mkdir(parents=True)
     (repo / 'install' / 'setup.bash').write_text('')
-    (repo / 'scripts' / 'regen_cyclonedds_config.sh').write_text('exit 0\n')
+    (repo / 'scripts' / 'regen_cyclonedds_config.sh').write_text(
+        'echo "regen scope=${CYCLONEDDS_SCOPE:-unset}" >> "$EVENTS"\nexit 0\n')
     # The real launcher check, against a fake package with one node already built.
     shutil.copy(SCRIPT.parent / 'ensure_nav_fleet_built.sh', repo / 'scripts')
     (repo / 'src' / 'nav_fleet').mkdir(parents=True)
@@ -756,3 +757,25 @@ def test_cleanup_does_not_wait_for_the_watch_waiter():
     text = SCRIPT.read_text()
     assert 'wait "$WATCH_WAITER_PID"' not in text
     assert 'kill "$WATCH_WAITER_PID"' in text          # it is still stopped
+
+
+# --- The robot's own messaging does not depend on WiFi (2026-11-23) ---
+def test_the_robots_messaging_is_kept_on_this_machine_in_both_halves(boot_env):
+    """Twice a new WiFi address mid-mission left the robot's processes unable to hear
+    each other. Both halves, the bare-metal drivers and the container, must be told
+    'local', and told the same thing."""
+    env, events, _home = boot_env
+    env['FAKE_MISSION_SECONDS'] = '1'
+    _finish(_start(env))
+    assert _event_line(events, 'regen') == 'regen scope=local'          # bare-metal half
+    assert '-e CYCLONEDDS_SCOPE=local' in _docker_run_line(events)      # container half
+
+
+def test_the_old_network_messaging_can_be_asked_for_and_is_announced(boot_env):
+    env, events, _home = boot_env
+    env['ROBOT_BOOT_DDS_SCOPE'] = 'network'
+    env['FAKE_MISSION_SECONDS'] = '1'
+    out = _finish(_start(env))
+    assert _event_line(events, 'regen') == 'regen scope=network'
+    assert '-e CYCLONEDDS_SCOPE=network' in _docker_run_line(events)
+    assert "messaging scope 'network'" in out

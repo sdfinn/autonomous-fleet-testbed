@@ -46,9 +46,64 @@
 # run), which was pure noise for routine operation; the XML's own comment is now
 # a short pointer back to this file. NOTE: an XML comment body may never contain a
 # literal double hyphen — a real parse failure confirmed that the hard way.
+#
+# CYCLONEDDS_SCOPE=local (2026-11-23): everything that talks is on THIS machine, so the
+# messaging goes over the loopback interface and no network interface is listed at all.
+# robot_boot.sh sets it for the real robot and hands it to the container. Why: on the
+# real robot every process (drivers, detector, obstacle guard, and the container with
+# Nav2 and the mission) runs on the one Jetson, yet they found each other through the
+# WiFi interface's address. On 2026-11-20 and again on 2026-11-23 the router gave the
+# Jetson a new address in the middle of a mission; the processes kept sending to the old
+# one, could no longer hear each other, and the mission died a few meters from home.
+# Loopback has no cable, no radio and an address that never changes.
+#   - Loopback has no multicast, so discovery is by unicast to "localhost": each
+#     process probes a list of participant slots. CycloneDDS's default list is 10
+#     slots; this robot runs more processes than that, and a process beyond the list is
+#     silently never found. MaxAutoParticipantIndex below is the list's length.
+#   - Nothing off the machine can see these topics. That is the point; a later "mother
+#     ship" or second robot gets a deliberate bridge for what should leave the robot.
+#   - NOT for CI's Jetson stage (HIL), where Gazebo runs on the workstation and the two
+#     machines really do talk over Ethernet: that path leaves the variable unset.
 set -euo pipefail
 
 CONFIG_PATH="${CYCLONEDDS_CONFIG_PATH:-$HOME/cyclonedds-hil.xml}"
+SCOPE="${CYCLONEDDS_SCOPE:-network}"
+LOCAL_MAX_PARTICIPANTS=120
+
+case "$SCOPE" in
+  network) ;;
+  local)
+    cat > "$CONFIG_PATH" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain>
+    <General>
+      <Interfaces>
+        <NetworkInterface name="lo"/>
+      </Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>${LOCAL_MAX_PARTICIPANTS}</MaxAutoParticipantIndex>
+      <Peers>
+        <Peer address="localhost"/>
+      </Peers>
+    </Discovery>
+    <Internal>
+      <!-- Large-message fix: see this script's header. An XML comment body may never
+           contain a literal double hyphen. -->
+      <SocketReceiveBufferSize min="10MB"/>
+    </Internal>
+  </Domain>
+</CycloneDDS>
+EOF
+    echo "cyclonedds config regenerated at ${CONFIG_PATH} (this machine only: loopback, no network interface)"
+    exit 0 ;;
+  *)
+    echo "FATAL: CYCLONEDDS_SCOPE must be 'network' or 'local', got '${SCOPE}'" >&2
+    exit 1 ;;
+esac
 
 is_physical() {
   [ -e "/sys/class/net/$1/device" ]

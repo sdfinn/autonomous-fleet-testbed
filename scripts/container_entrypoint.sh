@@ -77,6 +77,11 @@ export MAGICK_THREAD_LIMIT=1 OMP_NUM_THREADS=1
 # config always lands somewhere predictable regardless of which user the image
 # runs as, and regen_cyclonedds_config.sh already supports this override
 # (CYCLONEDDS_CONFIG_PATH env var).
+# CYCLONEDDS_SCOPE (optional, from `docker run -e`): 'local' on the real robot
+# (robot_boot.sh), so this container and the bare-metal driver layer talk over loopback
+# and a WiFi address change cannot separate them. Unset for HIL, where Gazebo is on
+# the workstation and the Ethernet interface is needed. Both halves must agree, which
+# is why robot_boot.sh sets it once and passes the same value here.
 export CYCLONEDDS_CONFIG_PATH=/ros2_ws/cyclonedds-container.xml
 export CYCLONEDDS_URI="file://${CYCLONEDDS_CONFIG_PATH}"
 bash /ros2_ws/scripts/regen_cyclonedds_config.sh

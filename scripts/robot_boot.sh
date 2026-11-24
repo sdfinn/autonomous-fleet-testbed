@@ -63,6 +63,18 @@ source "$REPO/install/setup.bash"
 # live during Task 1's own verification and again during this task's Step 3 dry-run).
 [ -f "$HOME/ros2_drivers_ws/install/setup.bash" ] && source "$HOME/ros2_drivers_ws/install/setup.bash"
 set -u
+# The robot's own messaging stays on this machine (2026-11-23): loopback, no network
+# interface. Every process of a mission runs on this Jetson, and twice a new WiFi
+# address in the middle of a mission left them unable to hear each other (2026-11-20,
+# 2026-11-23: stalled a few meters from home). WiFi is still how a mission is started
+# and watched; it is no longer something the mission needs in order to finish.
+# The same value goes to the container below, which writes its own copy of the file.
+#   ROBOT_BOOT_DDS_SCOPE=network   the old behavior, for a tool on another machine that
+#                                  must see the robot's topics during one run
+export CYCLONEDDS_SCOPE="${ROBOT_BOOT_DDS_SCOPE:-local}"
+if [ "$CYCLONEDDS_SCOPE" != "local" ]; then
+  echo "=== [robot-boot] WARNING: messaging scope '${CYCLONEDDS_SCOPE}', not 'local' -- a WiFi address change can stop this run ===" >&2
+fi
 bash "$REPO/scripts/regen_cyclonedds_config.sh"
 # Final-review C2 (2026-08-11): this bare-metal driver layer previously got NO
 # RMW_IMPLEMENTATION/CYCLONEDDS_URI export at all under this script's
@@ -503,6 +515,7 @@ set -m
   -v "$REPO/reports:/ros2_ws/reports" \
   -v "$HOME/fleet-ci-data:/root/fleet-ci-data" \
   -e USE_SIM_TIME=false \
+  -e CYCLONEDDS_SCOPE="$CYCLONEDDS_SCOPE" \
   "${MAP_ARGS[@]}" \
   ${PARAMS_ARGS[@]+"${PARAMS_ARGS[@]}"} \
   -e MISSION2_SELF_REPORT=1 \
