@@ -59,8 +59,29 @@ can still be judged PASS (verified true here 2026-11-16; not fixed).
 
 ## Current status — START HERE (last real work 2026-11-23)
 
-**2026-11-23 session: one detector everywhere (list item A), done except one floor
-run.** Detail: `docs/sessions/2026-11-23.md`, `docs/detection-history.md`.
+**2026-11-23 session: item A done, item B merged, first floor runs on all of it.**
+Detail: `docs/sessions/2026-11-23.md` (15 sections), `docs/detection-history.md`.
+- **Floor, afternoon (`reports/robot_boot_20261123_*`):** a full Mission 2 on the merged
+  code; past a box against the door jamb twice (38 cm planning circle, Mike's number;
+  re-planning every second). **The first box run TOUCHED the box:** Nav2's pause to
+  recover made the obstacle guard release with the box still there (it only checked
+  while a speed was asked for), the robot crept 4 cm, 1 cm, 0 cm, then turned into it.
+  Fixed (`path_guard.py`): a hold lasts until the zone that caused it is clear, and a
+  turn on the spot is held for anything inside the circle the corners sweep + 3 cm,
+  ignoring returns inside the robot's own outline (the real lidar sees the robot
+  0.03 m from its center; the simulated one never does: found by REPLAYING the real
+  bags through the new logic before the floor). Not yet shown on the floor against a
+  box that truly blocks.
+- **The robot's own messaging is on loopback** (`CYCLONEDDS_SCOPE=local`, set by
+  `robot_boot.sh` for both halves; CI's Jetson stage stays on the network). The
+  Jetson's WiFi address changed mid-mission again (2026-11-20, 2026-11-23) and the
+  processes could no longer hear each other. NOT yet shown: a run carrying on with
+  WiFi off. The operator watch still pauses/ends an attended run on link loss; Mike
+  wants "carry on and keep logging" as the rule.
+- **Names (Mike): it is "Mission 2", never "Mission 2 day".** Mission 1 doorway photo;
+  Mission 2 yellow and red; Mission 3 green ball, front and back (wayfarer only);
+  Mission 4 (maybe) "is it tidy". The rename across this repo is proposed, not done.
+- **A floor "go" means with video (mast camera) and monitoring.**
 - **RF-DETR (`object_detector`) is the only detector**: real robot, local simulator,
   CI's simulator stage, CI's Jetson stage, all three smoke-test paths. The hand-written
   color detector, its two color profiles, two calibration tools and their tests are
@@ -83,9 +104,6 @@ run.** Detail: `docs/sessions/2026-11-23.md`, `docs/detection-history.md`.
   fields and kinds as wayfarer's reader, written here, no import either way. The
   mission script reacts only to a HAZARD with a trusted distance. `OBJECTS` there is
   the table of classes missions may act on.
-- **Not verified:** the new `robot_boot.sh` default on the floor (script tests only);
-  the attended bench smoke test (`hil_stage.sh smoke`) with RF-DETR on the real camera.
-  Under simulator time on the workstation the node's "picture age" number is wrong.
 - **The first-drive stall in CI (six times since 2026-11-20) is FIXED: `FollowPath.stateful:
   false`.** Cause, from Nav2's source (Regulated Pure Pursuit 1.3.12) and a recording:
   the follower latched "position reached" the one time its own distance to the goal was
@@ -106,8 +124,7 @@ run.** Detail: `docs/sessions/2026-11-23.md`, `docs/detection-history.md`.
   known distance minus the lidar's forward position minus the ball's radius, both
   modes). Simulator reads 0.656 m against an expected 0.657. The bench prompt now gives
   the distance from the robot's FRONT EDGE (24.5 inches). Bench mode not re-run.
-- **Item B: cause found, fix on a BRANCH (`item-b-go-around`, draft PR #6), not on
-  `main`.** The robot never went around anything for two reasons, both standard Nav2
+- **Item B: cause found and fixed (merged PR #6).** The robot never went around anything for two reasons, both standard Nav2
   settings: (1) the global costmap's lidar source had no `max_obstacle_height` (Nav2's
   default 0.0 discards every point above the floor), so the planner only knew the saved
   map; (2) the one-shot tree planned once per goal. `BackUp`/`Spin` SUCCEED in the
@@ -118,37 +135,31 @@ run.** Detail: `docs/sessions/2026-11-23.md`, `docs/detection-history.md`.
   second; back up, wait, spin; 6 tries), 10 s stand-still limit with
   `PoseProgressChecker`, an explicit `behavior_server` section. Simulator: a box in
   open floor is driven around in 19 s; a box with no way through ends the goal in
-  40-113 s with the robot clear. It changes how the REAL robot plans and has not run
-  on the floor: Mike decides the merge (questions in the PR).
-- **Our obstacle guard and Nav2's recoveries do not deadlock:** the guard is
-  directional (ahead when driving forward, behind when reversing, nothing during a
-  turn on the spot, release 1 s after the checked side is empty).
+  40-113 s with the robot clear. MERGED 2026-11-23 (`d6dc39c`) on Mike's instruction and run on the floor the same
+  afternoon (first bullet above).
 - **Removed switches:** `ROBOT_BOOT_SHADOW_DETECTOR`, `ROBOT_BOOT_DETECTOR`,
   `HSV_CONFIG_FILE`, `BALL_DETECTOR`, launch arguments `hsv_config` / `ball_detector`.
   `ROBOT_BOOT_RFDETR=<file>` now only names another model file.
 
-- **Watched run with the Gazebo GUI (A5): PASS on the third attempt.** It found:
-  attaching the GUI PAUSES the simulation (un-pause command in `src/nav_fleet/CLAUDE.md`);
-  the day tool's ball thread left a red ball behind when the mission died (fixed:
-  no ball actions once the day has ended); a day did not start from a clean world
-  (fixed: `GzBallOps.clear()`, which asks `gz model --list` because Gazebo's remove
-  call answers "true" for a model that is not there).
-- **Shutdown race in `robot_boot.sh` fixed.** When the operator watch ended, cleanup
-  `wait`ed for the small waiter process that had signalled it; if that process had
-  already exited (a busy machine), the `wait` never returned and NOTHING was shut down
-  (container, bag, drivers). Found because CI's unit-test stage hung 19 minutes; 6 of
-  8 runs under load before, 16 of 16 after. The give-up path is still unseen in a real
-  mission. Stage 1 now has `--timeout=180` per test and `timeout-minutes: 20`.
+- **Simulator harness:** attaching the Gazebo GUI PAUSES the simulation (un-pause
+  command in `src/nav_fleet/CLAUDE.md`); the mission tool no longer leaves a ball
+  behind when a mission dies and clears leftover balls at the start (it asks
+  `gz model --list`: Gazebo's remove call answers "true" for a model that is not there).
+- **`robot_boot.sh` shutdown race fixed:** cleanup no longer `wait`s for the operator
+  watch's waiter (if it had already exited, the `wait` never returned and nothing was
+  shut down; 6 of 8 under load before, 16 of 16 after). CI stage 1 has
+  `--timeout=180` per test and `timeout-minutes: 20`.
 
-**NEXT (recommended at close, 2026-11-23; `docs/sessions/2026-11-23.md` "Next"):**
-(1) Mike decides draft PR #6 (item B). (2) ONE FLOOR SESSION proves today's work,
-nothing of which has run on the real robot: `tools/bench_stop_on_silence.py`, then
-`robot_boot.sh` with its new default and a deliberate operator-watch give-up; a
-Mission 2 day on `main` (RF-DETR by default, `FollowPath.stateful: false`); on the
-branch `BackUp`/`Spin` in open floor, a box in the path, then the door frame and the
-dresser. (3) Reaction distances with the fresher detections, the remaining 0.9 s
-delay, M2/M3 (`docs/goals-and-events.md`). Class names stay the model's own labels
-("sports ball"); our own `yellow_ball`/`red_ball` keep the underscore.
+**NEXT (Mike, 2026-11-23 close; `docs/sessions/2026-11-23.md` "Next"):** (1) prove
+loopback on the stand: a run with WiFi switched off partway (operator watch off for
+that run); (2) the link-loss rule: carry on and keep logging; (3) mast camera on every
+run from `robot_boot.sh`; (4) the "day" rename and mission names 1-4 once Mike has
+marked up the chart; (5) a floor run with a box that truly blocks; (6) rest of Release
+1: telemetry transfer step (57 real-robot rows sit on the Jetson, 0 on the
+workstation), `sim_vs_real_comparison.py`, `r1-complete`; start-pose check; reaction
+rule in seconds. Release 2 not started; a simple brain built here is under
+consideration. Class names stay the model's own labels ("sports ball"); our own
+`yellow_ball`/`red_ball` keep the underscore.
 
 **2026-11-22 session** (`docs/sessions/2026-11-22.md`, `docs/detection-history.md`; the
 full paragraph is in `docs/claude-history.md`, "Moved from CLAUDE.md 2026-11-23"):
